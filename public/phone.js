@@ -197,18 +197,19 @@ function submitScreen() {
 
   function renderList() {
     const left = remaining();
-    if (left <= 0 && (notes.length || input.value)) {
-      // All 3 shared: the notes left over are discarded now, as promised.
-      notes = [];
-      saveNotes();
-      input.value = '';
-      refreshInput();
+    // All 3 shared: the writing box closes (anything half-typed joins the
+    // list), and the notes left over stay on the phone, read-only, until the
+    // shred or the tab closes, like every other private note.
+    if (left <= 0) {
+      saveDraft();
       toast.hidden = true;
     }
     writeArea.hidden = left <= 0;
     doneText.hidden = left > 0;
-    doneText.textContent = `You've shared ${view?.submit.max ?? 3} cards. Thank you. Your other notes are discarded. Look up when Erik moves on.`;
+    doneText.textContent = `You've shared ${view?.submit.max ?? 3} cards. Thank you. Look up when Erik moves on.`;
     listHead.hidden = notes.length === 0;
+    listHead.textContent =
+      left > 0 ? 'Private notes (only on this phone)' : 'Not shared. These stay private on this phone until the shred, or until you close this tab.';
     fill(
       list,
       notes.map((note) =>
@@ -216,8 +217,8 @@ function submitScreen() {
           'div',
           { class: 'note' },
           h('div', { class: 'text' }, note.text),
-          h('button', { class: 'quiet', onclick: () => editNote(note) }, 'Edit'),
-          h('button', { class: 'quiet', onclick: () => deleteNote(note) }, '✕'),
+          left > 0 && h('button', { class: 'quiet', onclick: () => editNote(note) }, 'Edit'),
+          left > 0 && h('button', { class: 'quiet', onclick: () => deleteNote(note) }, '✕'),
         ),
       ),
     );
