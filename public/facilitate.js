@@ -153,9 +153,16 @@ function pauseControls(v) {
   return h(
     'div',
     { class: 'alert', style: v.pauseRequests ? {} : { borderColor: 'var(--line)', background: 'none' } },
-    h('strong', {}, v.pauseRequests ? `${v.pauseRequests} asking for a pause${v.pauseHeld ? ' (held)' : ''}` : 'No pause requests'),
-    h('button', { class: 'small-btn primary', onclick: () => act('acceptPause') }, 'Accept'),
-    v.pauseRequests && !v.pauseHeld ? h('button', { class: 'small-btn', onclick: () => act('holdPause') }, 'Hold for later') : '',
+    h('strong', { class: 'grow' },
+      !v.pauseRequests ? 'No pause requests' : v.pauseHeld ? `${v.pauseRequests} waiting for a pause (held)` : `${v.pauseRequests} asking for a pause`),
+    h('button', { class: 'small-btn primary', onclick: () => act('acceptPause') }, v.pauseRequests ? 'Start pause now' : 'Start a pause'),
+    v.pauseRequests && !v.pauseHeld ? h('button', { class: 'small-btn', onclick: () => act('holdPause') }, 'Later') : '',
+    v.pauseRequests
+      ? h('div', { class: 'small dim', style: { flexBasis: '100%' } },
+          v.pauseHeld
+            ? 'The room sees “Pause: coming up”. Start it when the person speaking is done.'
+            : '“Later” keeps the request waiting, and the room sees “Pause: coming up”, so you can let someone finish speaking first.')
+      : '',
   );
 }
 
@@ -167,6 +174,16 @@ function commentList(v) {
       h('div', { class: 'cardrow' }, h('div', { class: 'text' }, c.text), h('button', { class: 'small-btn', onclick: () => act('removeComment', { id: c.id }) }, 'Remove')),
     ),
   );
+}
+
+function nudgeStatus(submit) {
+  if (!submit.nudgesOn) return 'Phones show no nudges.';
+  const texts = submit.nudgeTexts;
+  if (!texts) return 'No nudge: the cards already cover every direction.';
+  if (texts.length === 1) return `Phones show: “${texts[0]}” (the least-covered direction).`;
+  return submit.tagging
+    ? 'Phones rotate through all six nudges until there are enough cards to judge the mix.'
+    : 'Phones rotate through all six nudges (no API key, so the mix is not judged).';
 }
 
 const DISCLOSURE =
@@ -187,6 +204,7 @@ const PANELS = {
       h('div', { class: 'row wrap' },
         h('button', { onclick: () => act('extend') }, '+1 minute'),
         h('button', { class: v.submit.nudgesOn ? 'on' : '', onclick: () => act('nudges', { on: !v.submit.nudgesOn }) }, `Nudges ${v.submit.nudgesOn ? 'on' : 'off'}`)),
+      h('div', { class: 'small dim' }, nudgeStatus(v.submit)),
     );
   },
 
@@ -242,7 +260,7 @@ const PANELS = {
     return [
       pauseControls(v),
       panel(
-        h('span', {}, `Card ${w.total ? w.index + 1 : 0} of ${w.total} · `, liveClock(() => formatClock(serverNow() - w.cardStartedAt)), ' on this card'),
+        h('span', {}, `Card ${w.total ? w.index + 1 : 0} of ${w.total} · `, liveClock(() => formatClock(serverNow() - w.cardStartedAt)), ` of ~${formatClock(w.budgetMs)} on this card`),
         item?.theme ? h('div', { class: 'dim' }, item.theme) : '',
         h('div', { class: 'current' }, item?.hidden ? '(hidden)' : (item?.text ?? 'No cards')),
         item?.similar || item?.moreInTheme
@@ -259,7 +277,11 @@ const PANELS = {
         shown ? h('button', { class: 'quiet', onclick: () => act('hideCard', { id: shown.id, hidden: true }) }, 'Hide this card') : '',
       ),
       commentList(v),
-      panel('Stream', h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, `${i + 1}. ${s.text ?? '(hidden)'}`)))),
+      panel(
+        'Stream',
+        h('p', { class: 'small dim' }, 'Themes in order of total reactions, then cards in order of reactions inside each theme.'),
+        h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, `${i + 1}. ${s.text ?? '(hidden)'} · ${s.reactions} reactions`))),
+      ),
     ];
   },
 

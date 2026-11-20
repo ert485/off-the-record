@@ -4,6 +4,7 @@ import { randomInt } from 'node:crypto';
 import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES } from './phases.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
+import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
 
 export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60 };
 // Anonymous pause: ends once everyone who opened the comment box has
@@ -32,6 +33,8 @@ export function freshState(now) {
     clockStart: null,
     submitEndsAt: null,
     nudgesOn: true,
+    // Which nudges phones show: all in turn, one label, or none (mix is varied).
+    nudge: { mode: 'all', label: null },
     // Cards carry no author and no timestamp. Ids are random so their order
     // doesn't reveal which cards one phone submitted together.
     cards: [],
@@ -70,8 +73,20 @@ export function normalizeClusters(rawThemes, cardIds) {
 }
 
 export class Session {
-  constructor({ state, now = Date.now, clusterCards, onChange = () => {}, onShred = () => {}, shredAnimationMs = 30_000 }) {
+  constructor({
+    state,
+    now = Date.now,
+    clusterCards,
+    tagCards = null,
+    nudgeQuietMs = 10_000,
+    onChange = () => {},
+    onShred = () => {},
+    shredAnimationMs = 30_000,
+  }) {
     this.now = now;
+    this.tagCards = tagCards;
+    this.nudgeQuietMs = nudgeQuietMs;
+    this.nudgeTimer = null;
     this.clusterCards = clusterCards;
     this.onChange = onChange;
     this.onShred = onShred;
@@ -79,6 +94,7 @@ export class Session {
     this.clusterRun = 0;
     this.shredPayload = null;
     this.state = state ?? freshState(now());
+    this.state.nudge ??= { mode: 'all', label: null };
     this.shredded = !!this.state.shredded;
     // A restart mid-clustering: run it again.
     if (this.state.clustering?.status === 'running') {
@@ -214,6 +230,7 @@ export class Session {
     }
     client.cards += clean.length;
     this.changed();
+    this.scheduleNudge();
   }
 
   hideCard(id, hidden) {
@@ -228,6 +245,40 @@ export class Session {
       other.groups.push({ id: this.newId(), cardIds: [id] });
     }
     this.changed();
+    if (this.s.phase === 'submit') this.scheduleNudge();
+  }
+
+  // ---- nudges -----------------------------------------------------------
+
+  // Re-picks the nudge once submissions have been quiet for a moment.
+  scheduleNudge() {
+    clearTimeout(this.nudgeTimer);
+    this.nudgeTimer = setTimeout(() => this.pickNudge(), this.nudgeQuietMs);
+    this.nudgeTimer.unref?.();
+  }
+
+  async pickNudge() {
+    if (this.s.phase !== 'submit' || this.shredded) return;
+    const cards = this.s.cards.filter((c) => !c.hidden).map(({ id, text }) => ({ id, text }));
+    let nudge = { mode: 'all', label: null };
+    if (cards.length >= MIN_CARDS && this.tagCards) {
+      try {
+        const label = leastCovered(await this.tagCards(cards.sort((a, b) => a.id - b.id)));
+        nudge = label ? { mode: 'one', label } : { mode: 'none', label: null };
+      } catch {
+        return; // keep the current nudge
+      }
+    }
+    if (this.shredded || this.s.phase !== 'submit') return;
+    this.s.nudge = nudge;
+    this.changed();
+  }
+
+  nudgeTexts() {
+    const n = this.s.nudge;
+    if (!this.s.nudgesOn || n.mode === 'none') return null;
+    if (n.mode === 'one') return [NUDGES.find((x) => x.label === n.label).text];
+    return NUDGES.map((x) => x.text);
   }
 
   // ---- clustering -------------------------------------------------------
@@ -351,6 +402,7 @@ export class Session {
     this.client(cid);
     if (on) this.s.pauseRequests[cid] = 1;
     else delete this.s.pauseRequests[cid];
+    if (!count(this.s.pauseRequests)) this.s.pauseHeld = false;
     this.changed();
   }
 
@@ -454,6 +506,7 @@ export class Session {
     // Kept in memory only, just long enough for the projector's animation.
     this.shredPayload = { emojis: this.emojiMix(), cards };
     this.clusterRun += 1;
+    clearTimeout(this.nudgeTimer);
     this.shredded = true;
     this.state = { phase: 'shred', phaseStartedAt: this.now(), shredded: true, walk: { stream: [], index: 0 } };
     this.onShred();
@@ -492,7 +545,14 @@ export class Session {
     if (this.shredded) return v;
     const c = typeof cid === 'string' ? s.clients[cid] : undefined;
     if (s.phase === 'submit') {
-      v.submit = { endsAt: s.submitEndsAt, submitted: c?.cards ?? 0, max: LIMITS.cardsPerPerson, nudgesOn: s.nudgesOn };
+      const texts = this.nudgeTexts();
+      v.submit = {
+        endsAt: s.submitEndsAt,
+        submitted: c?.cards ?? 0,
+        max: LIMITS.cardsPerPerson,
+        nudgesOn: s.nudgesOn,
+        nudge: texts && { texts },
+      };
     }
     if (s.phase === 'react') {
       v.react = {
@@ -545,7 +605,6 @@ export class Session {
         index: s.walk.index,
         total: s.walk.stream.length,
         cardStartedAt: s.walk.cardStartedAt,
-        budgetMs: Math.min(180_000, Math.max(20_000, WALK_MS / Math.max(1, s.walk.stream.length))),
         item: this.itemView(item),
         comments: this.commentsFor(s.phase === 'walk' ? (item?.groupId ?? null) : null),
         stay: s.phase === 'walk' ? count(s.walk.signals.stay) : 0,
@@ -587,7 +646,14 @@ export class Session {
               walkLength: s.walk.stream.length,
             }),
     };
-    v.submit = { endsAt: s.submitEndsAt, nudgesOn: s.nudgesOn, people: Object.values(s.clients).filter((c) => c.cards > 0).length };
+    v.submit = {
+      endsAt: s.submitEndsAt,
+      nudgesOn: s.nudgesOn,
+      nudge: s.nudge,
+      nudgeTexts: this.nudgeTexts(),
+      tagging: !!this.tagCards,
+      people: Object.values(s.clients).filter((c) => c.cards > 0).length,
+    };
     v.cards = [...s.cards].sort((a, b) => a.id - b.id).map(({ id, text, hidden }) => ({ id, text, hidden }));
     v.clustering = s.clustering;
     const counts = this.reactionCounts();
@@ -610,7 +676,9 @@ export class Session {
       index: s.walk.index,
       total: s.walk.stream.length,
       cardStartedAt: s.walk.cardStartedAt,
-      stream: s.walk.stream.map((it) => ({ groupId: it.groupId, text: this.groupText(it.groupId) })),
+      // Facilitator only: a rough per-card share of the walk-through's time.
+      budgetMs: Math.min(180_000, Math.max(20_000, WALK_MS / Math.max(1, s.walk.stream.length))),
+      stream: s.walk.stream.map((it) => ({ groupId: it.groupId, text: this.groupText(it.groupId), reactions: counts.get(it.groupId) ?? 0 })),
       item: item ? { groupId: item.groupId, ...this.itemView(item) } : null,
       stay: count(s.walk.signals.stay),
       moveOn: count(s.walk.signals.moveOn),

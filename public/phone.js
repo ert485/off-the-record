@@ -125,73 +125,98 @@ const SCREENS = {
 
 // ---- submissions: private notes, then pick up to 3 --------------------------
 
+const DEFAULT_PLACEHOLDER = 'Write freely. Notes stay on this phone.';
+
 function submitScreen() {
   let notes = local.get('notes', []);
   let step = 'write';
   let picked = new Set();
   let view = null;
-  let toast = null;
   const saveNotes = () => local.set('notes', notes);
-
-  const timer = h('div', { class: 'timer' });
-  const body = h('div', { class: 'stack' });
-  const el = h('div', { class: 'stack' }, h('h2', {}, PROMPT), timer, body);
-
   const remaining = () => (view ? view.submit.max - view.submit.submitted : 3);
 
-  function renderWrite(prefill = local.get('draft', '')) {
-    const input = h('textarea', { rows: 4, maxLength: HARD_MAX, placeholder: 'Write freely. Notes stay on this phone.' });
-    input.value = prefill;
-    const counter = h('div', { class: 'counter' });
-    const add = h('button', { class: 'grow' }, 'Save note');
-    const refresh = () => {
-      const n = input.value.trim().length;
-      counter.textContent = `${input.value.length}/${SOFT_MAX}`;
-      counter.classList.toggle('over', input.value.length > SOFT_MAX);
-      add.disabled = n === 0;
-      local.set('draft', input.value);
-    };
-    input.addEventListener('input', refresh);
-    add.addEventListener('click', () => {
-      const text = input.value.trim();
-      if (!text) return;
-      notes.push({ id: newId(), text });
-      saveNotes();
-      input.value = '';
-      refresh();
-      render();
-      body.querySelector('textarea')?.focus();
-    });
-    refresh();
+  // The writing area is built once and never replaced, so the iPhone keyboard
+  // stays attached to the same textarea while notes are added.
+  const input = h('textarea', { rows: 4, maxLength: HARD_MAX, placeholder: DEFAULT_PLACEHOLDER });
+  input.value = local.get('draft', '');
+  const counter = h('div', { class: 'counter' });
+  const save = h('button', { class: 'grow' }, 'Save note');
+  const writeArea = h('div', { class: 'stack' }, input, counter, h('div', { class: 'row' }, save));
+  const doneText = h('p', { class: 'dim' });
+  const toast = h('div', { class: 'toast', hidden: true });
+  const listHead = h('p', { class: 'small faint' }, 'Private notes (only on this phone)');
+  const list = h('div', { class: 'stack' });
+  const pickButton = h('button', { class: 'primary' });
+  const writeStep = h('div', { class: 'stack' }, toast, writeArea, doneText, listHead, list, pickButton);
+  const pickStep = h('div', { class: 'stack' });
+  const timer = h('div', { class: 'timer-banner', hidden: true });
+  const el = h('div', { class: 'stack' }, h('h2', {}, PROMPT), timer, writeStep, pickStep);
 
-    const list = notes.map((note) =>
-      h(
-        'div',
-        { class: 'note' },
-        h('div', { class: 'text' }, note.text),
-        h('button', { class: 'quiet', onclick: () => editNote(note) }, 'Edit'),
-        h('button', { class: 'quiet', onclick: () => deleteNote(note) }, '✕'),
+  function refreshInput() {
+    counter.textContent = `${input.value.length}/${SOFT_MAX}`;
+    counter.classList.toggle('over', input.value.length > SOFT_MAX);
+    save.disabled = input.value.trim().length === 0;
+    local.set('draft', input.value);
+  }
+  input.addEventListener('input', refreshInput);
+
+  // Keeps whatever is in the box as a note. Returns true if it saved one.
+  function saveDraft() {
+    const text = input.value.trim();
+    if (!text) return false;
+    notes.push({ id: newId(), text });
+    saveNotes();
+    input.value = '';
+    refreshInput();
+    return true;
+  }
+
+  save.addEventListener('click', () => {
+    if (saveDraft()) renderList();
+    input.focus();
+  });
+
+  pickButton.addEventListener('click', () => {
+    // Anything still in the box counts as a note: nothing typed is lost.
+    saveDraft();
+    toast.hidden = true;
+    if (!notes.length) return;
+    step = 'pick';
+    render();
+  });
+
+  function renderList() {
+    const left = remaining();
+    writeArea.hidden = left <= 0;
+    doneText.hidden = left > 0;
+    doneText.textContent = `You've shared ${view?.submit.max ?? 3} cards. Thank you.`;
+    listHead.hidden = notes.length === 0;
+    fill(
+      list,
+      notes.map((note) =>
+        h(
+          'div',
+          { class: 'note' },
+          h('div', { class: 'text' }, note.text),
+          h('button', { class: 'quiet', onclick: () => editNote(note) }, 'Edit'),
+          h('button', { class: 'quiet', onclick: () => deleteNote(note) }, '✕'),
+        ),
       ),
     );
-    const left = remaining();
-    fill(body, 
-      toast ?? '',
-      left > 0 ? [input, counter, h('div', { class: 'row' }, add)] : h('p', { class: 'dim' }, `You've shared ${view?.submit.max ?? 3} cards. Thank you.`),
-      notes.length ? h('p', { class: 'small faint' }, 'Private notes (only on this phone)') : '',
-      list,
-      left > 0 && notes.length
-        ? h('button', { class: 'primary', onclick: () => ((step = 'pick'), (toast = null), render()) }, `Pick up to ${left} to share →`)
-        : '',
-    );
+    pickButton.hidden = left <= 0;
+    pickButton.textContent = `Pick up to ${left} to share →`;
   }
 
   function editNote(note) {
+    saveDraft(); // don't overwrite something half-written
     notes = notes.filter((n) => n !== note);
     picked.delete(note.id);
     saveNotes();
+    input.value = note.text;
+    refreshInput();
     step = 'write';
-    render(note.text);
-    body.querySelector('textarea')?.focus();
+    render();
+    input.focus();
   }
 
   function deleteNote(note) {
@@ -214,14 +239,16 @@ function submitScreen() {
         picked.clear();
         saveNotes();
         step = 'write';
-        toast = h('div', { class: 'toast' }, 'Shared. Look up when Erik moves on.');
+        toast.textContent = 'Shared. Look up when Erik moves on.';
+        toast.hidden = false;
         render();
       } catch (err) {
         share.disabled = false;
-        showError(body, err);
+        showError(pickStep, err);
       }
     });
-    fill(body, 
+    fill(
+      pickStep,
       h('p', {}, `Pick up to ${left} to share as cards. The rest stay here and are discarded.`),
       notes.map((note) => {
         const on = picked.has(note.id);
@@ -250,36 +277,54 @@ function submitScreen() {
     );
   }
 
-  function render(prefill) {
-    if (step === 'pick' && remaining() > 0 && notes.length) renderPick();
-    else {
-      step = 'write';
-      renderWrite(prefill);
-    }
+  function render() {
+    if (step === 'pick' && (remaining() <= 0 || !notes.length)) step = 'write';
+    writeStep.hidden = step !== 'write';
+    pickStep.hidden = step !== 'pick';
+    if (step === 'pick') renderPick();
+    else renderList();
   }
 
+  // Two warnings, so there's time to finish a note and still pick.
   function tickTimer() {
     const left = view?.submit.endsAt ? view.submit.endsAt - serverNow() : Infinity;
-    timer.textContent = left <= 60_000 ? (left > 0 ? `About a minute left to share (${formatClock(left)})` : 'Time is nearly up: share what you want now.') : '';
+    timer.hidden = left > 120_000;
+    if (left > 60_000) timer.textContent = `About 2 minutes left. Leave time to pick what you share (${formatClock(left)}).`;
+    else if (left > 0) timer.textContent = `About a minute left: pick what to share now (${formatClock(left)}).`;
+    else timer.textContent = 'Time is up any moment: share what you want now.';
+    timer.classList.toggle('urgent', left <= 60_000);
   }
   const interval = setInterval(tickTimer, 1000);
 
+  // Nudges: rotating placeholder text. The server says which nudge to show:
+  // all of them in turn (too few cards to tell yet), one (the least-covered
+  // direction), or none (the mix is already varied, or nudges are off).
+  let nudgeIndex = 0;
+  function tickNudge() {
+    const n = view?.submit;
+    if (!n?.nudgesOn || !n.nudge) return (input.placeholder = DEFAULT_PLACEHOLDER);
+    const texts = n.nudge.texts;
+    input.placeholder = texts[nudgeIndex++ % texts.length];
+  }
+  const nudgeInterval = setInterval(tickNudge, 6000);
+
+  refreshInput();
   let lastRemaining = null;
   return {
     el,
     update(v) {
+      const firstUpdate = view === null;
       view = v;
       tickTimer();
-      // Re-render only when something that changes the layout changed, so
-      // typing is never interrupted.
+      if (firstUpdate) tickNudge();
       if (remaining() !== lastRemaining) {
-        const first = lastRemaining === null;
         lastRemaining = remaining();
-        if (first || !el.contains(document.activeElement)) render();
+        render();
       }
     },
     destroy() {
       clearInterval(interval);
+      clearInterval(nudgeInterval);
     },
   };
 }
@@ -342,11 +387,23 @@ function reactScreen() {
     );
     const chips = h('div', { class: 'row wrap' });
     const input = h('input', { type: 'text', placeholder: '＋ any emoji', maxLength: 16, 'aria-label': 'Add any emoji' });
+    const emojiHint = h('div', { class: 'emoji-hint', hidden: true }, 'Emojis only: switch to the emoji keyboard.');
     input.addEventListener('input', () => {
       const e = firstEmoji(input.value);
-      if (!e) return;
+      // Reactions are emojis only. Letters are cleared with a hint rather than
+      // sitting in the box looking like they'll be sent.
+      emojiHint.hidden = !!e || !input.value.trim();
+      if (!e) {
+        if (/[\p{L}\p{N}]/u.test(input.value)) setTimeout(() => (input.value = ''), 600);
+        return;
+      }
       input.value = '';
-      if (PRESETS.some((p) => p.e === e) || custom.includes(e) || custom.length >= 4) return;
+      const preset = PRESETS.findIndex((p) => p.e === e);
+      if (preset >= 0) {
+        if (!selected.has(e)) grid.children[preset].click();
+        return;
+      }
+      if (custom.includes(e) || custom.length >= 4) return;
       custom.push(e);
       selected.add(e);
       const chip = h('button', { class: 'chip on' }, e);
@@ -378,6 +435,7 @@ function reactScreen() {
       h('div', { class: 'react-card' }, textFor(current)),
       grid,
       h('div', { class: 'row wrap custom-row' }, input, chips),
+      emojiHint,
       next,
     );
   }

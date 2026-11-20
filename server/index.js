@@ -12,6 +12,7 @@ import QRCode from 'qrcode';
 import { Session, ActionError } from './session.js';
 import { openStore } from './db.js';
 import { createClusterer } from './cluster.js';
+import { createNudgeTagger } from './nudges.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PUBLIC = join(ROOT, 'public');
@@ -34,6 +35,7 @@ const clusterCards = createClusterer();
 const session = new Session({
   state: store.load(),
   clusterCards,
+  tagCards: createNudgeTagger(),
   onChange: () => {
     store.save(session.state);
     scheduleBroadcast();

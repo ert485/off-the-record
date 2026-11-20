@@ -68,3 +68,17 @@ ul.plain { padding-left: 18px; margin: 0; display: grid; gap: 6px; }
 .signals button.on .sub { color: var(--bg); }
 .pause-panel { border: 1px solid var(--accent); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .pause-panel .about { font-size: 15px; color: var(--text-dim); border-left: 3px solid var(--line); padding-left: 10px; }
+.timer-banner {
+  position: sticky;
+  top: 8px;
+  z-index: 2;
+  background: color-mix(in srgb, var(--warn) 16%, var(--bg));
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.timer-banner.urgent { background: var(--warn); color: #1a1406; }
+.emoji-hint { font-size: 13px; color: var(--warn); }

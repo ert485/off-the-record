@@ -60,6 +60,14 @@ function joinScreen() {
       {},
       h('h1', {}, 'Off the Record'),
       url,
+      // The short version, big. The full disclosure (read aloud) as fine print.
+      h(
+        'ul',
+        { class: 'promises' },
+        h('li', {}, 'Anonymous: no logins, no names.'),
+        h('li', {}, 'Your notes stay on your phone.'),
+        h('li', {}, 'Everything is shredded tonight.'),
+      ),
       h(
         'p',
         { class: 'disclosure' },
@@ -109,7 +117,6 @@ function walkScreen(first) {
   const comments = h('div', { class: 'comments' });
   const banner = h('div', { class: 'pause-banner' });
   const counts = h('div', { class: 'counts' });
-  const bar = h('div', { class: 'bar' });
   const controls = h('div', { class: 'controls-line' }, last ? '' : 'From your phone you can ask to stay, move on, or go back.');
   const el = h(
     'div',
@@ -118,7 +125,6 @@ function walkScreen(first) {
     h('div', { style: { alignSelf: 'center' } }, card, more),
     mix,
     h('div', { class: 'bottom' }, h('div', { class: 'grow stack' }, banner, comments, controls), counts),
-    bar,
   );
   let view = first;
 
@@ -127,11 +133,7 @@ function walkScreen(first) {
     if (w?.pause) {
       const end = w.pause.graceEndsAt ?? w.pause.endsAt;
       fill(banner, h('span', {}, w.pause.graceEndsAt ? 'Last few seconds' : 'Anonymous pause: comment from your phone'), h('span', { class: 'clock' }, formatClock(end - serverNow())));
-    } else fill(banner, );
-    if (!last && w?.cardStartedAt) {
-      const share = Math.min(1, (serverNow() - w.cardStartedAt) / w.budgetMs);
-      bar.style.width = `${share * 100}%`;
-    }
+    } else fill(banner);
   }
   const interval = setInterval(tick, 500);
 
@@ -167,7 +169,7 @@ function walkScreen(first) {
       const chip = (n, label) => h('span', { class: n ? '' : 'zero' }, `${label} ${n}`);
       fill(counts, 
         ...(last ? [] : [chip(w.stay, 'Stay'), chip(w.back, 'Go back')]),
-        chip(w.pauseRequests, w.pauseHeld ? 'Pause (held)' : 'Pause'),
+        w.pauseHeld && w.pauseRequests ? h('span', {}, 'Pause: coming up') : chip(w.pauseRequests, 'Pause'),
       );
       tick();
     },
