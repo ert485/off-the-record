@@ -32,7 +32,8 @@ export function freshState(now) {
     phaseStartedAt: now,
     clockStart: null,
     submitEndsAt: null,
-    nudgesOn: true,
+    // Off until the facilitator turns them on.
+    nudgesOn: false,
     // Which nudges phones show: all in turn, one label, or none (mix is varied).
     nudge: { mode: 'all', label: null },
     // Cards carry no author and no timestamp. Ids are random so their order

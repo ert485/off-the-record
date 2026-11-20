@@ -66,7 +66,7 @@ Three views, one small server. Keep it minimal: about 40 users needs no heavy re
 | --- | --- | --- |
 | Phone (participant) | The current phase. Input phases: a private notepad, then a pick step with a soft identifier hint; a one-card-at-a-time reaction stack. Look-up phases: a dim "look up" screen | Write unlimited private notes, then pick up to 3 to submit (local check, author decides); tap one or more emojis per card; request an anonymous pause; comment during pauses (about 140 characters); look-up taps: "stay" (counted on the projector), "move on" (private to Erik); suggest going back (counted on the projector) |
 | Projector | Join QR (after Join, stays small in a corner for latecomers, hidden during the finale and shred), "on your phone", the current card in the stream with its emoji mix, comments arriving live during pauses, pause countdown, live counts of people asking to stay or suggesting going back, emotional fingerprint, shred animation | None |
-| Facilitator | Everything, plus live submission count, share of phones finished reacting and elapsed time, pace indicator, private "move on" signal, and phase controls | Advance phases and cards; go back a card or phase; extend the submission window; turn nudges on or off; approve cluster names; hide a card, or remove a comment after it appears (one tap, no reason needed); accept or hold pause requests; trigger the shred |
+| Facilitator | Everything, plus live submission count, share of phones finished reacting and elapsed time, pace indicator, private "move on" signal, and phase controls | Advance phases and cards; go back a card or phase; extend the submission window; turn nudges on or off (off at the start of every session); approve cluster names; hide a card, or remove a comment after it appears (one tap, no reason needed); accept or hold pause requests; trigger the shred |
 
 **Design rules**
 
@@ -118,7 +118,7 @@ Anonymizing happens locally on each phone, with no AI. The AI only clusters and 
 
 **Nudges (preset, any year)**
 
-Shown as rotating placeholder text. As built (`server/nudges.js`): with fewer than 5 cards, phones rotate all six. After that, once submissions are quiet for 10 seconds, Claude Haiku tags each visible card with the directions it touches, and phones show only the nudge for the first direction no card covers; if every direction is covered, no nudge. Erik's view says which nudge phones are showing, and the toggle turns them off. The AI matches cards to labels and shows the nudge for the least-covered one; "good" and "hard" are a balancing pair. No "someone who…" nudges, since they invite names. Refine after practice rounds.
+Shown as rotating placeholder text. As built (`server/nudges.js`): with fewer than 5 cards, phones rotate all six. After that, once submissions are quiet for 10 seconds, Claude Haiku tags each visible card with the directions it touches, and phones show only the nudge for the first direction no card covers; if every direction is covered, no nudge. Nudges start off in every session; Erik turns them on with the toggle, and his view says which nudge phones are showing. The AI matches cards to labels and shows the nudge for the least-covered one; "good" and "hard" are a balancing pair. No "someone who…" nudges, since they invite names. Refine after practice rounds.
 
 | Label | Nudge text |
 | --- | --- |

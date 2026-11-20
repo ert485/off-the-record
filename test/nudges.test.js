@@ -7,12 +7,21 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const cid = (i) => `phone-${String(i).padStart(8, '0')}`;
 
 function make(tagCards) {
-  return new Session({
+  const s = new Session({
     clusterCards: async () => ({ themes: [] }),
     tagCards,
     nudgeQuietMs: 5,
   });
+  s.setNudges(true);
+  return s;
 }
+
+test('nudges start off', () => {
+  const s = new Session({ clusterCards: async () => ({ themes: [] }) });
+  s.advance();
+  assert.equal(s.view('phone', { cid: cid(1) }).submit.nudge, null);
+  assert.equal(s.view('facilitator').submit.nudgesOn, false);
+});
 
 test('leastCovered picks the first uncovered direction, balancing good and hard', () => {
   assert.equal(leastCovered({}), 'outside work');
