@@ -28,11 +28,51 @@ const LABELS = {
   closing: 'Closing',
 };
 
+// What the move buttons say: a verb for where you're going.
+const FORWARD = {
+  submit: 'Open submissions',
+  cluster: 'Group the cards',
+  react: 'Start reactions',
+  walk: 'Start the walk-through',
+  lastcall: 'Go to last call',
+  finale: 'Show the finale',
+};
+const BACK_TO = {
+  join: 'the join screen',
+  submit: 'submissions',
+  cluster: 'grouping',
+  react: 'reactions',
+  walk: 'the walk-through',
+  lastcall: 'last call',
+};
+
 let view = null;
 let online = false;
 let pending = false;
 const drafts = new Map(); // theme id -> name being typed
 const folded = new Map(); // list name -> open or not, as the facilitator left it
+const explained = new Set(); // which ⓘ explanations are open
+
+// A small ⓘ button that shows or hides a one-line explanation.
+function info(key, text) {
+  const open = explained.has(key);
+  const button = h('button', {
+    class: `info${open ? ' info-open' : ''}`,
+    'aria-label': 'What is this?',
+    onclick: () => {
+      if (open) explained.delete(key);
+      else explained.add(key);
+      render();
+    },
+  }, 'ⓘ');
+  return { button, text: open ? h('div', { class: 'info-text' }, text) : '' };
+}
+
+function paceText(pace) {
+  if (Math.abs(pace) < 0.5) return 'on pace';
+  const min = Math.max(1, Math.round(Math.abs(pace)));
+  return pace < 0 ? `~${min} min behind` : `~${min} min ahead`;
+}
 
 subscribe(
   `role=facilitator&t=${encodeURIComponent(token)}`,
@@ -76,16 +116,25 @@ function renderBar() {
   const pace = c?.pace ?? 0;
   const clamped = Math.max(-5, Math.min(5, pace));
   const color = Math.abs(pace) < 0.5 ? 'var(--ok)' : pace < 0 ? 'var(--warn)' : '#6aa9ff';
+  const explain = info(
+    'pace',
+    'Pace: where the session is against the 25-minute plan. The dot sits on the centre line when you’re on time, slides left when you’re behind and right when you’re ahead. Only you see it.',
+  );
   fill(
     bar,
     h('span', { class: 'phase' }, LABELS[view.phase]),
     c?.startedAt ? h('span', { class: 'clock' }, formatClock(serverNow() - c.startedAt)) : '',
-    // Wordless ahead/behind marker: left of centre is behind, right is ahead.
+    // Ahead/behind marker: left of centre is behind, right is ahead.
     c?.startedAt
-      ? h('span', { class: 'pace', title: 'Pace' }, h('span', { class: 'dot', style: { left: `${50 + clamped * 10}%`, background: color } }))
+      ? [
+          h('span', { class: 'pace', title: 'Pace against the 25-minute plan' }, h('span', { class: 'dot', style: { left: `${50 + clamped * 10}%`, background: color } })),
+          h('span', { class: 'pace-text', style: { color } }, paceText(pace)),
+          explain.button,
+        ]
       : '',
     h('span', { class: 'dim' }, `${view.phones} phones`),
     online ? '' : h('span', { class: 'offline' }, 'Reconnecting…'),
+    explain.text,
   );
 }
 
@@ -111,7 +160,7 @@ function zone(kind, ...children) {
 // ---- building blocks -------------------------------------------------------
 
 function nav(v) {
-  const back = h('button', { disabled: !v.canBack, onclick: () => act('back') }, '◀ Back');
+  const back = h('button', { disabled: !v.canBack, onclick: () => act('back') }, v.prev ? `◀ Back to ${BACK_TO[v.prev]}` : '◀ Back');
   let next;
   if (v.next === 'shred') {
     next = h('button', { class: 'danger' }, 'Shred…');
@@ -120,7 +169,7 @@ function nav(v) {
         act('advance', { confirm: true });
       }
     });
-  } else next = h('button', { class: 'primary', onclick: () => act('advance') }, `${LABELS[v.next]} ▶`);
+  } else next = h('button', { class: 'primary', onclick: () => act('advance') }, `${FORWARD[v.next] ?? LABELS[v.next]} ▶`);
   return h('div', { class: 'nav' }, back, next);
 }
 
@@ -239,7 +288,11 @@ const PHASES = {
   submit: (v) => ({
     now: now(
       v.cards.length,
-      ` cards from ${v.submit.people} people`,
+      (() => {
+        const phones = Math.max(v.phones, v.submit.people);
+        const pct = phones ? Math.round((v.submit.people / phones) * 100) : 0;
+        return ` ${v.cards.length === 1 ? 'card' : 'cards'} · ${v.submit.people} of ${phones} phones have shared (${pct}%)`;
+      })(),
       liveClock(() => {
         const left = v.submit.endsAt - serverNow();
         return `${left < 0 ? '-' : ''}${formatClock(Math.abs(left))}`;
@@ -324,19 +377,24 @@ const PHASES = {
     const group = overview || !item ? null : v.themes.flatMap((t) => t.groups).find((g) => g.id === item.groupId);
     const shown = group?.cards.find((c) => !c.hidden);
     const cards = Math.max(0, w.total - 1);
+    const budgetInfo = info(
+      'budget',
+      `The walk-through’s planned 9½ minutes divided by the ${cards} cards: a rough average per card, not a limit. Spend longer where the room wants to.`,
+    );
     const prompts = overview ? OVERVIEW_PROMPTS : [PROMPTS[w.index % PROMPTS.length], PROMPTS[(w.index + 1) % PROMPTS.length]];
     return {
       move: [
         nav(v),
         h('div', { class: 'walk-nav' },
-          h('button', { disabled: w.index === 0, onclick: () => act('prevCard') }, '◀ Card'),
+          h('button', { disabled: w.index === 0, onclick: () => act('prevCard') }, w.index === 1 ? '◀ Back to themes' : '◀ Back one card'),
           h('button', { class: 'primary', disabled: w.index >= w.total - 1, onclick: () => act('nextCard') }, w.index === 0 ? 'First card ▶' : 'Next card ▶')),
       ],
       now: now(
-        overview ? 'Overview' : `Card ${w.index} of ${cards}`,
+        overview ? 'Themes' : `Card ${w.index} of ${cards}`,
         '',
         since(w.cardStartedAt),
-        overview ? ' on the overview' : ` of ~${formatClock(w.budgetMs)}`,
+        overview ? ' on the themes' : [` on this card · ~${formatClock(w.budgetMs)} average `, budgetInfo.button],
+        budgetInfo.text,
       ),
       room: [
         pauseControls(v),
@@ -347,7 +405,7 @@ const PHASES = {
       ],
       content: [
         overview
-          ? h('div', { class: 'current' }, 'Overview of the themes. Say aloud: you set the pace, timers are hints, and anyone can ask to stay, move on or go back.')
+          ? h('div', { class: 'current' }, 'The themes are on the projector. Say aloud: you set the pace, timers are hints, and anyone can ask to stay, move on or go back.')
           : [
               item?.theme ? h('div', { class: 'dim' }, item.theme) : '',
               h('div', { class: 'row', style: { alignItems: 'flex-start' } },

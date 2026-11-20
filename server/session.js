@@ -696,6 +696,7 @@ export class Session {
       now,
       phaseStartedAt: s.phaseStartedAt,
       canBack: !!previousPhase(s.phase),
+      prev: previousPhase(s.phase),
       next: nextPhase(s.phase),
       shredded: this.shredded,
       phones: phoneCount,

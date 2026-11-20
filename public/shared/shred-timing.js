@@ -7,9 +7,9 @@ export const PRELUDE_MS = 3400;
 export const FIRST_SHEET_MS = PRELUDE_MS + 400;
 export const PULL_MS = 2600;
 export const SHEET_GAP_MS = 500;
-export const SETTLE_MS = 3500; // the last strips land, then the fade starts
+export const SETTLE_MS = 1800; // the last strips land, then the fade starts
 export const FADE_MS = 2000;
-export const BLANK_MS = 3000; // the beat of silence on black, then the closing fades in
+export const BLANK_MS = 1500; // the beat of silence on black, then the closing fades in
 
 // Cards go through in at most 6 sheets, so the shred fits its minute
 // whatever the card count. Returns the cards grouped into sheets.

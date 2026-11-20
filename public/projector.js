@@ -169,7 +169,8 @@ function walkScreen(first) {
       if (last) {
         card.textContent = 'Last call';
         card.style.fontSize = '6vw';
-        more.textContent = 'Anything else? An opinion, another thought, a question: say it out loud. Or ask for an anonymous pause from your phone.';
+        more.textContent = 'Anything else to say? Out loud, or anonymously from your phone.';
+        more.classList.add('lastcall-sub');
       } else if (w.item?.overview) {
         // Before the first card: what came up, biggest themes first.
         theme.textContent = '';
@@ -177,7 +178,7 @@ function walkScreen(first) {
         card.style.fontSize = '';
         fill(
           card,
-          h('div', { class: 'overview-title' }, 'What came up'),
+          h('div', { class: 'overview-title' }, 'Themes'),
           h('div', { class: 'overview' }, w.item.overview.map((t) => h('div', {}, h('span', {}, t.name ?? 'A theme'), h('small', {}, `${t.cards} ${t.cards === 1 ? 'card' : 'cards'}`)))),
         );
         more.textContent = 'First reactions? Anything surprise you?';

@@ -3,8 +3,8 @@ body { background: #000; overflow: hidden; cursor: none; }
 #app { position: fixed; inset: 0; }
 .emoji, .mix, .particle, .pool, .sheet-emojis { font-family: var(--emoji); }
 
-#corner-qr { position: fixed; right: 1.5vw; bottom: 1.5vw; width: 10vw; display: flex; flex-direction: column; align-items: center; gap: 0.4vw; z-index: 5; opacity: 0.9; }
-#corner-qr span { font-size: 0.95vw; color: var(--text-dim); text-align: center; }
+#corner-qr { position: fixed; right: 1.5vw; bottom: 1.5vw; width: 13vw; display: flex; flex-direction: column; align-items: center; gap: 0.4vw; z-index: 5; opacity: 0.9; }
+#corner-qr span { font-size: 1.6vw; font-weight: 600; color: var(--text); text-align: center; line-height: 1.2; }
 #corner-qr img { width: 100%; background: white; padding: 0.4vw; border-radius: 0.6vw; }
 #section { position: fixed; top: 1.6vh; left: 50%; transform: translateX(-50%); font-size: 1.8vw; color: var(--text-dim); font-variant-numeric: tabular-nums; z-index: 5; }
 .overview-title { font-size: 3vw; color: var(--text-dim); margin-bottom: 3vh; }
@@ -91,3 +91,4 @@ body { background: #000; overflow: hidden; cursor: none; }
 .del-cancel { color: var(--text-dim); }
 .del { background: var(--danger); color: white; font-weight: 600; }
 .cursor { position: absolute; left: 0; top: 0; width: 2.2vw; height: 2.2vw; pointer-events: none; }
+.walk .more.lastcall-sub { font-size: 2.8vw; color: var(--text-dim); margin-top: 3vh; }

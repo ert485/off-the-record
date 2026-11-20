@@ -83,3 +83,4 @@ ul.plain { padding-left: 18px; margin: 0; display: grid; gap: 6px; }
 .timer-banner.urgent { background: var(--warn); color: #1a1406; }
 .emoji-hint { font-size: 13px; color: var(--warn); }
 .add-own { flex: 1; border-style: dashed; color: var(--text-dim); }
+.lastcall-sub { font-size: 20px; color: var(--text-dim); margin: 0; }

@@ -65,3 +65,7 @@ details summary { cursor: pointer; color: var(--text-dim); }
 .signals .private { outline: 1px dashed var(--warn); }
 .zone-lists { display: block; }
 .zone-lists > * + * { margin-top: 10px; }
+.pace-text { font-size: 14px; font-weight: 600; }
+.info { min-height: 0; padding: 0 6px; border: none; background: none; color: var(--text-faint); font-size: 16px; line-height: 1; }
+.info.info-open { color: var(--text); }
+.info-text { flex-basis: 100%; font-size: 13px; color: var(--text-dim); }

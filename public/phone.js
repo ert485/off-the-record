@@ -197,9 +197,17 @@ function submitScreen() {
 
   function renderList() {
     const left = remaining();
+    if (left <= 0 && (notes.length || input.value)) {
+      // All 3 shared: the notes left over are discarded now, as promised.
+      notes = [];
+      saveNotes();
+      input.value = '';
+      refreshInput();
+      toast.hidden = true;
+    }
     writeArea.hidden = left <= 0;
     doneText.hidden = left > 0;
-    doneText.textContent = `You've shared ${view?.submit.max ?? 3} cards. Thank you.`;
+    doneText.textContent = `You've shared ${view?.submit.max ?? 3} cards. Thank you. Your other notes are discarded. Look up when Erik moves on.`;
     listHead.hidden = notes.length === 0;
     fill(
       list,
@@ -301,7 +309,8 @@ function submitScreen() {
   // Two warnings, so there's time to finish a note and still pick.
   function tickTimer() {
     const left = view?.submit.endsAt ? view.submit.endsAt - serverNow() : Infinity;
-    timer.hidden = left > 120_000;
+    // No warning once all 3 are shared: there's nothing left to do.
+    timer.hidden = left > 120_000 || remaining() <= 0;
     if (left > 60_000) timer.textContent = `About 2 minutes left. Leave time to pick what you share (${formatClock(left)}).`;
     else if (left > 0) timer.textContent = `About a minute left: pick what to share now (${formatClock(left)}).`;
     else timer.textContent = 'Time is up any moment: share what you want now.';
@@ -488,7 +497,7 @@ function walkScreen(first) {
     'div',
     { class: 'lookup' },
     h('div', { class: 'big' }, last ? 'Last call' : 'Look up'),
-    last && h('p', { class: 'dim' }, 'Anything else? An opinion, another thought, a question: say it out loud. Or, if you’d rather, ask for an anonymous pause.'),
+    last && h('p', { class: 'lastcall-sub' }, 'Anything else to say? Out loud, or anonymously:'),
   );
   const signals = h('div', { class: 'signals' });
   const pauseButton = h('button', {}, 'Ask for an anonymous pause');
