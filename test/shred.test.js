@@ -112,7 +112,8 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
     for (;;) {
       const { value } = await reader.read();
       buf += decoder.decode(value, { stream: true });
-      const m = buf.match(/^data: (.*)$/m);
+      // Only a complete message: one data line ending in a blank line.
+      const m = buf.match(/^data: (.*)\n\n/m);
       if (m) {
         ac.abort();
         return JSON.parse(m[1]);
