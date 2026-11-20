@@ -4,7 +4,7 @@ import { subscribe, fill, h, formatClock, serverNow } from './shared/client.js';
 const app = document.getElementById('app');
 const cornerQr = document.getElementById('corner-qr');
 const status = document.getElementById('status');
-let config = { publicUrl: location.origin, repoUrl: '' };
+let config = { publicUrl: location.origin, repoUrl: '', feedbackUrl: '' };
 fetch('/config.json').then((r) => r.json()).then((c) => (config = c)).catch(() => {});
 
 let screen = null;
@@ -41,7 +41,16 @@ const SCREENS = {
   finale: finaleScreen,
   shred: shredScreen,
   closing: () => ({
-    el: h('div', { class: 'center closing' }, h('div', {}, h('h1', {}, 'What do you think?'), h('div', { class: 'url' }, config.repoUrl.replace(/^https?:\/\//, '')))),
+    el: h(
+      'div',
+      { class: 'center closing' },
+      h(
+        'div',
+        { class: 'closing-inner' },
+        h('img', { class: 'qr', src: '/feedback-qr.svg', alt: '' }),
+        h('div', {}, h('h1', {}, 'What do you think?'), h('div', { class: 'url' }, config.feedbackUrl.replace(/^https?:\/\//, ''))),
+      ),
+    ),
   }),
 };
 
@@ -65,8 +74,8 @@ function joinScreen() {
         'ul',
         { class: 'promises' },
         h('li', {}, 'Anonymous: no logins, no names.'),
-        h('li', {}, 'Your notes stay on your phone.'),
-        h('li', {}, 'Everything is shredded tonight.'),
+        h('li', {}, 'Notes you don’t share never leave your phone.'),
+        h('li', {}, 'Everything on our server is shredded tonight.'),
       ),
       h(
         'p',
@@ -180,40 +189,37 @@ function walkScreen(first) {
 }
 
 // ---- finale: the emotional fingerprint -------------------------------------
-// Every reaction arrives as a small emoji in the order it happened (about a
+// Every reaction arrives as an emoji in the order it happened (about a
 // 10-second replay), then they pool into one emoji per type, sized by count
-// (area, not radius). No numbers, no words.
+// (area, not width). Each type's particles together cover about the same area
+// as its pool, so pooling reads as the particles merging, not a jump in scale.
+// No numbers, no words.
 
 const REPLAY_MS = 10_000;
 const MAX_PARTICLES = 700;
+const MIN_POOL_PX = 28;
+
+// Pool size in px per emoji: all pools together fill about a third of the
+// screen, and each pool's area is proportional to its count.
+function poolSizes(counts, W, H) {
+  const max = Math.max(...counts.values());
+  const weight = [...counts.values()].reduce((sum, n) => sum + n / max, 0);
+  const maxPx = Math.min(Math.sqrt((0.32 * W * H) / weight), Math.min(W, H) * 0.45);
+  return new Map([...counts].map(([e, n]) => [e, Math.max(MIN_POOL_PX, maxPx * Math.sqrt(n / max))]));
+}
+
+const countOf = (list) => {
+  const m = new Map();
+  for (const e of list) m.set(e, (m.get(e) ?? 0) + 1);
+  return m;
+};
 
 function finaleScreen(v) {
   const stage = h('div', { class: 'stage' });
   const timers = [];
   const later = (fn, ms) => timers.push(setTimeout(fn, ms));
   const sequence = v.finale?.sequence ?? [];
-  if (sequence.length) {
-    const every = Math.ceil(sequence.length / MAX_PARTICLES);
-    const sample = sequence.filter((_, i) => i % every === 0);
-    const step = Math.min(250, REPLAY_MS / sample.length);
-    const particles = [];
-    later(() => {
-      const W = innerWidth;
-      const H = innerHeight;
-      sample.forEach((e, i) =>
-        later(() => {
-          const p = h('span', { class: 'particle' }, e);
-          const x = W * (0.06 + 0.88 * Math.random()) - 14;
-          const y = H * (0.08 + 0.84 * Math.random()) - 14;
-          p.style.transform = `translate(${x}px, ${y}px) scale(0)`;
-          stage.append(p);
-          particles.push({ p, e, x, y });
-          requestAnimationFrame(() => requestAnimationFrame(() => (p.style.transform = `translate(${x}px, ${y}px) scale(1)`)));
-        }, i * step),
-      );
-      later(() => pool(particles, sequence, stage), sample.length * step + 2000);
-    }, 1200);
-  }
+  if (sequence.length) later(() => replay(sequence, stage, later), 1200);
   return {
     el: stage,
     destroy() {
@@ -222,57 +228,104 @@ function finaleScreen(v) {
   };
 }
 
-function pool(particles, sequence, stage) {
-  const counts = new Map();
-  for (const e of sequence) counts.set(e, (counts.get(e) ?? 0) + 1);
-  const sorted = [...counts].sort((a, b) => b[1] - a[1]);
-  const max = sorted[0][1];
-  const maxPx = Math.min(innerWidth, innerHeight) * 0.26;
+function replay(sequence, stage, later) {
+  const W = innerWidth;
+  const H = innerHeight;
+  const every = Math.ceil(sequence.length / MAX_PARTICLES);
+  const sample = sequence.filter((_, i) => i % every === 0);
+  const sizes = poolSizes(countOf(sequence), W, H);
+  const sampled = countOf(sample);
+  const step = Math.min(400, REPLAY_MS / sample.length);
+  const particles = [];
+  sample.forEach((e, i) =>
+    later(() => {
+      // This particle's share of its pool's area.
+      const s = sizes.get(e) / Math.sqrt(sampled.get(e));
+      const x = Math.random() * Math.max(0, W - s);
+      const y = Math.random() * Math.max(0, H - s);
+      const p = h('span', { class: 'particle', style: { fontSize: `${s}px` } }, e);
+      p.style.transform = `translate(${x}px, ${y}px) scale(0)`;
+      stage.append(p);
+      particles.push({ p, e, s });
+      requestAnimationFrame(() => requestAnimationFrame(() => (p.style.transform = `translate(${x}px, ${y}px) scale(1)`)));
+    }, i * step),
+  );
+  later(() => pool(particles, sizes, stage), sample.length * step + 2000);
+}
+
+function pool(particles, sizes, stage) {
   const pools = h('div', { class: 'pools' });
   const byEmoji = new Map();
   // Biggest in the middle, smaller ones alternating out to each side.
   const arranged = [];
-  sorted.forEach((entry, i) => (i % 2 ? arranged.unshift(entry) : arranged.push(entry)));
-  for (const [e, n] of arranged) {
-    const px = Math.max(26, maxPx * Math.sqrt(n / max));
+  [...sizes].sort((a, b) => b[1] - a[1]).forEach((entry, i) => (i % 2 ? arranged.unshift(entry) : arranged.push(entry)));
+  for (const [e, px] of arranged) {
     const el = h('span', { class: 'pool', style: { fontSize: `${px}px` } }, e);
     byEmoji.set(e, el);
     pools.append(el);
   }
   stage.append(pools);
   requestAnimationFrame(() => {
-    for (const { p, e } of particles) {
+    for (const { p, e, s } of particles) {
+      // Land somewhere inside the pool, so together they fill its shape.
       const r = byEmoji.get(e).getBoundingClientRect();
-      const jitter = () => (Math.random() - 0.5) * r.width * 0.3;
-      p.style.transform = `translate(${r.left + r.width / 2 - 14 + jitter()}px, ${r.top + r.height / 2 - 14 + jitter()}px) scale(0.8)`;
+      const x = r.left + Math.random() * Math.max(0, r.width - s);
+      const y = r.top + Math.random() * Math.max(0, r.height - s);
+      p.style.transform = `translate(${x}px, ${y}px) scale(1)`;
     }
     setTimeout(() => {
       for (const el of byEmoji.values()) el.style.opacity = '1';
       for (const { p } of particles) p.style.opacity = '0';
-    }, 1100);
+    }, 1300);
   });
 }
 
 // ---- shred -----------------------------------------------------------------
 // A literal shredder: the pooled emojis, then the cards behind them, are
-// pulled down through a slot and fall away as strips. Ends on black.
+// pulled down through a slot, come out underneath as narrow strips that sway
+// and flutter, and fall into a bin. Ends on black.
 
-const STRIPS = 12;
+const STRIP_VW = 1.2; // narrow enough that no whole word survives
 const PULL_MS = 2600;
+const GRAVITY = 1500; // px/s²
+const TERMINAL = 950; // px/s
 
 function shredScreen(v) {
   const root = h('div', { class: 'shredder' });
   const payload = v.shred;
   if (!payload) return { el: root };
-  const timers = [];
+  const W = innerWidth;
   const H = innerHeight;
-  const slotY = Math.round(H * 0.62);
-  const upper = h('div', { class: 'upper', style: { height: `${slotY}px` } });
-  const lower = h('div', { class: 'lower', style: { top: `${slotY}px` } });
-  const slot = h('div', { class: 'slot', style: { top: `${slotY - H * 0.007}px` } });
-  const body = h('div', { class: 'body', style: { top: `${slotY}px` } });
-  root.append(upper, body, lower, slot);
+  const slotY = Math.round(H * 0.4);
+  const exitY = Math.round(slotY + H * 0.07);
+  const binTop = H * 0.66;
+  const binBottom = H * 0.985;
+  const binLeftTop = W * 0.13;
+  const binLeftBottom = W * 0.2;
+  const binWall = (y) => {
+    const t = Math.min(1, Math.max(0, (y - binTop) / (binBottom - binTop)));
+    const left = binLeftTop + (binLeftBottom - binLeftTop) * t;
+    return [left, W - left];
+  };
 
+  const upper = h('div', { class: 'upper', style: { height: `${slotY}px` } });
+  const lower = h('div', { class: 'lower', style: { top: `${exitY}px` } });
+  const head = h('div', { class: 'head', style: { top: `${slotY}px`, height: `${exitY - slotY}px` } });
+  const slot = h('div', { class: 'slot', style: { top: `${slotY - H * 0.007}px` } });
+  const binBack = h('div', { class: 'bin-back', style: { top: `${binTop}px`, height: `${binBottom - binTop}px` } });
+  const binFront = h('div', { class: 'bin-front', style: { top: `${binTop}px`, height: `${binBottom - binTop}px` } });
+  // Landed strips move in here, clipped to the bin's outline so nothing pokes
+  // through its sides.
+  const [l0, r0] = binWall(binTop);
+  const [l1, r1] = binWall(binBottom);
+  const binInside = h('div', {
+    class: 'bin-inside',
+    style: { clipPath: `polygon(${l0}px 0, ${r0}px 0, ${r1}px ${binBottom}px, ${l1}px ${binBottom}px)` },
+  });
+  root.append(binBack, binInside, upper, lower, head, slot, binFront);
+
+  // The sheets: pooled emojis first, then the cards (at most 6 sheets, so the
+  // shred fits its minute whatever the card count).
   const sheets = [];
   if (payload.emojis.length) {
     const max = payload.emojis[0][1];
@@ -281,77 +334,154 @@ function shredScreen(v) {
     );
   }
   const cards = payload.cards;
-  // At most 6 sheets, so the shred fits its minute whatever the card count.
   const sheetCount = Math.min(6, Math.ceil(cards.length / 3));
   const per = Math.ceil(cards.length / Math.max(1, sheetCount));
-  const columns = Math.min(per, 4);
+  const columns = per <= 3 ? per : per <= 8 ? 4 : 5;
   const fontVw = per <= 3 ? 1.8 : per <= 8 ? 1.3 : 1.05;
   for (let i = 0; i < cards.length; i += per) {
     const chunk = cards.slice(i, i + per);
     sheets.push(() =>
       h(
         'div',
-        { class: 'sheet sheet-cards', style: { gridTemplateColumns: `repeat(${columns}, 1fr)` } },
+        { class: 'sheet sheet-cards', style: { gridTemplateColumns: `repeat(${Math.max(1, columns)}, 1fr)` } },
         chunk.map((t) => h('div', { style: { fontSize: `${fontVw}vw` } }, t)),
       ),
     );
   }
 
-  const shredOne = (make) => {
+  const strips = []; // every strip, in every phase
+  const pile = new Float32Array(64); // how high the pile is across the bin
+  const pileAt = (x) => pile[Math.min(63, Math.max(0, Math.floor((x / W) * 64)))];
+  const timers = [];
+  let running = true;
+
+  function feed(make) {
     const sheet = make();
     sheet.style.visibility = 'hidden';
     upper.append(sheet);
-    const height = sheet.offsetHeight;
-    const top = Math.max(H * 0.04, slotY - height - H * 0.06);
+    const sw = sheet.offsetWidth;
+    const sh = sheet.offsetHeight;
+    const left = (W - sw) / 2;
+    const top = Math.max(H * 0.03, slotY - sh - H * 0.05);
+    sheet.style.left = `${left}px`;
     sheet.style.top = `${top}px`;
     sheet.style.visibility = '';
-    const fullDistance = slotY - top + height + 8;
-    const pull = [{ transform: 'translateY(0)' }, { transform: `translateY(${fullDistance}px)` }];
-    const strips = [];
-    for (let s = 0; s < STRIPS; s++) {
-      const strip = make();
-      strip.classList.add('strip');
-      strip.style.top = `${top - slotY}px`;
-      // A thin cut between neighbouring strips.
-      strip.style.clipPath = `inset(0 calc(${100 - ((s + 1) * 100) / STRIPS}% + 2px) 0 calc(${(s * 100) / STRIPS}% + 2px))`;
-      lower.append(strip);
-      strips.push(strip);
+    const travel = slotY - top + sh;
+    const n = Math.max(8, Math.round(sw / ((W * STRIP_VW) / 100)));
+    const w = sw / n;
+    const start = performance.now() + 700;
+    for (let i = 0; i < n; i++) {
+      const inner = make();
+      inner.style.left = `${-i * w}px`;
+      inner.style.top = '0';
+      inner.style.width = `${sw}px`;
+      const el = h('div', { class: 'strip', style: { width: `${Math.ceil(w)}px`, height: `${sh}px` } }, inner);
+      lower.append(el);
+      strips.push({
+        el,
+        start,
+        travel,
+        x: left + i * w,
+        x0: left + i * w,
+        y0: top - slotY, // relative to the exit line, mirroring the sheet's slot position
+        y: top - slotY,
+        w,
+        h: sh,
+        phase: 'pull',
+        angle: 0,
+        phi: Math.random() * Math.PI * 2,
+        sway: 2 + Math.random() * 5,
+        vx: 0,
+        vy: 0,
+        va: 0,
+        curl: 1,
+        skew: 0,
+      });
     }
-    timers.push(
-      setTimeout(() => {
-        const opts = { duration: PULL_MS, easing: 'cubic-bezier(0.4, 0, 0.9, 1)', fill: 'forwards' };
-        sheet.animate(pull, opts).finished.then(() => sheet.remove(), () => {});
-        strips.forEach((strip, s) => {
-          // Strips fan out slightly as they come through the slot.
-          const spread = (s - (STRIPS - 1) / 2) * 7;
-          const through = [{ transform: 'translate(0, 0)' }, { transform: `translate(${spread}px, ${fullDistance}px)` }];
-          strip.animate(through, opts).finished.then(() => {
-            const drift = spread * (1.5 + Math.random());
-            strip
-              .animate(
-                [
-                  { transform: `translate(${spread}px, ${fullDistance}px)`, opacity: 1 },
-                  { transform: `translate(${drift}px, ${fullDistance + H * 0.5}px) rotate(${(Math.random() - 0.5) * 30}deg)`, opacity: 0 },
-                ],
-                { duration: 1400 + Math.random() * 900, easing: 'ease-in', fill: 'forwards' },
-              )
-              .finished.then(() => strip.remove(), () => {});
-          }, () => {});
-        });
-      }, 900),
-    );
-  };
-
-  let t = 800;
-  for (const make of sheets) {
-    timers.push(setTimeout(() => shredOne(make), t));
-    t += PULL_MS + 600;
+    sheet.dataset.start = String(start);
+    sheet.dataset.travel = String(travel);
+    return sheet;
   }
-  // Then the shredder itself fades, leaving black and a beat of silence.
-  timers.push(setTimeout(() => (root.style.opacity = '0'), t + 2200));
+
+  const fed = [];
+  let t = 400;
+  for (const make of sheets) {
+    timers.push(setTimeout(() => fed.push(feed(make)), t));
+    t += PULL_MS + 500;
+  }
+  const endAt = t + 3500;
+  timers.push(setTimeout(() => (root.style.opacity = '0'), endAt));
+  timers.push(setTimeout(() => (running = false), endAt + 2500));
+
+  let last = performance.now();
+  function frame(now) {
+    if (!running) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    for (const sheet of fed) {
+      const p = Math.min(1, Math.max(0, (now - Number(sheet.dataset.start)) / PULL_MS));
+      sheet.style.transform = `translateY(${p * Number(sheet.dataset.travel)}px)`;
+      if (p >= 1 && sheet.isConnected) sheet.remove();
+    }
+    for (const s of strips) {
+      if (s.phase === 'landed') continue;
+      if (s.phase === 'pull') {
+        const p = Math.min(1, Math.max(0, (now - s.start) / PULL_MS));
+        s.y = s.y0 + p * s.travel;
+        const out = Math.min(1, Math.max(0, (s.y + s.h) / s.h)); // share already through
+        s.angle = Math.sin(now / 260 + s.phi) * s.sway * out;
+        s.x = s.x0 + Math.sin(now / 410 + s.phi) * 3 * out;
+        s.el.style.transformOrigin = `50% ${Math.max(0, -s.y)}px`;
+        if (s.y >= 0) {
+          // Fully out: let go.
+          s.phase = 'fall';
+          s.vy = (s.travel / PULL_MS) * 1000;
+          const towardBin = (W / 2 - (s.x + s.w / 2)) * 0.25;
+          s.vx = (Math.random() - 0.5) * 120 + towardBin;
+          s.va = (Math.random() - 0.5) * 160;
+          s.el.style.transformOrigin = '50% 0';
+        }
+      } else {
+        s.vy = Math.min(TERMINAL, s.vy + GRAVITY * dt);
+        s.vx += Math.sin(now / 180 + s.phi) * 260 * dt; // flutter
+        s.vx *= 1 - 0.8 * dt;
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        s.angle += s.va * dt;
+        s.curl = Math.max(0.45, s.curl - 0.35 * dt); // strips crumple as they fall
+        s.skew = Math.sin(now / 150 + s.phi) * 14;
+        const screenY = exitY + s.y;
+        if (screenY + s.h * s.curl > binTop) {
+          const [l, r] = binWall(screenY + s.h * s.curl);
+          if (s.x < l) (s.x = l), (s.vx = Math.abs(s.vx) * 0.3);
+          if (s.x + s.w > r) (s.x = r - s.w), (s.vx = -Math.abs(s.vx) * 0.3);
+        }
+        const floor = binBottom - pileAt(s.x + s.w / 2);
+        if (screenY + s.h * s.curl >= floor) {
+          s.phase = 'landed';
+          s.y = floor - s.h * s.curl - exitY;
+          const lie = (Math.random() < 0.5 ? -1 : 1) * (35 + Math.random() * 50);
+          const i = Math.min(63, Math.max(0, Math.floor(((s.x + s.w / 2) / W) * 64)));
+          for (let k = Math.max(0, i - 1); k <= Math.min(63, i + 1); k++) pile[k] += 1.6;
+          binInside.append(s.el); // same x; y now measured from the top of the screen
+          s.el.style.transform = `translate(${s.x}px, ${s.y + exitY}px) rotate(${s.angle}deg) scaleY(${s.curl}) skewX(${s.skew}deg)`;
+          requestAnimationFrame(() => {
+            s.el.style.transition = 'transform 0.35s ease-out';
+            s.el.style.transform = `translate(${s.x}px, ${s.y + exitY}px) rotate(${lie}deg) scaleY(${s.curl}) skewX(${s.skew}deg)`;
+          });
+          continue;
+        }
+      }
+      s.el.style.transform = `translate(${s.x}px, ${s.y}px) rotate(${s.angle}deg) scaleY(${s.curl}) skewX(${s.skew}deg)`;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
   return {
     el: root,
     destroy() {
+      running = false;
       timers.forEach(clearTimeout);
     },
   };

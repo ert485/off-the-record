@@ -21,6 +21,7 @@ const HOST = process.env.HOST ?? '127.0.0.1';
 const DATA_DIR = resolve(process.env.DATA_DIR ?? join(ROOT, 'data'));
 const PUBLIC_URL = process.env.PUBLIC_URL ?? `http://localhost:${PORT}`;
 const REPO_URL = process.env.REPO_URL ?? 'https://github.com/ert485/off-the-record';
+const FEEDBACK_URL = process.env.FEEDBACK_URL ?? 'https://github.com/ert485/off-the-record/discussions/1';
 const TOKEN = process.env.FACILITATOR_TOKEN;
 if (!TOKEN || TOKEN.length < 3) {
   console.error('FACILITATOR_TOKEN must be set');
@@ -180,11 +181,11 @@ async function serveFile(res, rel) {
   }
 }
 
-let qrSvg;
-async function serveQr(res) {
-  qrSvg ??= await QRCode.toString(PUBLIC_URL, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
+const qrCache = new Map();
+async function serveQr(res, url) {
+  if (!qrCache.has(url)) qrCache.set(url, await QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }));
   res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' });
-  res.end(qrSvg);
+  res.end(qrCache.get(url));
 }
 
 function json(res, status, body) {
@@ -213,9 +214,10 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && path.startsWith('/api/')) return await handleAction(req, res, path.slice(5));
     if (req.method !== 'GET') return notFound(res);
     if (path === '/events') return openStream(req, res, url);
-    if (path === '/qr.svg') return await serveQr(res);
+    if (path === '/qr.svg') return await serveQr(res, PUBLIC_URL);
+    if (path === '/feedback-qr.svg') return await serveQr(res, FEEDBACK_URL);
     if (path === '/favicon.ico') return res.writeHead(204).end();
-    if (path === '/config.json') return json(res, 200, { publicUrl: PUBLIC_URL, repoUrl: REPO_URL });
+    if (path === '/config.json') return json(res, 200, { publicUrl: PUBLIC_URL, repoUrl: REPO_URL, feedbackUrl: FEEDBACK_URL });
     if (path === '/facilitate' && !isFacilitator(url.searchParams.get('t'))) return notFound(res);
     if (PAGES[path]) return await serveFile(res, PAGES[path]);
     return await serveFile(res, path.slice(1));

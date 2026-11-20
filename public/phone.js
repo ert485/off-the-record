@@ -98,7 +98,8 @@ const SCREENS = {
         'ul',
         { class: 'plain dim' },
         h('li', {}, "It's anonymous: no login, no names."),
-        h('li', {}, 'Nothing is kept. Everything is shredded tonight.'),
+        h('li', {}, 'Notes you don’t share never leave this phone.'),
+        h('li', {}, 'Everything on our server is shredded tonight.'),
         h('li', {}, 'You can always speak aloud instead.'),
       ),
       // A first tap lets Android vibrate on later phase changes (browsers

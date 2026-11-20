@@ -36,8 +36,8 @@ The facilitator advances phases; every phone follows. Erik always has a back but
    1. **Anonymous pause:** anyone can request a pause for anonymous comments, and Erik starts it with one tap or holds it for later ("Later": the request keeps waiting and the projector shows "Pause: coming up", so someone speaking can finish first; Erik starts it when ready). The pause ends when everyone who opened the comment box has submitted (but not before 15 seconds, so one fast typist can't end it for everyone), or at 90 seconds. Then there's a 20-second grace period to submit as is or cancel. One comment per person per pause. Erik can also end a pause early.
 6. **Last call.** One final chance to request an anonymous pause.
 7. **Finale.** The room's whole emoji mix projected as one wordless visual, an emotional fingerprint of the year. A moment of quiet.
-8. **Shred.** Everything is visibly destroyed and actually deleted. Visual: a literal shredder; the pooled emojis, then the cards behind them, are pulled down through a slot and fall away as strips, ending on a black screen and a beat of silence. Back can't undo the shred, so it needs a confirm.
-9. **Closing (optional).** What the app does, what was left out, and "what do you think?"
+8. **Shred.** Everything is visibly destroyed and actually deleted. Visual: a literal shredder; the pooled emojis, then the cards behind them, are pulled down through a slot and fall away as strips (narrow enough, about 1.2% of the screen width, that no whole word survives; they sway as they come out, flutter and crumple as they fall, and pile up in a mesh wastebasket), ending on a black screen and a beat of silence. Back can't undo the shred, so it needs a confirm.
+9. **Closing (optional).** What the app does, what was left out, and "what do you think?" The projector shows a QR code to a pinned GitHub Discussions thread for feedback (github.com/ert485/off-the-record/discussions/1). Posting there needs a GitHub account and is not anonymous, which is said in the thread itself; an anonymous feedback box in the app would contradict "nothing is kept", so there isn't one.
 
 **Timing plan (25 minutes)**
 
@@ -133,7 +133,7 @@ Shown as rotating placeholder text. As built (`server/nudges.js`): with fewer th
 
 A written AI summary would turn the ending into production and have the AI speaking for the room. Instead, project the room's whole emoji mix as one wordless visual.
 
-- An emotional fingerprint of the year: "this is all of us" without a deliverable. Visual: every reaction arrives as a small emoji in the order reactions happened (about a 10-second replay), then pools into one emoji per type, sized by count (area, not radius). Rare keyboard emojis stay small. No count labels: size alone carries scale, keeping the finale wordless and number-free. Optional: a faint trail of the original particles around each pool.
+- An emotional fingerprint of the year: "this is all of us" without a deliverable. Visual: every reaction arrives as an emoji in the order reactions happened (about a 10-second replay), sized so that each type's particles together cover about the same area as the pool they become (so a handful of reactions fill the screen with big emojis, and many fill it with small ones), then pools into one emoji per type, sized by count (area, not radius). Rare keyboard emojis stay small. No count labels: size alone carries scale, keeping the finale wordless and number-free. Optional: a faint trail of the original particles around each pool.
 - Let it sit for a moment, then shred it with everything else.
 - No note-taker. Recording spoken points would undermine "off the record" and make people self-censor.
 
@@ -157,7 +157,7 @@ Why it works: impermanence invites candor in a small community where everyone kn
 
 **Trust disclosure (keep it short)**
 
-One slide or sentence in plain language, plus the repo link and QR code for anyone who wants to check. On the projector, a short version is big ("Anonymous: no logins, no names. Your notes stay on your phone. Everything is shredded tonight.") and the full disclosure below it is fine print, read aloud. No lengthy security defence; it would read as suspicious and eat the minimal opening. Optionally, one respected community member reviews the repo beforehand and Erik mentions it in one line. The disclosure names every power Erik has, including that he sees cards before they're shown and can remove any card or comment. Comments appear live, so they can only be removed after they show.
+One slide or sentence in plain language, plus the repo link and QR code for anyone who wants to check. On the projector, a short version is big ("Anonymous: no logins, no names. Notes you don't share never leave your phone. Everything on our server is shredded tonight.", each line literally true) and the full disclosure below it is fine print, read aloud. No lengthy security defence; it would read as suspicious and eat the minimal opening. Optionally, one respected community member reviews the repo beforehand and Erik mentions it in one line. The disclosure names every power Erik has, including that he sees cards before they're shown and can remove any card or comment. Comments appear live, so they can only be removed after they show.
 
 Draft (one slide, read aloud during Join, about 20 seconds):
 
