@@ -1,0 +1,17 @@
+[Unit]
+Description=Caddy
+After=network-online.target
+
+[Service]
+User=caddy
+Group=caddy
+ExecStart=/usr/local/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Environment=XDG_DATA_HOME=/var/lib/caddy XDG_CONFIG_HOME=/etc/caddy
+StandardOutput=null
+StandardError=null
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

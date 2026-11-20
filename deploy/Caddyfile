@@ -1,0 +1,15 @@
+{
+	# Nothing is logged. No site below has an access log, and Caddy's own
+	# logger (startup, certificates, TLS errors that can include client IPs)
+	# is discarded too.
+	log default {
+		output discard
+	}
+}
+
+otr.tetl.ca {
+	reverse_proxy 127.0.0.1:3000 {
+		# Stream server-sent events immediately.
+		flush_interval -1
+	}
+}

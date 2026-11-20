@@ -1,0 +1,25 @@
+[Unit]
+Description=Off the Record
+After=network-online.target
+
+[Service]
+DynamicUser=yes
+WorkingDirectory=/opt/otr
+# FACILITATOR_TOKEN and ANTHROPIC_API_KEY
+EnvironmentFile=/etc/otr.env
+Environment=HOST=127.0.0.1 PORT=3000 DATA_DIR=/var/lib/otr PUBLIC_URL=https://otr.tetl.ca
+ExecStart=/usr/local/bin/node --no-warnings server/index.js
+Restart=always
+# The app prints nothing about requests; stdout is dropped anyway. stderr
+# carries only fixed error labels, into a journal kept in memory only.
+StandardOutput=null
+StandardError=journal
+StateDirectory=otr
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

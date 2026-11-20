@@ -1,0 +1,60 @@
+/* Sized in viewport units so it reads from the back row at any resolution. */
+body { background: #000; overflow: hidden; cursor: none; }
+#app { position: fixed; inset: 0; }
+.emoji, .mix, .particle, .pool, .sheet-emojis { font-family: var(--emoji); }
+
+#corner-qr { position: fixed; right: 1.5vw; bottom: 1.5vw; width: 9vw; background: white; padding: 0.4vw; border-radius: 0.6vw; opacity: 0.85; z-index: 5; }
+#corner-qr.hidden { display: none; }
+
+.center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 6vh 8vw; }
+.huge { font-size: 7vw; font-weight: 600; letter-spacing: -0.01em; }
+.sub { font-size: 2.2vw; color: var(--text-dim); margin-top: 2vh; }
+
+.join { position: absolute; inset: 0; display: grid; grid-template-columns: auto 1fr; gap: 5vw; align-items: center; padding: 6vh 6vw; }
+.join .qr { width: min(42vw, 78vh); background: white; padding: 1.2vw; border-radius: 1.4vw; }
+.join h1 { font-size: 4.8vw; margin: 0 0 1vh; }
+.join .url { font-size: 3vw; color: var(--accent); font-weight: 600; margin-bottom: 4vh; }
+.join .disclosure { font-size: 1.7vw; line-height: 1.45; color: var(--text-dim); max-width: 46vw; }
+.join .phones { font-size: 1.6vw; color: var(--text-faint); margin-top: 3vh; }
+
+.walk { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr auto auto; padding: 4vh 6vw 3vh; gap: 2vh; }
+.walk .top { display: flex; justify-content: space-between; font-size: 1.6vw; color: var(--text-faint); }
+.walk .theme { color: var(--accent); }
+.walk .card { align-self: center; justify-self: center; text-align: center; font-weight: 500; line-height: 1.25; max-width: 78vw; overflow-wrap: anywhere; }
+.walk .more { font-size: 1.5vw; color: var(--text-faint); text-align: center; margin-top: 1.5vh; }
+.walk .mix { display: flex; justify-content: center; align-items: flex-end; gap: 2.4vw; min-height: 9vw; }
+.walk .mix span { display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.walk .mix small { font-family: var(--font); font-size: 1.2vw; color: var(--text-faint); margin-top: 0.6vh; }
+.walk .bottom { display: flex; gap: 2vw; align-items: flex-end; min-height: 4vh; padding-right: 10vw; }
+.walk .counts { display: flex; gap: 1.2vw; font-size: 1.5vw; color: var(--text-dim); }
+.walk .counts span { background: #15161a; border-radius: 99px; padding: 0.5vh 1.1vw; }
+.walk .counts span.zero { visibility: hidden; }
+.walk .controls-line { font-size: 1.3vw; color: var(--text-faint); }
+.walk .bar { position: absolute; left: 0; bottom: 0; height: 0.5vh; background: #2a2b30; width: 0; transition: width 1s linear; }
+.comments { display: flex; flex-direction: column; gap: 1vh; max-height: 34vh; overflow: hidden; justify-content: flex-end; }
+.comments .comment { font-size: 1.9vw; background: #15161a; border-left: 0.35vw solid var(--accent); padding: 1vh 1.4vw; border-radius: 0 0.8vw 0.8vw 0; animation: arrive 0.5s ease-out; overflow-wrap: anywhere; }
+@keyframes arrive { from { opacity: 0; transform: translateY(1vh); } }
+.pause-banner { font-size: 1.8vw; color: var(--accent); display: flex; gap: 1.5vw; align-items: baseline; }
+.pause-banner .clock { font-variant-numeric: tabular-nums; font-size: 2.6vw; }
+
+/* Finale: the emotional fingerprint */
+.stage { position: absolute; inset: 0; overflow: hidden; }
+.particle { position: absolute; left: 0; top: 0; font-size: 28px; line-height: 1; transition: transform 1.6s cubic-bezier(0.5, 0, 0.2, 1), opacity 1.2s ease; will-change: transform; }
+.pools { position: absolute; inset: 0; display: flex; flex-wrap: wrap; justify-content: center; align-content: center; align-items: center; gap: 2vw 3vw; padding: 6vh 8vw; }
+.pool { line-height: 1; opacity: 0; transition: opacity 1.6s ease; }
+
+/* Shred */
+.shredder { position: absolute; inset: 0; background: #000; transition: opacity 2s ease; }
+.shredder .upper, .shredder .lower { position: absolute; left: 0; right: 0; overflow: hidden; }
+.shredder .upper { top: 0; }
+.shredder .lower { bottom: 0; }
+.shredder .slot { position: absolute; left: 14vw; right: 14vw; height: 1.4vh; background: #1b1c20; border-radius: 1vh; box-shadow: 0 0 0 0.3vh #2a2b31, 0 1.5vh 3vh #000; z-index: 2; }
+.shredder .body { position: absolute; left: 12vw; right: 12vw; height: 8vh; background: linear-gradient(#202126, #111215); border-radius: 0 0 1.2vh 1.2vh; z-index: 1; }
+.sheet { position: absolute; left: 20vw; width: 60vw; background: var(--text); color: #15161a; border-radius: 0.8vw; padding: 2vw; }
+.sheet-emojis { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 1vw 1.6vw; }
+.sheet-cards { display: grid; gap: 1vw; }
+.sheet-cards div { line-height: 1.3; background: #e4e1da; border-radius: 0.5vw; padding: 0.8vw; overflow-wrap: anywhere; }
+.strip { position: absolute; margin: 0; will-change: transform, opacity; }
+
+.closing h1 { font-size: 6vw; margin: 0; }
+.closing .url { font-size: 2.4vw; color: var(--text-dim); margin-top: 3vh; }

@@ -1,0 +1,34 @@
+# Saskatoon-area employers and orgs for the on-phone identifier check.
+# SEED LIST: compile the real one before the talk (open item in the spec).
+# One name per line, matched case-insensitively as whole words.
+7shifts
+andgo
+vendasta
+coconut software
+omnee
+point2
+solido
+siemens eda
+zu
+nutrien
+cameco
+concentra
+affinity credit union
+federated co-op
+sasktel
+saskpower
+saskenergy
+sgi
+isc
+university of saskatchewan
+usask
+saskatchewan polytechnic
+sask polytech
+city of saskatoon
+saskatchewan health authority
+farm credit canada
+fcc
+innovation saskatchewan
+co.labs
+devtalks
+devtalk
