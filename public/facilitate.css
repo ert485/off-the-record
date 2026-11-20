@@ -44,3 +44,24 @@ section.panel h3 { margin: 0; font-size: 15px; color: var(--text-dim); font-weig
 #toasts div { background: var(--danger); color: white; padding: 10px 14px; border-radius: 10px; max-width: 480px; }
 details summary { cursor: pointer; color: var(--text-dim); }
 .disclosure { color: var(--text-dim); font-size: 15px; }
+
+/* One layout for every phase (see the top of facilitate.js). */
+:root { --room: #6aa9ff; }
+.zone { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-left-width: 4px; border-radius: var(--radius); padding: 12px 14px; background: var(--bg-raised); }
+.zone-move { border: none; padding: 0; background: none; gap: 10px; }
+.zone-now { border-left-color: var(--text); }
+.zone-room { border-left-color: var(--room); background: color-mix(in srgb, var(--room) 6%, var(--bg-raised)); }
+.zone-content { border-left-color: var(--line); }
+.zone-lists { border-left-color: var(--line); background: none; }
+.zone-lists summary { color: var(--text-dim); }
+.now-row { display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+.room-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.room-row.active strong { color: var(--room); }
+.room-btn { background: var(--room); border-color: var(--room); color: #08111f; font-weight: 600; }
+.mod { background: transparent; border-color: color-mix(in srgb, var(--danger) 70%, transparent); color: #ff8a8d; flex: none; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
+.prompts { display: grid; gap: 2px; font-size: 14px; color: var(--text-dim); border-top: 1px dashed var(--line); padding-top: 8px; }
+.signals div { background: color-mix(in srgb, var(--room) 8%, var(--bg-sunk)); }
+.signals .private { outline: 1px dashed var(--warn); }
+.zone-lists { display: block; }
+.zone-lists > * + * { margin-top: 10px; }

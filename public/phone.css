@@ -59,7 +59,7 @@ ul.plain { padding-left: 18px; margin: 0; display: grid; gap: 6px; }
 .emoji-grid .e { font-size: 30px; line-height: 1.1; font-family: var(--emoji); }
 .emoji-grid .l { font-size: 11px; color: var(--text-dim); }
 .emoji-grid button.on .l { color: var(--bg); }
-.custom-row input { width: 9em; text-align: center; }
+.custom-row input { flex: 1; min-width: 12em; }
 .chip { font-family: var(--emoji); font-size: 26px; padding: 4px 10px; min-height: 44px; }
 
 .signals { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -82,3 +82,4 @@ ul.plain { padding-left: 18px; margin: 0; display: grid; gap: 6px; }
 }
 .timer-banner.urgent { background: var(--warn); color: #1a1406; }
 .emoji-hint { font-size: 13px; color: var(--warn); }
+.add-own { flex: 1; border-style: dashed; color: var(--text-dim); }

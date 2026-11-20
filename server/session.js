@@ -13,6 +13,7 @@ export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojis
 // everyone), or at maxMs followed by a grace period for anyone still typing.
 export const PAUSE = { minMs: 15_000, maxMs: 90_000, graceMs: 20_000 };
 const WALK_MS = (PLAN.walk[1] - PLAN.walk[0]) * 60_000;
+const OVERVIEW = 'overview';
 
 export class ActionError extends Error {
   constructor(message) {
@@ -296,7 +297,7 @@ export class Session {
     const run = ++this.clusterRun;
     if (cards.length === 0) {
       this.s.themes = [];
-      this.s.clustering = { status: 'done', error: null, key, local: true };
+      this.s.clustering = { status: 'done', error: null, key, local: false, empty: true };
       return;
     }
     this.s.clustering = { status: 'running', error: null, key, local: false };
@@ -389,7 +390,9 @@ export class Session {
       groups: t.groups.map((g) => ({ id: g.id, cardCount: this.visibleCardIds(g).length })).filter((g) => g.cardCount > 0),
     }));
     this.s.walk = {
-      stream: buildStream(themes, this.reactionCounts()),
+      // The walk-through opens on an overview of what came up, so the room
+      // can take it in before the first card.
+      stream: [{ groupId: OVERVIEW, overview: true }, ...buildStream(themes, this.reactionCounts())],
       index: 0,
       cardStartedAt: this.now(),
       signals: emptySignals(),
@@ -618,8 +621,25 @@ export class Session {
     return this.s.comments.filter((c) => c.g === groupId).map(({ id, text }) => ({ id, text }));
   }
 
+  // The themes, biggest first, with how many cards and reactions each drew.
+  overviewView() {
+    const counts = this.reactionCounts();
+    return this.s.themes
+      .map((t) => {
+        const groups = t.groups.filter((g) => this.visibleCardIds(g).length > 0);
+        return {
+          name: t.approved ? t.name : null,
+          cards: groups.reduce((n, g) => n + this.visibleCardIds(g).length, 0),
+          reactions: groups.reduce((n, g) => n + (counts.get(g.id) ?? 0), 0),
+        };
+      })
+      .filter((t) => t.cards > 0)
+      .sort((a, b) => b.reactions - a.reactions || b.cards - a.cards);
+  }
+
   itemView(item) {
     if (!item) return null;
+    if (item.overview) return { overview: this.overviewView() };
     const found = this.findGroup(item.groupId);
     const text = this.groupText(item.groupId);
     if (!found || !text) return { hidden: true };
@@ -638,6 +658,16 @@ export class Session {
     if (s.phase === 'shred') v.shred = this.shredPayload;
     if (this.shredded) return v;
     if (s.phase === 'join') v.phones = phoneCount;
+    // How long this part of the session is planned to take, as a hint the
+    // room can see. Only while there's time left: a visible "over" would
+    // make people hold back.
+    const sectionEnd =
+      s.phase === 'submit'
+        ? s.submitEndsAt
+        : ['react', 'walk'].includes(s.phase)
+          ? s.phaseStartedAt + (PLAN[s.phase][1] - PLAN[s.phase][0]) * 60_000
+          : null;
+    if (sectionEnd) v.section = { endsAt: sectionEnd };
     if (s.phase === 'walk' || s.phase === 'lastcall') {
       const item = this.currentItem();
       v.walk = {
@@ -717,7 +747,11 @@ export class Session {
       cardStartedAt: s.walk.cardStartedAt,
       // Facilitator only: a rough per-card share of the walk-through's time.
       budgetMs: Math.min(180_000, Math.max(20_000, WALK_MS / Math.max(1, s.walk.stream.length))),
-      stream: s.walk.stream.map((it) => ({ groupId: it.groupId, text: this.groupText(it.groupId), reactions: counts.get(it.groupId) ?? 0 })),
+      stream: s.walk.stream.map((it) =>
+        it.overview
+          ? { groupId: it.groupId, text: 'Overview: what came up', reactions: s.reactions.length }
+          : { groupId: it.groupId, text: this.groupText(it.groupId), reactions: counts.get(it.groupId) ?? 0 },
+      ),
       item: item ? { groupId: item.groupId, ...this.itemView(item) } : null,
       stay: count(s.walk.signals.stay),
       moveOn: count(s.walk.signals.moveOn),

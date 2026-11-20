@@ -2,12 +2,14 @@
 // and the server, which moves everyone on to the closing screen once the
 // animation and a moment of black are over.
 
-export const FIRST_SHEET_MS = 400;
+// First a moment showing what's about to happen: a cursor clicks "Delete".
+export const PRELUDE_MS = 3400;
+export const FIRST_SHEET_MS = PRELUDE_MS + 400;
 export const PULL_MS = 2600;
 export const SHEET_GAP_MS = 500;
 export const SETTLE_MS = 3500; // the last strips land, then the fade starts
 export const FADE_MS = 2000;
-export const BLANK_MS = 4000; // the beat of silence on black
+export const BLANK_MS = 3000; // the beat of silence on black, then the closing fades in
 
 // Cards go through in at most 6 sheets, so the shred fits its minute
 // whatever the card count. Returns the cards grouped into sheets.

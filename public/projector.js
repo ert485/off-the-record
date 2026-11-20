@@ -1,10 +1,21 @@
 // The projector. Shows only what the room should see; it has no controls.
 import { subscribe, fill, h, formatClock, serverNow } from './shared/client.js';
-import { cardSheets, shredTimeline, FIRST_SHEET_MS, PULL_MS, SHEET_GAP_MS, FADE_MS } from './shared/shred-timing.js';
+import { cardSheets, shredTimeline, PRELUDE_MS, FIRST_SHEET_MS, PULL_MS, SHEET_GAP_MS, FADE_MS } from './shared/shred-timing.js';
 
 const app = document.getElementById('app');
 const cornerQr = document.getElementById('corner-qr');
 const status = document.getElementById('status');
+const section = document.getElementById('section');
+let latest = null;
+
+// The planned time left for this part of the session: a hint for the room,
+// hidden once it runs out.
+function tickSection() {
+  const left = latest?.section ? latest.section.endsAt - serverNow() : 0;
+  section.hidden = left <= 0;
+  if (left > 0) section.textContent = `${formatClock(left)} left for this part`;
+}
+setInterval(tickSection, 1000);
 let config = { publicUrl: location.origin, repoUrl: '', feedbackUrl: '' };
 fetch('/config.json').then((r) => r.json()).then((c) => (config = c)).catch(() => {});
 
@@ -21,6 +32,8 @@ subscribe(
       fill(app, screen.el);
     }
     screen.update?.(view);
+    latest = view;
+    tickSection();
     // The join QR stays small in a corner for latecomers, and is hidden for
     // the finale, the shred and the closing.
     cornerQr.classList.toggle('hidden', ['join', 'finale', 'shred', 'closing'].includes(view.phase));
@@ -127,7 +140,7 @@ function walkScreen(first) {
   const comments = h('div', { class: 'comments' });
   const banner = h('div', { class: 'pause-banner' });
   const counts = h('div', { class: 'counts' });
-  const controls = h('div', { class: 'controls-line' }, last ? '' : 'From your phone you can ask to stay, move on, or go back.');
+  const controls = h('div', { class: 'controls-line' }, last ? '' : 'Erik sets the pace. From your phone you can ask to stay, move on, or go back, or ask for an anonymous pause.');
   const el = h(
     'div',
     { class: 'walk' },
@@ -156,14 +169,26 @@ function walkScreen(first) {
       if (last) {
         card.textContent = 'Last call';
         card.style.fontSize = '6vw';
-        more.textContent = 'One more chance to ask for an anonymous pause.';
+        more.textContent = 'Anything else? An opinion, another thought, a question: say it out loud. Or ask for an anonymous pause from your phone.';
+      } else if (w.item?.overview) {
+        // Before the first card: what came up, biggest themes first.
+        theme.textContent = '';
+        position.textContent = '';
+        card.style.fontSize = '';
+        fill(
+          card,
+          h('div', { class: 'overview-title' }, 'What came up'),
+          h('div', { class: 'overview' }, w.item.overview.map((t) => h('div', {}, h('span', {}, t.name ?? 'A theme'), h('small', {}, `${t.cards} ${t.cards === 1 ? 'card' : 'cards'}`)))),
+        );
+        more.textContent = 'First reactions? Anything surprise you?';
+        fill(mix);
       } else {
         const item = w.item;
         const text = item && !item.hidden ? item.text : '';
         card.textContent = text;
         card.style.fontSize = cardFontSize(text);
         theme.textContent = item?.theme ?? '';
-        position.textContent = w.total ? `${w.index + 1} / ${w.total}` : '';
+        position.textContent = w.total > 1 ? `${w.index} / ${w.total - 1}` : '';
         const bits = [];
         if (item?.similar) bits.push(`+${item.similar} similar`);
         if (item?.moreInTheme) bits.push(`+${item.moreInTheme} more like this`);
@@ -282,6 +307,48 @@ function pool(particles, sizes, stage) {
 }
 
 // ---- shred -----------------------------------------------------------------
+
+// Before the shredder: a plain "Delete everything?" dialog, and a cursor that
+// moves over and clicks Delete. It says what's really happening on the server
+// before the shredder shows it as a ritual.
+function deletePrelude() {
+  const button = h('span', { class: 'del' }, 'Delete');
+  const dialog = h(
+    'div',
+    { class: 'del-dialog' },
+    h('div', { class: 'del-title' }, 'Delete everything?'),
+    h('div', { class: 'del-body' }, 'Every card, reaction and comment, from the server. This can’t be undone.'),
+    h('div', { class: 'del-actions' }, h('span', { class: 'del-cancel' }, 'Cancel'), button),
+  );
+  const cursor = h('div', { class: 'cursor' });
+  cursor.innerHTML =
+    '<svg viewBox="0 0 24 24" width="100%" height="100%"><path d="M3 2l7.5 19 2.6-7.9L21 10.5z" fill="white" stroke="black" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+  const layer = h('div', { class: 'prelude' }, dialog, cursor);
+  requestAnimationFrame(() => {
+    const target = button.getBoundingClientRect();
+    const tx = target.left + target.width * 0.6;
+    const ty = target.top + target.height * 0.6;
+    const sx = innerWidth * 0.82;
+    const sy = innerHeight * 0.9;
+    dialog.animate([{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 300, fill: 'backwards' });
+    cursor.animate(
+      [
+        { transform: `translate(${sx}px, ${sy}px)`, offset: 0 },
+        { transform: `translate(${sx}px, ${sy}px)`, offset: 0.25 },
+        { transform: `translate(${tx}px, ${ty}px)`, easing: 'ease-out', offset: 0.75 },
+        { transform: `translate(${tx}px, ${ty}px)`, offset: 1 },
+      ],
+      { duration: 2300, fill: 'forwards', easing: 'ease-in-out' },
+    );
+    // The click.
+    button.animate([{ filter: 'brightness(1)' }, { filter: 'brightness(0.7)', transform: 'scale(0.95)' }, { filter: 'brightness(1)' }], {
+      duration: 260,
+      delay: 2350,
+    });
+    layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 500, delay: 2700, fill: 'forwards' });
+  });
+  return layer;
+}
 // A literal shredder: the pooled emojis, then the cards behind them, are
 // pulled down through a slot, come out underneath as narrow strips that sway
 // and flutter, and fall into a bin. Ends on black.
@@ -322,7 +389,10 @@ function shredScreen(v) {
     class: 'bin-inside',
     style: { clipPath: `polygon(${l0}px 0, ${r0}px 0, ${r1}px ${binBottom}px, ${l1}px ${binBottom}px)` },
   });
-  root.append(binBack, binInside, upper, lower, head, slot, binFront);
+  const machine = h('div', { class: 'machine' }, binBack, binInside, upper, lower, head, slot, binFront);
+  root.append(machine, deletePrelude());
+  // The shredder fades in as the prelude ends.
+  machine.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, delay: PRELUDE_MS - 500, fill: 'backwards' });
 
   // The sheets: pooled emojis first, then the cards (at most 6 sheets, so the
   // shred fits its minute whatever the card count).

@@ -1,5 +1,14 @@
 // The facilitator view: everything, plus every control. Reached only with the
 // facilitator token in the URL. Works on several devices at once.
+//
+// Every phase uses the same layout, top to bottom, so the eye learns where to
+// look:
+//   1. Move    (yellow)  back / next phase, and in the walk-through, cards
+//   2. Now     (white)   the one number that matters right now, and its time
+//   3. Room    (blue)    what the room is asking for: pauses, stay, move on, back
+//   4. Content (grey)    what's on screen or needs a decision
+//   5. Lists   (folded)  every card, the stream
+// Hide and Remove are always red-outlined, on the right of the thing they act on.
 import { subscribe, fill, post, h, formatClock, serverNow } from './shared/client.js';
 
 const token = new URLSearchParams(location.search).get('t') ?? '';
@@ -23,6 +32,7 @@ let view = null;
 let online = false;
 let pending = false;
 const drafts = new Map(); // theme id -> name being typed
+const folded = new Map(); // list name -> open or not, as the facilitator left it
 
 subscribe(
   `role=facilitator&t=${encodeURIComponent(token)}`,
@@ -66,7 +76,8 @@ function renderBar() {
   const pace = c?.pace ?? 0;
   const clamped = Math.max(-5, Math.min(5, pace));
   const color = Math.abs(pace) < 0.5 ? 'var(--ok)' : pace < 0 ? 'var(--warn)' : '#6aa9ff';
-  fill(bar, 
+  fill(
+    bar,
     h('span', { class: 'phase' }, LABELS[view.phase]),
     c?.startedAt ? h('span', { class: 'clock' }, formatClock(serverNow() - c.startedAt)) : '',
     // Wordless ahead/behind marker: left of centre is behind, right is ahead.
@@ -88,11 +99,16 @@ function render() {
   live.clear();
   renderBar();
   const v = view;
-  const parts = [nav(v)];
-  parts.push(...[PANELS[v.phase]?.(v)].flat().filter(Boolean));
-  if (!v.shredded && v.cards?.length && v.phase !== 'cluster') parts.push(allCards(v));
-  fill(app, ...parts);
+  const p = PHASES[v.phase](v);
+  fill(app, zone('move', p.move ?? nav(v)), zone('now', p.now), zone('room', p.room), zone('content', p.content), p.lists);
 }
+
+function zone(kind, ...children) {
+  const kids = children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false && c !== '');
+  return kids.length ? h('section', { class: `zone zone-${kind}` }, kids) : '';
+}
+
+// ---- building blocks -------------------------------------------------------
 
 function nav(v) {
   const back = h('button', { disabled: !v.canBack, onclick: () => act('back') }, '◀ Back');
@@ -104,14 +120,24 @@ function nav(v) {
         act('advance', { confirm: true });
       }
     });
-  } else if (v.next) {
-    next = h('button', { class: 'primary', onclick: () => act('advance') }, `${LABELS[v.next]} ▶`);
-  } else next = h('button', { disabled: true }, 'Done');
+  } else next = h('button', { class: 'primary', onclick: () => act('advance') }, `${LABELS[v.next]} ▶`);
   return h('div', { class: 'nav' }, back, next);
 }
 
-function panel(title, ...children) {
-  return h('section', { class: 'panel' }, h('h3', {}, title), ...children);
+// The "Now" strip: a main figure on the left, time on the right.
+function now(main, label, time, timeLabel, ...extra) {
+  return [
+    h('div', { class: 'now-row' },
+      h('div', { class: 'stat grow' }, main, h('small', {}, label)),
+      time !== undefined ? h('div', { class: 'stat' }, time, h('small', {}, timeLabel)) : ''),
+    extra,
+  ];
+}
+
+const since = (t) => liveClock(() => formatClock(serverNow() - t));
+
+function modButton(label, onclick) {
+  return h('button', { class: 'small-btn mod', onclick }, label);
 }
 
 function cardRow(card) {
@@ -119,18 +145,21 @@ function cardRow(card) {
     'div',
     { class: `cardrow${card.hidden ? ' hidden' : ''}` },
     h('div', { class: 'text' }, card.text),
-    h('button', { class: 'small-btn', onclick: () => act('hideCard', { id: card.id, hidden: !card.hidden }) }, card.hidden ? 'Show' : 'Hide'),
+    modButton(card.hidden ? 'Show' : 'Hide', () => act('hideCard', { id: card.id, hidden: !card.hidden })),
   );
 }
 
-function allCards(v) {
+// A folded list that stays open or closed the way the facilitator left it.
+function foldable(key, summary, defaultOpen, ...children) {
+  const el = h('details', { class: 'zone zone-lists', open: folded.has(key) ? folded.get(key) : defaultOpen }, h('summary', {}, summary), ...children);
+  el.addEventListener('toggle', () => folded.set(key, el.open));
+  return el;
+}
+
+function allCards(v, defaultOpen = false) {
+  if (!v.cards?.length) return '';
   const visible = v.cards.filter((c) => !c.hidden).length;
-  return h(
-    'details',
-    { open: v.phase === 'submit' },
-    h('summary', {}, `All cards (${visible} shown, ${v.cards.length - visible} hidden)`),
-    h('section', { class: 'panel' }, v.cards.map(cardRow)),
-  );
+  return foldable('cards', `All cards (${visible} shown, ${v.cards.length - visible} hidden)`, defaultOpen, v.cards.map(cardRow));
 }
 
 function mixLine(mix) {
@@ -143,19 +172,19 @@ function pauseControls(v) {
     const end = p.graceEndsAt ?? p.endsAt;
     return h(
       'div',
-      { class: 'alert' },
+      { class: 'room-row active' },
       h('strong', {}, p.graceEndsAt ? 'Pause: grace period' : 'Pause running'),
       liveClock(() => formatClock(end - serverNow())),
-      h('span', { class: 'dim' }, `${p.submittedCount} sent · ${p.openedCount - p.submittedCount} typing`),
+      h('span', { class: 'dim grow' }, `${p.submittedCount} sent · ${p.openedCount - p.submittedCount} typing`),
       h('button', { class: 'small-btn', onclick: () => act('endPause') }, 'End pause'),
     );
   }
   return h(
     'div',
-    { class: 'alert', style: v.pauseRequests ? {} : { borderColor: 'var(--line)', background: 'none' } },
+    { class: `room-row${v.pauseRequests ? ' active' : ''}` },
     h('strong', { class: 'grow' },
       !v.pauseRequests ? 'No pause requests' : v.pauseHeld ? `${v.pauseRequests} waiting for a pause (held)` : `${v.pauseRequests} asking for a pause`),
-    h('button', { class: 'small-btn primary', onclick: () => act('acceptPause') }, v.pauseRequests ? 'Start pause now' : 'Start a pause'),
+    h('button', { class: 'small-btn room-btn', onclick: () => act('acceptPause') }, v.pauseRequests ? 'Start pause now' : 'Start a pause'),
     v.pauseRequests && !v.pauseHeld ? h('button', { class: 'small-btn', onclick: () => act('holdPause') }, 'Later') : '',
     v.pauseRequests
       ? h('div', { class: 'small dim', style: { flexBasis: '100%' } },
@@ -168,11 +197,11 @@ function pauseControls(v) {
 
 function commentList(v) {
   if (!v.comments?.length) return '';
-  return panel(
-    'Comments (live on the projector)',
-    v.comments.map((c) =>
-      h('div', { class: 'cardrow' }, h('div', { class: 'text' }, c.text), h('button', { class: 'small-btn', onclick: () => act('removeComment', { id: c.id }) }, 'Remove')),
-    ),
+  return h(
+    'div',
+    { class: 'stack' },
+    h('div', { class: 'label' }, 'Comments, live on the projector'),
+    v.comments.map((c) => h('div', { class: 'cardrow' }, h('div', { class: 'text' }, c.text), modButton('Remove', () => act('removeComment', { id: c.id })))),
   );
 }
 
@@ -186,127 +215,188 @@ function nudgeStatus(submit) {
     : 'Phones rotate through all six nudges (no API key, so the mix is not judged).';
 }
 
+// Prompts for when the room goes quiet. Facilitator only; never projected.
+const PROMPTS = [
+  'Does this one land for anyone?',
+  'Anyone want to add to this, out loud or anonymously?',
+  'What do you notice in the emoji mix?',
+  'Has anyone felt the opposite?',
+  'Is this something people talk about at work, or not?',
+];
+const OVERVIEW_PROMPTS = ['First reactions: anything surprise you?', 'Which of these feels most like your year?'];
+
 const DISCLOSURE =
   'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. I see cards before they’re shown and can remove any card or comment to prevent abuse. Everything on our server is shredded tonight.';
 
-const PANELS = {
-  join: (v) => panel('Join', h('div', { class: 'stat' }, v.phones, h('small', {}, ' phones connected')), h('p', { class: 'disclosure' }, DISCLOSURE)),
+// ---- phases ----------------------------------------------------------------
 
-  submit: (v) => {
-    return panel(
-      'Submissions',
+const PHASES = {
+  join: (v) => ({
+    now: now(v.phones, ' phones connected'),
+    content: [h('div', { class: 'label' }, 'Trust disclosure (fine print on the projector)'), h('p', { class: 'disclosure' }, DISCLOSURE)],
+  }),
+
+  submit: (v) => ({
+    now: now(
+      v.cards.length,
+      ` cards from ${v.submit.people} people`,
+      liveClock(() => {
+        const left = v.submit.endsAt - serverNow();
+        return `${left < 0 ? '-' : ''}${formatClock(Math.abs(left))}`;
+      }),
+      ' left',
       h('div', { class: 'row wrap' },
-        h('div', { class: 'stat grow' }, v.cards.length, h('small', {}, ` cards from ${v.submit.people} people`)),
-        h('div', { class: 'stat' }, liveClock(() => {
-          const left = v.submit.endsAt - serverNow();
-          return `${left < 0 ? '-' : ''}${formatClock(Math.abs(left))}`;
-        }), h('small', {}, ' left'))),
-      h('div', { class: 'row wrap' },
-        h('button', { onclick: () => act('extend') }, '+1 minute'),
-        h('button', { class: v.submit.nudgesOn ? 'on' : '', onclick: () => act('nudges', { on: !v.submit.nudgesOn }) }, `Nudges ${v.submit.nudgesOn ? 'on' : 'off'}`)),
-      h('div', { class: 'small dim' }, nudgeStatus(v.submit)),
-    );
-  },
+        h('button', { class: 'small-btn', onclick: () => act('extend') }, '+1 minute'),
+        h('button', { class: `small-btn${v.submit.nudgesOn ? ' on' : ''}`, onclick: () => act('nudges', { on: !v.submit.nudgesOn }) }, `Nudges ${v.submit.nudgesOn ? 'on' : 'off'}`),
+        h('span', { class: 'small dim grow' }, nudgeStatus(v.submit))),
+    ),
+    content: h('p', { class: 'dim small' }, 'Cards arrive below. Hide any card that shouldn’t be shown.'),
+    lists: allCards(v, true),
+  }),
 
   cluster: (v) => {
     const c = v.clustering;
+    const unapproved = v.themes.filter((t) => !t.approved).length;
     const status =
       c.status === 'running'
-        ? h('p', {}, 'Grouping with Claude Haiku…')
-        : c.status === 'failed'
-          ? h('div', { class: 'alert' }, h('span', { class: 'grow' }, `Grouping failed: ${c.error}. Showing one card per group.`), h('button', { class: 'small-btn', onclick: () => act('recluster') }, 'Retry'))
-          : c.local
-            ? h('p', { class: 'dim' }, 'Grouped locally (no API key): one card per group.')
-            : h('p', { class: 'dim' }, 'Approve each theme name before it can be projected. Hide any card that shouldn’t be shown.');
-    const unapproved = v.themes.filter((t) => !t.approved).length;
+        ? 'Grouping with Claude Haiku…'
+        : c.empty
+          ? 'No cards were submitted, so there’s nothing to group.'
+          : c.status === 'failed'
+            ? `Grouping failed: ${c.error}. Showing one card per group.`
+            : c.local
+              ? 'Grouped without AI (no API key on the server): one card per group.'
+              : unapproved
+                ? `${unapproved} of ${v.themes.length} names not approved. Unapproved themes show no name on the projector.`
+                : 'All names approved.';
     const approveAll = () => {
       const names = Object.fromEntries(v.themes.map((t) => [t.id, drafts.get(t.id) ?? t.name]));
       drafts.clear();
       act('approveAll', { names });
     };
-    return panel(
-      'Themes',
-      status,
-      v.themes.length && c.status !== 'running'
-        ? h('div', { class: 'row' },
-            h('span', { class: 'grow dim small' }, unapproved ? `${unapproved} of ${v.themes.length} names not approved yet. Unapproved themes show no name on the projector.` : 'All names approved.'),
-            unapproved ? h('button', { class: 'small-btn primary', onclick: approveAll }, 'Approve all') : '')
-        : '',
-      v.themes.map((t) => {
-        const input = h('input', { type: 'text', maxLength: 60, placeholder: 'Theme name' });
-        input.value = drafts.get(t.id) ?? t.name;
-        input.addEventListener('input', () => drafts.set(t.id, input.value));
-        const approve = () => {
-          drafts.delete(t.id);
-          act('approveTheme', { id: t.id, name: input.value });
-        };
-        input.addEventListener('keydown', (e) => e.key === 'Enter' && (input.blur(), approve()));
-        return h(
-          'div',
-          { class: `theme${t.approved ? ' approved' : ''}` },
-          h('div', { class: 'row' }, input, h('button', { class: `small-btn${t.approved ? '' : ' primary'}`, onclick: approve }, t.approved ? 'Approved ✓' : 'Approve')),
-          t.groups.map((g) => h('div', { class: `group${g.cards.length > 1 ? ' dupes' : ''}` }, g.cards.map(cardRow))),
-        );
-      }),
-      c.status !== 'running' && c.status !== 'idle' ? h('button', { class: 'quiet', onclick: () => act('recluster') }, 'Re-run grouping') : '',
-    );
+    return {
+      now: now(
+        v.themes.length,
+        v.themes.length === 1 ? ' theme' : ' themes',
+        undefined,
+        '',
+        h('div', { class: 'row' },
+          h('span', { class: 'grow dim small' }, status),
+          c.status === 'failed' ? h('button', { class: 'small-btn', onclick: () => act('recluster') }, 'Retry') : '',
+          v.themes.length && unapproved && c.status !== 'running' ? h('button', { class: 'small-btn primary', onclick: approveAll }, 'Approve all') : ''),
+      ),
+      content: [
+        v.themes.map((t) => {
+          const input = h('input', { type: 'text', maxLength: 60, placeholder: 'Theme name' });
+          input.value = drafts.get(t.id) ?? t.name;
+          input.addEventListener('input', () => drafts.set(t.id, input.value));
+          const approve = () => {
+            drafts.delete(t.id);
+            act('approveTheme', { id: t.id, name: input.value });
+          };
+          input.addEventListener('keydown', (e) => e.key === 'Enter' && (input.blur(), approve()));
+          return h(
+            'div',
+            { class: `theme${t.approved ? ' approved' : ''}` },
+            h('div', { class: 'row' }, input, h('button', { class: `small-btn${t.approved ? '' : ' primary'}`, onclick: approve }, t.approved ? 'Approved ✓' : 'Approve')),
+            t.groups.map((g) => h('div', { class: `group${g.cards.length > 1 ? ' dupes' : ''}` }, g.cards.map(cardRow))),
+          );
+        }),
+        c.status !== 'running' && c.status !== 'idle' && !c.empty ? h('button', { class: 'quiet', onclick: () => act('recluster') }, 'Re-run grouping') : '',
+      ],
+    };
   },
 
   react: (v) => {
     const total = Math.max(v.phones, v.react.done);
     const pct = total ? Math.round((v.react.done / total) * 100) : 0;
-    return panel(
-      'Reactions',
-      h('div', { class: 'stat' }, `${pct}%`, h('small', {}, ` of phones finished (${v.react.done} of ${total})`)),
-      h('div', { class: 'stat' }, liveClock(() => formatClock(serverNow() - v.phaseStartedAt)), h('small', {}, ' in this phase')),
-      h('div', { class: 'dim' }, `${v.react.reactions} reactions so far`),
-    );
+    return {
+      now: now(`${pct}%`, ` of phones finished (${v.react.done} of ${total})`, since(v.phaseStartedAt), ' in this phase'),
+      content: h('p', { class: 'dim small' }, `${v.react.reactions} reactions so far. Move on when it feels right: there’s no fixed cutoff.`),
+      lists: allCards(v),
+    };
   },
 
   walk: (v) => {
     const w = v.walk;
     const item = w.item;
-    const group = item && v.themes.flatMap((t) => t.groups).find((g) => g.id === item.groupId);
+    const overview = !!item?.overview;
+    const group = overview || !item ? null : v.themes.flatMap((t) => t.groups).find((g) => g.id === item.groupId);
     const shown = group?.cards.find((c) => !c.hidden);
-    return [
-      pauseControls(v),
-      panel(
-        h('span', {}, `Card ${w.total ? w.index + 1 : 0} of ${w.total} · `, liveClock(() => formatClock(serverNow() - w.cardStartedAt)), ` of ~${formatClock(w.budgetMs)} on this card`),
-        item?.theme ? h('div', { class: 'dim' }, item.theme) : '',
-        h('div', { class: 'current' }, item?.hidden ? '(hidden)' : (item?.text ?? 'No cards')),
-        item?.similar || item?.moreInTheme
-          ? h('div', { class: 'dim small' }, [item.similar && `+${item.similar} similar`, item.moreInTheme && `+${item.moreInTheme} more like this`].filter(Boolean).join(' · '))
-          : '',
-        mixLine(item?.mix),
+    const cards = Math.max(0, w.total - 1);
+    const prompts = overview ? OVERVIEW_PROMPTS : [PROMPTS[w.index % PROMPTS.length], PROMPTS[(w.index + 1) % PROMPTS.length]];
+    return {
+      move: [
+        nav(v),
+        h('div', { class: 'walk-nav' },
+          h('button', { disabled: w.index === 0, onclick: () => act('prevCard') }, '◀ Card'),
+          h('button', { class: 'primary', disabled: w.index >= w.total - 1, onclick: () => act('nextCard') }, w.index === 0 ? 'First card ▶' : 'Next card ▶')),
+      ],
+      now: now(
+        overview ? 'Overview' : `Card ${w.index} of ${cards}`,
+        '',
+        since(w.cardStartedAt),
+        overview ? ' on the overview' : ` of ~${formatClock(w.budgetMs)}`,
+      ),
+      room: [
+        pauseControls(v),
         h('div', { class: 'signals' },
           h('div', {}, h('b', {}, w.stay), 'stay'),
           h('div', { class: 'private' }, h('b', {}, w.moveOn), 'move on (only you)'),
           h('div', {}, h('b', {}, w.back), 'go back')),
-        h('div', { class: 'walk-nav' },
-          h('button', { disabled: w.index === 0, onclick: () => act('prevCard') }, '◀ Card'),
-          h('button', { class: 'primary', disabled: w.index >= w.total - 1, onclick: () => act('nextCard') }, 'Next card ▶')),
-        shown ? h('button', { class: 'quiet', onclick: () => act('hideCard', { id: shown.id, hidden: true }) }, 'Hide this card') : '',
-      ),
-      commentList(v),
-      panel(
+      ],
+      content: [
+        overview
+          ? h('div', { class: 'current' }, 'Overview of the themes. Say aloud: you set the pace, timers are hints, and anyone can ask to stay, move on or go back.')
+          : [
+              item?.theme ? h('div', { class: 'dim' }, item.theme) : '',
+              h('div', { class: 'row', style: { alignItems: 'flex-start' } },
+                h('div', { class: 'current grow' }, item?.hidden ? '(hidden)' : (item?.text ?? 'No cards')),
+                shown ? modButton('Hide', () => act('hideCard', { id: shown.id, hidden: true })) : ''),
+              item?.similar || item?.moreInTheme
+                ? h('div', { class: 'dim small' }, [item.similar && `+${item.similar} similar`, item.moreInTheme && `+${item.moreInTheme} more like this`].filter(Boolean).join(' · '))
+                : '',
+              mixLine(item?.mix),
+            ],
+        h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
+        commentList(v),
+      ],
+      lists: foldable(
+        'stream',
         'Stream',
+        false,
         h('p', { class: 'small dim' }, 'Themes in order of total reactions, then cards in order of reactions inside each theme.'),
-        h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, `${i + 1}. ${s.text ?? '(hidden)'} · ${s.reactions} reactions`))),
+        h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, i === 0 ? s.text : `${i}. ${s.text ?? '(hidden)'} · ${s.reactions} reactions`))),
       ),
-    ];
+    };
   },
 
-  lastcall: (v) => [pauseControls(v), commentList(v)],
-  finale: () => panel('Finale', h('p', { class: 'dim' }, 'The fingerprint is on the projector. Let it sit. Next is the shred, which needs a confirm.')),
-  shred: () => panel('Shredded', h('p', { class: 'dim' }, 'The database and every file in the data directory are deleted. Nothing to go back to. The closing screen comes up by itself after the animation and a moment of black.')),
-  closing: () =>
-    panel(
-      'Closing',
-      h('p', { class: 'dim' }, 'What the app does, what was left out, and: what do you think?'),
+  lastcall: (v) => ({
+    now: now(v.comments?.length ?? 0, ' anonymous comments', since(v.phaseStartedAt), ' in this phase'),
+    room: pauseControls(v),
+    content: [h('p', { class: 'dim small' }, 'In person first: anything else to say out loud? The anonymous pause is there if someone prefers it.'), commentList(v)],
+  }),
+
+  finale: () => ({
+    content: h('p', { class: 'dim' }, 'The fingerprint is on the projector. Let it sit. Next is the shred, which needs a confirm.'),
+  }),
+
+  // After the shred there's nothing to move back or forward to: the closing
+  // screen comes up by itself.
+  shred: () => ({
+    move: h('p', { class: 'dim' }, 'Shredding. The closing screen comes up by itself.'),
+    content: h('p', { class: 'dim' }, 'The database and every file in the data directory are deleted.'),
+  }),
+
+  closing: () => ({
+    move: h('p', { class: 'dim' }, 'Closing. Everything is shredded.'),
+    content: [
+      h('p', { class: 'dim' }, 'What the app does, what was left out, and: what do you think? The projector shows a QR code to the feedback thread.'),
       h('button', {
         onclick: () => {
           if (confirm('Start a new session? Every phone and the projector go back to the Join screen.')) act('reset', { confirm: true });
         },
       }, 'Start a new session…'),
-    ),
+    ],
+  }),
 };

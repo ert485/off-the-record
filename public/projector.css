@@ -3,7 +3,16 @@ body { background: #000; overflow: hidden; cursor: none; }
 #app { position: fixed; inset: 0; }
 .emoji, .mix, .particle, .pool, .sheet-emojis { font-family: var(--emoji); }
 
-#corner-qr { position: fixed; right: 1.5vw; bottom: 1.5vw; width: 9vw; background: white; padding: 0.4vw; border-radius: 0.6vw; opacity: 0.85; z-index: 5; }
+#corner-qr { position: fixed; right: 1.5vw; bottom: 1.5vw; width: 10vw; display: flex; flex-direction: column; align-items: center; gap: 0.4vw; z-index: 5; opacity: 0.9; }
+#corner-qr span { font-size: 0.95vw; color: var(--text-dim); text-align: center; }
+#corner-qr img { width: 100%; background: white; padding: 0.4vw; border-radius: 0.6vw; }
+#section { position: fixed; top: 1.6vh; left: 50%; transform: translateX(-50%); font-size: 1.8vw; color: var(--text-dim); font-variant-numeric: tabular-nums; z-index: 5; }
+.overview-title { font-size: 3vw; color: var(--text-dim); margin-bottom: 3vh; }
+.overview { display: grid; gap: 1.6vh; font-size: 3.4vw; }
+.overview div { display: flex; justify-content: center; align-items: baseline; gap: 1.5vw; }
+.overview small { font-size: 1.5vw; color: var(--text-faint); }
+.closing { animation: fade-in 1.6s ease; }
+@keyframes fade-in { from { opacity: 0; } }
 #corner-qr.hidden { display: none; }
 
 .center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 6vh 8vw; }
@@ -72,3 +81,13 @@ body { background: #000; overflow: hidden; cursor: none; }
 .closing .url { font-size: 2.4vw; color: var(--text-dim); margin-top: 3vh; }
 .closing-inner { display: flex; align-items: center; gap: 5vw; text-align: left; }
 .closing .qr { width: min(26vw, 50vh); background: white; padding: 1vw; border-radius: 1vw; }
+.shredder .machine { position: absolute; inset: 0; }
+.prelude { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; }
+.del-dialog { width: 34vw; background: #1d1e22; border: 1px solid #34363c; border-radius: 1vw; padding: 2.2vw; box-shadow: 0 2vh 6vh #000; }
+.del-title { font-size: 2.2vw; font-weight: 700; margin-bottom: 1vh; }
+.del-body { font-size: 1.3vw; color: var(--text-dim); line-height: 1.4; }
+.del-actions { display: flex; justify-content: flex-end; gap: 1vw; margin-top: 3vh; font-size: 1.3vw; }
+.del-actions span { padding: 0.7vw 1.4vw; border-radius: 0.6vw; }
+.del-cancel { color: var(--text-dim); }
+.del { background: var(--danger); color: white; font-weight: 600; }
+.cursor { position: absolute; left: 0; top: 0; width: 2.2vw; height: 2.2vw; pointer-events: none; }

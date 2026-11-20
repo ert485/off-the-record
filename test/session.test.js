@@ -176,7 +176,8 @@ test('hidden cards leave the stream and the reaction stack', async () => {
   const texts = session.view('phone', { cid: A }).react.groups.flatMap((g) => g.texts);
   assert.equal(texts.includes(card.text), false);
   session.advance();
-  assert.equal(session.state.walk.stream.length, 2);
+  assert.equal(session.state.walk.stream.length, 3); // the overview, then 2 cards
+  assert.equal(session.state.walk.stream[0].overview, true);
   assert.equal(JSON.stringify(session.view('projector')).includes(card.text), false);
 });
 
@@ -287,4 +288,36 @@ test('approve all uses typed names and reports themes without one', async () => 
   session.approveAll({ [unnamed.id]: 'Life' });
   assert.equal(unnamed.name, 'Life');
   assert.equal(unnamed.approved, true);
+});
+
+test('the walk-through opens on an overview of the themes', async () => {
+  const { session } = make({
+    cluster: async (cards) => ({ themes: [{ name: 'Work', groups: [[cards[0].id, cards[1].id]] }, { name: 'Life', groups: [[cards[2].id]] }] }),
+  });
+  await toReact(session);
+  session.approveAll({});
+  const groups = session.view('phone', { cid: A }).react.groups;
+  session.react(A, groups.find((g) => g.texts.length === 1).id, ['🎉', '🙋']);
+  session.advance();
+  const overview = session.view('projector').walk.item.overview;
+  assert.deepEqual(overview, [
+    { name: 'Life', cards: 1, reactions: 2 },
+    { name: 'Work', cards: 2, reactions: 0 },
+  ]);
+  session.moveCard(1);
+  assert.ok(session.view('projector').walk.item.text);
+});
+
+test('an empty submission round is reported as empty, not as missing AI', async () => {
+  const { session } = make();
+  session.advance();
+  session.advance();
+  assert.equal(session.state.clustering.empty, true);
+  assert.equal(session.state.clustering.local, false);
+});
+
+test('the projector gets a section timer while there is time left', () => {
+  const { session } = make();
+  session.advance();
+  assert.equal(session.view('projector').section.endsAt, session.state.submitEndsAt);
 });

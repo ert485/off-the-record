@@ -24,7 +24,11 @@ const words = new Set(
 );
 const extra = readFileSync(new URL('./first-names-extra.txt', import.meta.url), 'utf8')
   .split('\n').map((s) => s.trim().toLowerCase()).filter((s) => s && !s.startsWith('#'));
+const exclude = new Set(
+  readFileSync(new URL('./first-names-exclude.txt', import.meta.url), 'utf8')
+    .split('\n').map((x) => x.trim().toLowerCase()).filter((x) => x && !x.startsWith('#')),
+);
 const top = [...totals].sort((a, b) => b[1] - a[1]).slice(0, count).map(([n]) => n);
-const names = [...new Set([...top, ...extra])].filter((n) => n.length > 1 && !words.has(n)).sort();
+const names = [...new Set([...top, ...extra])].filter((n) => n.length > 1 && !words.has(n) && !exclude.has(n)).sort();
 writeFileSync(new URL('../public/lists/first-names.txt', import.meta.url), names.join('\n') + '\n');
 console.log(`${names.length} names written`);

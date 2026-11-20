@@ -5,7 +5,7 @@ import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle } from 
 import { PRESETS, firstEmoji } from './shared/emoji.js';
 import { loadChecker, HINT } from './shared/identifier-check.js';
 
-const PROMPT = 'Something you experienced, felt, or were surprised by in 2026.';
+const PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
 
@@ -126,7 +126,7 @@ const SCREENS = {
 
 // ---- submissions: private notes, then pick up to 3 --------------------------
 
-const DEFAULT_PLACEHOLDER = 'Write freely. Notes stay on this phone.';
+const DEFAULT_PLACEHOLDER = 'Write freely. Notes stay on this phone until you choose to share them.';
 
 function submitScreen() {
   let notes = local.get('notes', []);
@@ -158,6 +158,15 @@ function submitScreen() {
     counter.classList.toggle('over', input.value.length > SOFT_MAX);
     save.disabled = input.value.trim().length === 0;
     local.set('draft', input.value);
+    refreshPickButton();
+  }
+
+  // Only offer picking when there's something to pick (a saved note, or text
+  // in the box, which picking saves first).
+  function refreshPickButton() {
+    const left = remaining();
+    pickButton.hidden = left <= 0 || (notes.length === 0 && !input.value.trim());
+    pickButton.textContent = `Pick up to ${left} to share →`;
   }
   input.addEventListener('input', refreshInput);
 
@@ -204,8 +213,7 @@ function submitScreen() {
         ),
       ),
     );
-    pickButton.hidden = left <= 0;
-    pickButton.textContent = `Pick up to ${left} to share →`;
+    refreshPickButton();
   }
 
   function editNote(note) {
@@ -240,7 +248,11 @@ function submitScreen() {
         picked.clear();
         saveNotes();
         step = 'write';
-        toast.textContent = 'Shared. Look up when Erik moves on.';
+        const stillLeft = remaining() - chosen.length;
+        toast.textContent =
+          stillLeft > 0
+            ? `Shared. You can still share ${stillLeft} more while there's time, or look up when Erik moves on.`
+            : 'Shared: that’s all 3. Look up when Erik moves on.';
         toast.hidden = false;
         render();
       } catch (err) {
@@ -355,7 +367,7 @@ function reactScreen() {
 
   async function finish() {
     finished = true;
-    fill(el, lookUp('Look up', 'That was every card. Thank you.').el);
+    fill(el, lookUp('Look up', 'That was every card. Thank you. Waiting for everyone else to finish.').el);
     if (!sentDone) {
       sentDone = true;
       post('reactDone', { cid }).catch(() => (sentDone = false));
@@ -386,9 +398,19 @@ function reactScreen() {
         return b;
       }),
     );
+    // Any emoji from the phone's keyboard: a clear button that opens a box
+    // and explains how to get to the emoji keyboard.
     const chips = h('div', { class: 'row wrap' });
-    const input = h('input', { type: 'text', placeholder: '＋ any emoji', maxLength: 16, 'aria-label': 'Add any emoji' });
+    const input = h('input', { type: 'text', placeholder: 'Type an emoji', maxLength: 16, 'aria-label': 'Add your own emoji', hidden: true });
     const emojiHint = h('div', { class: 'emoji-hint', hidden: true }, 'Emojis only: switch to the emoji keyboard.');
+    const howTo = h('div', { class: 'small dim', hidden: true }, 'Switch your keyboard to emojis (the 😀 or 🌐 key), pick any, then tap Next.');
+    const addOwn = h('button', { class: 'add-own' }, '＋ Add your own emoji');
+    addOwn.addEventListener('click', () => {
+      addOwn.hidden = true;
+      input.hidden = false;
+      howTo.hidden = false;
+      input.focus();
+    });
     input.addEventListener('input', () => {
       const e = firstEmoji(input.value);
       // Reactions are emojis only. Letters are cleared with a hint rather than
@@ -435,7 +457,8 @@ function reactScreen() {
       h('div', { class: 'small faint' }, `Card ${position} of ${ids.length}`),
       h('div', { class: 'react-card' }, textFor(current)),
       grid,
-      h('div', { class: 'row wrap custom-row' }, input, chips),
+      h('div', { class: 'row wrap custom-row' }, addOwn, input, chips),
+      howTo,
       emojiHint,
       next,
     );
@@ -459,7 +482,14 @@ function reactScreen() {
 function walkScreen(first) {
   const last = first.phase === 'lastcall';
   const el = h('div', { class: 'stack', style: { flex: '1' } });
-  const head = h('div', { class: 'lookup' }, h('div', { class: 'big' }, last ? 'Last call' : 'Look up'));
+  // Last call is in person first: say it aloud. The anonymous pause is the
+  // alternative, not the main ask.
+  const head = h(
+    'div',
+    { class: 'lookup' },
+    h('div', { class: 'big' }, last ? 'Last call' : 'Look up'),
+    last && h('p', { class: 'dim' }, 'Anything else? An opinion, another thought, a question: say it out loud. Or, if you’d rather, ask for an anonymous pause.'),
+  );
   const signals = h('div', { class: 'signals' });
   const pauseButton = h('button', {}, 'Ask for an anonymous pause');
   const pausePanel = h('div');

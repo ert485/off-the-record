@@ -1,0 +1,6 @@
+# Names that are far more likely to mean something other than a person in
+# this room (AI assistants and products), so the check doesn't flag them.
+claude
+alexa
+siri
+cortana
