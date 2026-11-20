@@ -244,3 +244,47 @@ test('pace marker: ahead before the plan, behind after it', () => {
   assert.ok(Math.abs(paceMinutes({ phase: 'walk', elapsedMinutes: 12, walkIndex: 0, walkLength: 10 }) + 1.55) < 1e-9);
   assert.equal(PHASES.length, 9);
 });
+
+test('after the shred, the closing screen comes up by itself', async () => {
+  const { session } = make();
+  await toReact(session);
+  for (let i = 0; i < 3; i++) session.advance();
+  session.advance({ confirm: true });
+  assert.equal(session.state.phase, 'shred');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(session.state.phase, 'closing');
+  assert.equal(session.shredPayload, null);
+});
+
+test('a new session can start only after the shred', async () => {
+  const { session } = make();
+  await toReact(session);
+  assert.throws(() => session.reset(), /Shred first/);
+  for (let i = 0; i < 3; i++) session.advance();
+  session.advance({ confirm: true });
+  session.advance();
+  session.reset();
+  assert.equal(session.state.phase, 'join');
+  assert.equal(session.state.cards.length, 0);
+  assert.equal(session.shredded, false);
+  session.advance();
+  session.submitCards(A, ['a fresh card']);
+  assert.equal(session.state.cards.length, 1);
+});
+
+test('approve all uses typed names and reports themes without one', async () => {
+  const { session } = make({
+    cluster: async (cards) => ({ themes: [{ name: 'Work', groups: [[cards[0].id]] }, { name: '', groups: [[cards[1].id]] }] }),
+  });
+  session.advance();
+  session.submitCards(A, ['one', 'two']);
+  session.advance();
+  await flush();
+  const [work, unnamed] = session.state.themes;
+  assert.throws(() => session.approveAll({}), /1 theme needs a name/);
+  assert.equal(work.approved, true);
+  assert.equal(unnamed.approved, false);
+  session.approveAll({ [unnamed.id]: 'Life' });
+  assert.equal(unnamed.name, 'Life');
+  assert.equal(unnamed.approved, true);
+});

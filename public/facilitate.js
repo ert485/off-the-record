@@ -218,9 +218,20 @@ const PANELS = {
           : c.local
             ? h('p', { class: 'dim' }, 'Grouped locally (no API key): one card per group.')
             : h('p', { class: 'dim' }, 'Approve each theme name before it can be projected. Hide any card that shouldn’t be shown.');
+    const unapproved = v.themes.filter((t) => !t.approved).length;
+    const approveAll = () => {
+      const names = Object.fromEntries(v.themes.map((t) => [t.id, drafts.get(t.id) ?? t.name]));
+      drafts.clear();
+      act('approveAll', { names });
+    };
     return panel(
       'Themes',
       status,
+      v.themes.length && c.status !== 'running'
+        ? h('div', { class: 'row' },
+            h('span', { class: 'grow dim small' }, unapproved ? `${unapproved} of ${v.themes.length} names not approved yet. Unapproved themes show no name on the projector.` : 'All names approved.'),
+            unapproved ? h('button', { class: 'small-btn primary', onclick: approveAll }, 'Approve all') : '')
+        : '',
       v.themes.map((t) => {
         const input = h('input', { type: 'text', maxLength: 60, placeholder: 'Theme name' });
         input.value = drafts.get(t.id) ?? t.name;
@@ -287,6 +298,15 @@ const PANELS = {
 
   lastcall: (v) => [pauseControls(v), commentList(v)],
   finale: () => panel('Finale', h('p', { class: 'dim' }, 'The fingerprint is on the projector. Let it sit. Next is the shred, which needs a confirm.')),
-  shred: () => panel('Shredded', h('p', { class: 'dim' }, 'The database and every file in the data directory are deleted. Nothing to go back to.')),
-  closing: () => panel('Closing', h('p', { class: 'dim' }, 'What the app does, what was left out, and: what do you think?')),
+  shred: () => panel('Shredded', h('p', { class: 'dim' }, 'The database and every file in the data directory are deleted. Nothing to go back to. The closing screen comes up by itself after the animation and a moment of black.')),
+  closing: () =>
+    panel(
+      'Closing',
+      h('p', { class: 'dim' }, 'What the app does, what was left out, and: what do you think?'),
+      h('button', {
+        onclick: () => {
+          if (confirm('Start a new session? Every phone and the projector go back to the Join screen.')) act('reset', { confirm: true });
+        },
+      }, 'Start a new session…'),
+    ),
 };

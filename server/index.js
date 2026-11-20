@@ -31,7 +31,7 @@ const tokenHash = createHash('sha256').update(TOKEN).digest();
 const isFacilitator = (t) =>
   typeof t === 'string' && timingSafeEqual(createHash('sha256').update(t).digest(), tokenHash);
 
-const store = openStore(DATA_DIR);
+let store = openStore(DATA_DIR);
 const clusterCards = createClusterer();
 const session = new Session({
   state: store.load(),
@@ -45,7 +45,10 @@ const session = new Session({
     const left = store.shred();
     if (left.length) console.error('shred: files remain in the data directory');
   },
-  shredAnimationMs: Number(process.env.SHRED_ANIMATION_MS ?? 30_000),
+  shredAnimationMs: process.env.SHRED_ANIMATION_MS ? Number(process.env.SHRED_ANIMATION_MS) : null,
+  onReset: () => {
+    store = openStore(DATA_DIR);
+  },
 });
 if (!session.shredded) store.save(session.state);
 
@@ -119,6 +122,11 @@ const FACILITATOR_ACTIONS = {
   nudges: (b) => session.setNudges(b.on),
   recluster: () => session.recluster(),
   approveTheme: (b) => session.approveTheme(b.id, b.name),
+  approveAll: (b) => session.approveAll(b.names),
+  reset: (b) => {
+    if (b.confirm !== true) throw new ActionError('Confirm the reset');
+    session.reset();
+  },
   hideCard: (b) => session.hideCard(b.id, b.hidden),
   acceptPause: () => session.acceptPause(),
   holdPause: () => session.holdPause(),

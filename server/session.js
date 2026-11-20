@@ -5,6 +5,7 @@ import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES } from './p
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
 import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
+import { shredTimeline } from '../public/shared/shred-timing.js';
 
 export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60 };
 // Anonymous pause: ends once everyone who opened the comment box has
@@ -82,7 +83,8 @@ export class Session {
     nudgeQuietMs = 10_000,
     onChange = () => {},
     onShred = () => {},
-    shredAnimationMs = 30_000,
+    shredAnimationMs = null, // tests only: overrides the animation's length
+    onReset = () => {},
   }) {
     this.now = now;
     this.tagCards = tagCards;
@@ -92,6 +94,8 @@ export class Session {
     this.onChange = onChange;
     this.onShred = onShred;
     this.shredAnimationMs = shredAnimationMs;
+    this.onReset = onReset;
+    this.closingTimer = null;
     this.clusterRun = 0;
     this.shredPayload = null;
     this.state = state ?? freshState(now());
@@ -328,6 +332,23 @@ export class Session {
     this.changed();
   }
 
+  // names: { themeId: name } for names typed but not yet approved.
+  approveAll(names = {}) {
+    let missing = 0;
+    for (const theme of this.s.themes) {
+      const raw = names[theme.id] ?? theme.name;
+      const clean = typeof raw === 'string' ? raw.trim().slice(0, LIMITS.themeName) : '';
+      if (!clean) {
+        missing += 1;
+        continue;
+      }
+      theme.name = clean;
+      theme.approved = true;
+    }
+    this.changed();
+    if (missing) fail(`${missing} ${missing === 1 ? 'theme needs' : 'themes need'} a name first`);
+  }
+
   approveTheme(id, name) {
     const theme = this.s.themes.find((t) => t.id === id);
     if (!theme) fail('No such theme');
@@ -511,10 +532,27 @@ export class Session {
     this.shredded = true;
     this.state = { phase: 'shred', phaseStartedAt: this.now(), shredded: true, walk: { stream: [], index: 0 } };
     this.onShred();
-    setTimeout(() => {
+    // Once the animation and a beat of black are over, drop the payload and
+    // move everyone on to the closing screen.
+    const ms = this.shredAnimationMs ?? shredTimeline(this.shredPayload).closingAt;
+    this.closingTimer = setTimeout(() => {
       this.shredPayload = null;
+      if (this.s.phase === 'shred') this.enter('closing', 'forward');
       this.changed();
-    }, this.shredAnimationMs).unref?.();
+    }, ms);
+    this.closingTimer.unref?.();
+    this.changed();
+  }
+
+  // After the shred, start over for another session. Only allowed once
+  // everything is already shredded, so it can never delete anything.
+  reset() {
+    if (!this.shredded) fail('Shred first: a new session starts only after the shred');
+    clearTimeout(this.closingTimer);
+    this.shredPayload = null;
+    this.shredded = false;
+    this.state = freshState(this.now());
+    this.onReset();
     this.changed();
   }
 

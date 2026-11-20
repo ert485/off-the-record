@@ -1,5 +1,6 @@
 // The projector. Shows only what the room should see; it has no controls.
 import { subscribe, fill, h, formatClock, serverNow } from './shared/client.js';
+import { cardSheets, shredTimeline, FIRST_SHEET_MS, PULL_MS, SHEET_GAP_MS, FADE_MS } from './shared/shred-timing.js';
 
 const app = document.getElementById('app');
 const cornerQr = document.getElementById('corner-qr');
@@ -286,7 +287,6 @@ function pool(particles, sizes, stage) {
 // and flutter, and fall into a bin. Ends on black.
 
 const STRIP_VW = 1.2; // narrow enough that no whole word survives
-const PULL_MS = 2600;
 const GRAVITY = 1500; // px/s²
 const TERMINAL = 950; // px/s
 
@@ -333,13 +333,11 @@ function shredScreen(v) {
       h('div', { class: 'sheet sheet-emojis' }, payload.emojis.map(([e, n]) => h('span', { style: { fontSize: `${1.6 + 4 * Math.sqrt(n / max)}vw` } }, e))),
     );
   }
-  const cards = payload.cards;
-  const sheetCount = Math.min(6, Math.ceil(cards.length / 3));
-  const per = Math.ceil(cards.length / Math.max(1, sheetCount));
+  const chunks = cardSheets(payload.cards);
+  const per = chunks[0]?.length ?? 0;
   const columns = per <= 3 ? per : per <= 8 ? 4 : 5;
   const fontVw = per <= 3 ? 1.8 : per <= 8 ? 1.3 : 1.05;
-  for (let i = 0; i < cards.length; i += per) {
-    const chunk = cards.slice(i, i + per);
+  for (const chunk of chunks) {
     sheets.push(() =>
       h(
         'div',
@@ -404,14 +402,12 @@ function shredScreen(v) {
   }
 
   const fed = [];
-  let t = 400;
-  for (const make of sheets) {
-    timers.push(setTimeout(() => fed.push(feed(make)), t));
-    t += PULL_MS + 500;
-  }
-  const endAt = t + 3500;
-  timers.push(setTimeout(() => (root.style.opacity = '0'), endAt));
-  timers.push(setTimeout(() => (running = false), endAt + 2500));
+  sheets.forEach((make, i) => timers.push(setTimeout(() => fed.push(feed(make)), FIRST_SHEET_MS + i * (PULL_MS + SHEET_GAP_MS))));
+  // Then fade to black. The server moves everyone to the closing screen after
+  // a beat of silence (same timeline, public/shared/shred-timing.js).
+  const { fadeAt } = shredTimeline(payload);
+  timers.push(setTimeout(() => (root.style.opacity = '0'), fadeAt));
+  timers.push(setTimeout(() => (running = false), fadeAt + FADE_MS + 500));
 
   let last = performance.now();
   function frame(now) {

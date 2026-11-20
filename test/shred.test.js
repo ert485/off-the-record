@@ -179,7 +179,16 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   }
   assert.equal(JSON.stringify(await view('role=projector')).includes('🦆'), false, 'reactions are gone too');
 
-  // Back can't undo it.
+  // The closing screen came up by itself, and Back can't undo the shred.
+  assert.equal((await view('role=projector')).phase, 'closing');
   const back = await fetch(`${base}/api/back`, { method: 'POST', headers: { 'x-facilitator-token': TOKEN }, body: '{}' });
   assert.equal(back.status, 400);
+
+  // A new session needs a confirm, and starts clean: a fresh, empty database
+  // and no marker anywhere.
+  const unconfirmed = await fetch(`${base}/api/reset`, { method: 'POST', headers: { 'x-facilitator-token': TOKEN }, body: '{}' });
+  assert.equal(unconfirmed.status, 400);
+  await run('reset', { confirm: true });
+  assert.equal((await view('role=projector')).phase, 'join');
+  assert.deepEqual(filesContaining(scanned(), MARKER), [], 'still nothing after starting a new session');
 });
