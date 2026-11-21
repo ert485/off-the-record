@@ -45,7 +45,7 @@ The facilitator advances phases; every phone follows. Erik always has a back but
 | --- | --- | --- | --- |
 | Join + trust disclosure | 2 | 0–2 | LTE stragglers are the risk |
 | Submissions (notes, then pick) | 4 | 2–6 | 3–6, Erik's call |
-| Cluster + approve names | 1 | 6–7 | Mostly ready from background runs |
+| Cluster + approve names | 1 | 6–7 | One grouping run on close (a few seconds), then "Approve all" |
 | React | 2.5 | 7–9.5 | 2–4, Erik's call |
 | Walk-through | 9.5 | 9.5–19 | Absorbs slack either way |
 | Last call | 0.5 | 19–19.5 |  |
@@ -87,7 +87,7 @@ Three views, one small server. Keep it minimal: about 40 users needs no heavy re
 - Hosting: an EC2 instance in Erik's personal AWS account at `otr.tetl.ca` (DNS at the tetl.ca registrar points to an Elastic IP). Caddy in front for HTTPS with all of its logging discarded; the app logs nothing about requests. No EBS snapshots, no AWS Backup plan, no VPC flow logs, no load balancer. The instance is terminated after the talk, which destroys its disk.
 - Phones keep private notes, and the cards they've already shared (listed separately as "Already shared" so people can still see what they sent), in the tab's sessionStorage: they survive a reload on a flaky connection. They're wiped when the shred reaches the phone or the tab closes. A phone that is offline at the shred can't hear about it, so every session has a random id, and a phone wipes notes written in a different session as soon as it reconnects. Closing the tab is the sure way, and the phone says so: on the unshared notes ("To be sure, close this tab") and on the shred and closing screens ("You can close this tab").
 - Phones warn twice before submissions close: at 2 minutes ("leave time to pick what you share") and at 1 minute ("pick what to share now"), so a slow writer still has time to pick.
-- Any emoji from the keyboard is offered as a clear "＋ Add your own emoji" button under the presets, which opens a box and says how to reach the emoji keyboard (a practice run found the bare box easy to miss). Emojis of your own that you've used on earlier cards appear as one-tap chips on later cards (up to 6, most recent first, kept on the phone and wiped like the notes). The box takes emojis only: letters are cleared with a hint to switch to the emoji keyboard, and a preset typed from the keyboard selects that preset.
+- Any emoji from the keyboard is offered as a clear "＋ Add your own emoji" button under the presets, which opens a box and says how to reach the emoji keyboard (a practice run found the bare box easy to miss). Emojis of your own that you've used on earlier cards appear as one-tap chips on later cards (up to 6, most recent first, kept on the phone and wiped like the notes); adding a 7th replaces the oldest one not picked on that card. The box takes emojis only: letters are cleared with a hint to switch to the emoji keyboard, and a preset typed from the keyboard selects that preset.
 - The projector (Erik's laptop only) loads Noto Color Emoji from Google Fonts; participants' phones load nothing from third parties.
 - Test on LTE; don't rely on venue wifi. Render emojis on the projector in one font (such as Noto Color Emoji) so phone styles don't clash.
 - QR code must be readable from the back row; projector text legible at a distance.
@@ -113,7 +113,7 @@ Anonymizing happens locally on each phone, with no AI. The AI only clusters and 
 **Clustering and the stream**
 
 - Groups submitted cards into themes, including near-duplicates when there are few cards.
-- Neutral cluster labels, approved by Erik before projection. Whenever submissions go quiet for about 10 seconds, the server re-clusters everything in the background and Erik's view shows the latest draft. On close, a draft with no newer cards is used as is; otherwise one final full run (about 5–10 seconds).
+- Neutral cluster labels, approved by Erik before projection. Whenever submissions go quiet for about 10 seconds, the server re-clusters everything in the background and Erik's view shows the latest draft. On close, a draft with no newer cards is used as is; otherwise one final full run (about 5–10 seconds). Not built (cut for time): grouping runs once, when submissions close; with Haiku it took about 2 seconds for 12 cards in testing, and Erik's view shows "Grouping…" meanwhile.
 - Orders cards into one stream: split clusters first, a few representative cards per cluster, the rest as "+N similar". Keep the ordering rule simple and transparent, since order is a form of editorial framing. The rule as built (`server/stream.js`): themes in order of total reactions; inside a theme, distinct thoughts in order of reactions; with 15 or fewer distinct thoughts, show them all, otherwise the top 3 per theme, the last one carrying "+N more like this". Near-duplicates always show as one card with "+N similar".
 - Hidden cards are never sent to the AI. If clustering fails (or there's no API key), every card becomes its own group in one theme and Erik names it; a Retry button re-runs it.
 - Budget about 10 seconds per card shown.
@@ -135,7 +135,7 @@ Shown as rotating placeholder text. As built (`server/nudges.js`): with fewer th
 
 A written AI summary would turn the ending into production and have the AI speaking for the room. Instead, project the room's whole emoji mix as one wordless visual.
 
-- An emotional fingerprint of the year: "this is all of us" without a deliverable. Visual: every reaction arrives as an emoji in the order reactions happened (about a 10-second replay), sized so that each type's particles together cover about the same area as the pool they become (so a handful of reactions fill the screen with big emojis, and many fill it with small ones), then pools into one emoji per type, sized by count (area, not radius). Rare keyboard emojis stay small. No count labels: size alone carries scale, keeping the finale wordless and number-free. Optional: a faint trail of the original particles around each pool.
+- An emotional fingerprint of the year: "this is all of us" without a deliverable. Visual: every reaction arrives as an emoji in the order reactions happened (about a 10-second replay), sized so that each type's particles together cover about the same area as the pool they become (so a handful of reactions fill the screen with big emojis, and many fill it with small ones), then pools into one emoji per type, sized by count (area, not radius). Rare keyboard emojis stay small. No count labels: size alone carries scale, keeping the finale wordless and number-free. Optional: a faint trail of the original particles around each pool (not built; cut for time).
 - Let it sit for a moment, then shred it with everything else.
 - No note-taker. Recording spoken points would undermine "off the record" and make people self-censor.
 
