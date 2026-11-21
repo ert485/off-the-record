@@ -1,6 +1,8 @@
 // The participant's phone. Private notes live only in this tab's
-// sessionStorage: they never leave the phone, and they're wiped when the tab
-// closes or the session is shredded.
+// sessionStorage: they never leave the phone. They're wiped at the shred, when
+// the tab closes, and, for a phone that was offline at the shred, as soon as
+// it reconnects to a later session or 4 hours after it last heard from the server,
+// whichever comes first.
 import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle } from './shared/client.js';
 import { PRESETS, firstEmoji } from './shared/emoji.js';
 import { loadChecker, HINT } from './shared/identifier-check.js';
@@ -8,6 +10,8 @@ import { loadChecker, HINT } from './shared/identifier-check.js';
 const PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
+
+const MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
 const local = {
   get(key, fallback) {
@@ -20,6 +24,7 @@ const local = {
   set(key, value) {
     try {
       sessionStorage.setItem(`otr.${key}`, JSON.stringify(value));
+      sessionStorage.setItem('otr.savedAt', String(Date.now()));
     } catch {}
   },
   clear() {
@@ -33,6 +38,19 @@ function newId() {
   const bytes = crypto.getRandomValues(new Uint8Array(12));
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+// Wipe anything older than 4 hours, even if this phone never heard about the
+// shred (offline, or the server is already gone).
+function wipeIfStale() {
+  const savedAt = Number(local.get('savedAt', 0));
+  if (savedAt && Date.now() - savedAt > MAX_AGE_MS) {
+    local.clear();
+    return true;
+  }
+  return false;
+}
+wipeIfStale();
+setInterval(() => wipeIfStale() && location.reload(), 60_000);
+
 let cid = local.get('cid');
 if (!cid) local.set('cid', (cid = newId()));
 
@@ -44,6 +62,7 @@ const flash = document.getElementById('flash');
 const status = document.getElementById('status');
 let screen = null;
 let screenPhase = null;
+let screenSession = null;
 
 // Phase change: vibrate where the browser allows it (Android), and flash the
 // screen everywhere (iPhones don't support web vibration).
@@ -57,7 +76,13 @@ function buzz() {
 subscribe(
   `role=phone&cid=${cid}`,
   (view) => {
-    if (view.phase !== screenPhase) {
+    // Notes from a session this phone missed the end of (offline at the
+    // shred) are wiped as soon as it sees a different session.
+    const notesFrom = local.get('session', null);
+    if (notesFrom && view.session && notesFrom !== view.session) local.clear();
+    if (view.session) local.set('session', view.session);
+    if (view.phase !== screenPhase || view.session !== screenSession) {
+      screenSession = view.session;
       if (screenPhase !== null) buzz();
       screen?.destroy?.();
       screenPhase = view.phase;
@@ -130,6 +155,9 @@ const DEFAULT_PLACEHOLDER = 'Write freely. Notes stay on this phone until you ch
 
 function submitScreen() {
   let notes = local.get('notes', []);
+  // What this phone already shared, so its owner can still see it. Kept and
+  // wiped exactly like the private notes.
+  let sent = local.get('sent', []);
   let step = 'write';
   let picked = new Set();
   let view = null;
@@ -146,9 +174,11 @@ function submitScreen() {
   const doneText = h('p', { class: 'dim' });
   const toast = h('div', { class: 'toast', hidden: true });
   const listHead = h('p', { class: 'small faint' }, 'Private notes (only on this phone)');
+  const sentHead = h('p', { class: 'small faint' }, 'Already shared');
+  const sentList = h('div', { class: 'stack' });
   const list = h('div', { class: 'stack' });
   const pickButton = h('button', { class: 'primary' });
-  const writeStep = h('div', { class: 'stack' }, toast, writeArea, doneText, listHead, list, pickButton);
+  const writeStep = h('div', { class: 'stack' }, toast, writeArea, doneText, sentHead, sentList, listHead, list, pickButton);
   const pickStep = h('div', { class: 'stack' });
   const timer = h('div', { class: 'timer-banner', hidden: true });
   const el = h('div', { class: 'stack' }, h('h2', {}, PROMPT), timer, writeStep, pickStep);
@@ -208,8 +238,9 @@ function submitScreen() {
     doneText.hidden = left > 0;
     doneText.textContent = `You've shared ${view?.submit.max ?? 3} cards. Thank you. Look up when Erik moves on.`;
     listHead.hidden = notes.length === 0;
-    listHead.textContent =
-      left > 0 ? 'Private notes (only on this phone)' : 'Not shared. These stay private on this phone until the shred, or until you close this tab.';
+    listHead.textContent = left > 0 ? 'Private notes (only on this phone)' : 'Not shared. Only on this phone; wiped at the shred.';
+    sentHead.hidden = sent.length === 0;
+    fill(sentList, sent.map((text) => h('div', { class: 'note sent' }, h('span', { class: 'tick' }, '✓'), h('div', { class: 'text' }, text))));
     fill(
       list,
       notes.map((note) =>
@@ -253,6 +284,8 @@ function submitScreen() {
       share.disabled = true;
       try {
         await post('submit', { cid, texts: chosen.map((n) => n.text) });
+        sent = [...sent, ...chosen.map((n) => n.text)];
+        local.set('sent', sent);
         notes = notes.filter((n) => !picked.has(n.id));
         picked.clear();
         saveNotes();

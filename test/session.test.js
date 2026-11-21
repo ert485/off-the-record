@@ -45,7 +45,7 @@ test('phases advance in order and back works until the shred', () => {
 test('phones see the phase; the facilitator sees controls', () => {
   const { session } = make();
   session.advance();
-  assert.deepEqual(Object.keys(session.view('phone', { cid: A })).sort(), ['now', 'phase', 'role', 'submit']);
+  assert.deepEqual(Object.keys(session.view('phone', { cid: A })).sort(), ['now', 'phase', 'role', 'session', 'submit']);
   const f = session.view('facilitator', { phoneCount: 3 });
   assert.equal(f.next, 'cluster');
   assert.equal(f.canBack, true);
@@ -320,4 +320,17 @@ test('the projector gets a section timer while there is time left', () => {
   const { session } = make();
   session.advance();
   assert.equal(session.view('projector').section.endsAt, session.state.submitEndsAt);
+});
+
+test('each session has its own id, kept through the shred, new after a reset', async () => {
+  const { session } = make();
+  const first = session.view('phone', { cid: A }).session;
+  assert.match(first, /^[0-9a-f]{16}$/);
+  await toReact(session);
+  for (let i = 0; i < 3; i++) session.advance();
+  session.advance({ confirm: true });
+  assert.equal(session.view('phone', { cid: A }).session, first);
+  session.advance();
+  session.reset();
+  assert.notEqual(session.view('phone', { cid: A }).session, first);
 });

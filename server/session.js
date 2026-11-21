@@ -1,6 +1,6 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
-import { randomInt } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES } from './phases.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
@@ -30,6 +30,9 @@ const count = (obj) => Object.keys(obj ?? {}).length;
 
 export function freshState(now) {
   return {
+    // Random per session. Phones compare it with the one their notes were
+    // written in, and wipe notes left over from a session they missed the end of.
+    sessionId: randomBytes(8).toString('hex'),
     phase: 'join',
     phaseStartedAt: now,
     clockStart: null,
@@ -101,6 +104,7 @@ export class Session {
     this.shredPayload = null;
     this.state = state ?? freshState(now());
     this.state.nudge ??= { mode: 'all', label: null };
+    this.state.sessionId ??= randomBytes(8).toString('hex');
     this.shredded = !!this.state.shredded;
     // A restart mid-clustering: run it again.
     if (this.state.clustering?.status === 'running') {
@@ -533,7 +537,7 @@ export class Session {
     this.clusterRun += 1;
     clearTimeout(this.nudgeTimer);
     this.shredded = true;
-    this.state = { phase: 'shred', phaseStartedAt: this.now(), shredded: true, walk: { stream: [], index: 0 } };
+    this.state = { sessionId: this.s.sessionId, phase: 'shred', phaseStartedAt: this.now(), shredded: true, walk: { stream: [], index: 0 } };
     this.onShred();
     // Once the animation and a beat of black are over, drop the payload and
     // move everyone on to the closing screen.
@@ -583,7 +587,7 @@ export class Session {
 
   phoneView(cid) {
     const s = this.s;
-    const v = { role: 'phone', phase: s.phase, now: this.now() };
+    const v = { role: 'phone', session: s.sessionId, phase: s.phase, now: this.now() };
     if (this.shredded) return v;
     const c = typeof cid === 'string' ? s.clients[cid] : undefined;
     if (s.phase === 'submit') {
