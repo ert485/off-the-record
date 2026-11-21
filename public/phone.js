@@ -12,7 +12,7 @@ const SOFT_MAX = 140;
 const HARD_MAX = 200;
 // Every keyboard puts its emojis somewhere slightly different.
 const EMOJI_KEYBOARD_HOWTO =
-  'Open your keyboard’s emojis: usually a smiley key (😀 or ☺) by the space bar or above the keys. On an iPhone it may be the 🌐 key. Then tap Next.';
+  'Open your keyboard’s emojis: usually a smiley key (😀 or ☺) by the space bar or above the keys. Then tap Next.';
 
 const local = {
   get(key, fallback) {
