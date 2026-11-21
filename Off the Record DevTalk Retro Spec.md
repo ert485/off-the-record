@@ -28,7 +28,7 @@ The goal is emotional, not productive: a safe place to express how the year felt
 
 The facilitator advances phases; every phone follows. Erik always has a back button (card or phase). Participants can suggest going back, and the projector shows the live count, so the room can steer while Erik decides. In look-up phases, phones mainly say "look up" but keep a few light taps; it's fine that using a phone is visible. Timings target 25 minutes (table below).
 
-1. **Join.** QR code on the projector. Minimal logistics only: it's anonymous, nothing is kept, and you can always speak aloud instead.
+1. **Join.** QR code on the projector. Minimal logistics only: it's anonymous, nothing is kept on our server, and you can always speak aloud instead.
 2. **Open submissions.** One short prompt, no categories, phrased as something to do: "Write down something you experienced, felt, or were surprised by in 2026." Nudges from a preset list appear as rotating placeholder text in the input; whenever submissions go quiet for about 10 seconds, the AI picks the nudge for the least-covered direction. If the mix is already varied, no nudge is shown. Participants first write as many private notes as they like, freely and without self-censoring; notes never leave the phone. Then they intentionally pick up to 3 to submit as cards (anything still in the writing box when they go to pick is saved as a note first, so nothing typed is lost), about 140 characters each (hard cap 200). A loose local check softly flags possible identifiers on the picked notes; the author decides. Once someone has shared all 3, the time warnings stop and their unshared notes stay listed, read-only, under what they shared, until they're wiped like any other private note. Projector shows "on your phone". Erik sees a live count and can extend the window if cards are still trickling in.
 3. **Cluster.** The AI groups cards into themes, with near-duplicates in one group. Erik approves cluster names. The stream is ordered later, once reactions are in.
 4. **React.** Each phone shows one card at a time, shuffled per person, so every distinct thought gets a fair chance. Near-duplicates in a group don't each need a full chance; their reactions are pooled. Tap one or more emojis, then go to the next card. "◀ Previous" goes back to change a card's reactions: the first send for a card returns a random receipt that the phone keeps, and sending again with it replaces those reactions. A receipt covers one card's reactions and is never tied to the phone, so a person's reactions stay unlinkable across cards. Changing doesn't use up the one pass. Each person makes one pass, one card per group. There's no fixed cutoff: Erik sees the share of phones finished and the elapsed time, and advances when it feels right (fast if there were few submissions).
@@ -63,6 +63,20 @@ Section timer: the projector shows the time left for the current part (submissio
 ## App spec
 
 Three views, one small server. Keep it minimal: about 40 users needs no heavy realtime infrastructure.
+
+**What the app must get right**
+
+These came out of building it and the practice runs. Check any change against them; the details further down are how each one is met today.
+
+- **Every promise on screen is literally true.** Wording follows what the code actually does: "Notes you don't share never leave your phone", "Everything on our server is shredded tonight", notes "stay on this phone until you choose to share them". Where the app can't guarantee something (a phone that's offline at the shred), it tells the person what they can do ("To be sure, close this tab") rather than claiming more. A claim that can't be made true gets reworded, not kept.
+- **Nothing a person does is lost or hidden from them.** Text typed but not saved still counts as a note. Shared cards stay visible as "Already shared". Reactions can be revisited and changed. No button leads to an empty step, and no action makes something silently disappear.
+- **Every screen says what to do now and what happens next.** Prompts start with a verb. After an action, the phone says what's left ("You can still share 1 more") or that it's waiting for others. Controls that matter are visible where they're used, with accurate how-tos (the "＋ Add your own emoji" button and how to reach the emoji keyboard). Write for someone seeing it for the first time, with no explanation from the front.
+- **Time is a visible hint, never pressure.** The room sees how long a part is meant to take, but never a per-card countdown, "over time" or "behind". Erik sees the pace and a per-card average, each explained on tap, and decides; timers are hints he overrides, and he says so aloud.
+- **The facilitator view works at a glance for a first-time facilitator.** The same layout and colours in every phase; buttons say where they go ("Start reactions ▶", "◀ Back one card"); every number explains itself on tap (ⓘ) instead of headings filling the screen; status messages give the real reason (an empty round, not "no API key"); common actions take one tap ("Approve all"); nothing collapses or moves under a finger; nothing is shown that does nothing (no Back or Done after the shred).
+- **Defaults keep Erik's influence, and pressure on the room, low.** Nudges start off. Last call invites speaking out loud first, with the anonymous route as the alternative. The walk-through opens on the themes as a whole before any single card. Prompts for a quiet room stay on Erik's screen.
+- **The rituals feel real, and don't drag.** The shred has to read as actual destruction: a literal "Delete" moment, strips too narrow for any word to survive, physical motion into a bin. The finale's scale is continuous: the particles add up to the pools they become. Endings stay brief, and the closing fades in by itself.
+- **Readable from the back of the room.** Anything the room has to read (the late-join QR caption, last call) is large and short. Longer explanations go in fine print or are said aloud.
+- **Built to run again, by anyone.** After the shred, one confirmed step starts a new session. The code is public, and feedback goes to a public thread that says plainly it isn't anonymous.
 
 | View | Shows | Actions |
 | --- | --- | --- |
@@ -148,7 +162,7 @@ Why it works: impermanence invites candor in a small community where everyone kn
 
 **Requirements**
 
-- No login, no names stored. Unsubmitted notes never leave the phone and are discarded.
+- No login, no names stored. Unsubmitted notes never leave the phone and are discarded: wiped when the shred reaches the phone or the tab closes (see Build notes for a phone that's offline at the shred).
 - Cards are stored with no author and no timestamp, under random ids and in id order (never the order they arrived), so their order doesn't reveal which cards one phone submitted together. The server knows each phone only by a random id, and keeps counts against it (cards submitted, cards reacted to), never which cards or reactions.
 - The shred deletes the SQLite database and everything else in the data directory (the app writes nothing anywhere else), then keeps the pooled emojis and card text in memory only for the projector's 30-second animation. `test/shred.test.js` proves it: it runs a whole session and then checks that no file, log line or screen still holds any of it, and that the server printed no IP address.
 - Identifier checks run locally; the author decides exactly what gets shared.
@@ -167,6 +181,15 @@ Draft (one slide, read aloud during Join, about 20 seconds):
 > Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards go to Anthropic (Claude Haiku) for grouping; they don't train on them and delete them within 30 days. I see cards before they're shown and can remove any card or comment to prevent abuse. Everything on our server is shredded tonight. Code: \[short repo URL\]
 
 Controls are explained just in time, not here: at the start of the walk-through, one line that phones can ask Erik to stay, move on, or go back.
+
+**Facilitator cues (said aloud, not on screen)**
+
+From the practice run, things Erik says rather than the app showing:
+
+- At the start: feedback on how to improve this is for the end (there's a QR code then, and Erik stays after the next talk), but if you're confused about how it works, stop me and ask.
+- Don't read the slides aloud; let people read and ask.
+- On the themes slide, before the first card: I set the pace, the timers are hints I can override, and you can ask me to go back at any point (except after the shred). The room's reactions set the pace, along with the timers only I can see.
+- Short, honest reactions are enough. Knowing you're not alone is the point; not every card needs a discussion.
 
 ## Excluded, later ideas, and open questions
 
