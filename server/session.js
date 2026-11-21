@@ -51,6 +51,8 @@ export function freshState(now) {
     themes: [],
     // Pooled per group, in the order they happened (the finale replays it).
     reactions: [],
+    // Receipt -> card, so a phone can change its reactions to that card.
+    receipts: {},
     walk: { stream: [], index: 0, cardStartedAt: null, signals: emptySignals() },
     pauseRequests: {},
     pauseHeld: false,
@@ -104,6 +106,7 @@ export class Session {
     this.shredPayload = null;
     this.state = state ?? freshState(now());
     this.state.nudge ??= { mode: 'all', label: null };
+    this.state.receipts ??= {};
     this.state.sessionId ??= randomBytes(8).toString('hex');
     this.shredded = !!this.state.shredded;
     // A restart mid-clustering: run it again.
@@ -366,7 +369,11 @@ export class Session {
 
   // ---- reactions --------------------------------------------------------
 
-  react(cid, groupId, emojis) {
+  // A phone's reactions to one card. The first send returns a random receipt;
+  // sending again with it replaces those reactions, so a phone can go back and
+  // change its mind. The receipt is tied to that one card's reactions, never
+  // to the phone, so reactions stay unlinkable across cards.
+  react(cid, groupId, emojis, receipt) {
     if (this.s.phase !== 'react') fail('Reactions are closed');
     const client = this.client(cid);
     const found = this.findGroup(groupId);
@@ -374,10 +381,18 @@ export class Session {
     if (!Array.isArray(emojis) || emojis.length > LIMITS.emojisPerCard) fail('Too many emojis');
     const unique = [...new Set(emojis)];
     if (!unique.every(isSingleEmoji)) fail('Reactions are emojis only');
-    if (client.reacted >= this.visibleGroups().length) fail('You have reacted to every card');
-    client.reacted += 1;
-    for (const e of unique) this.s.reactions.push({ g: groupId, e });
+    if (receipt !== undefined && receipt !== null) {
+      if (typeof receipt !== 'string' || this.s.receipts[receipt] !== groupId) fail('Nothing to change');
+      this.s.reactions = this.s.reactions.filter((r) => r.r !== receipt);
+    } else {
+      if (client.reacted >= this.visibleGroups().length) fail('You have reacted to every card');
+      client.reacted += 1;
+      receipt = randomBytes(8).toString('hex');
+      this.s.receipts[receipt] = groupId;
+    }
+    for (const e of unique) this.s.reactions.push({ g: groupId, e, r: receipt });
     this.changed();
+    return { receipt };
   }
 
   reactDone(cid) {

@@ -10,6 +10,9 @@ import { loadChecker, HINT } from './shared/identifier-check.js';
 const PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
+// Every keyboard puts its emojis somewhere slightly different.
+const EMOJI_KEYBOARD_HOWTO =
+  'Open your keyboard’s emojis: usually a smiley key (😀 or ☺) by the space bar or above the keys. On an iPhone it may be the 🌐 key. Then tap Next.';
 
 const local = {
   get(key, fallback) {
@@ -374,10 +377,11 @@ function submitScreen() {
 function reactScreen() {
   const el = h('div', { class: 'stack' });
   let groups = [];
-  let done = new Set(local.get('reacted', []));
-  let current = null;
-  let selected = new Set();
-  let custom = [];
+  // What this phone reacted to each card with, and the receipt that lets it
+  // change those reactions. Kept and wiped like the private notes.
+  const mine = local.get('reactions', {});
+  let index = null; // position in this phone's shuffled order
+  let shownId = null;
   let finished = false;
   let sentDone = false;
 
@@ -392,9 +396,14 @@ function reactScreen() {
     return group.texts[Math.floor(rand() * group.texts.length)];
   }
 
-  async function finish() {
+  function finish() {
     finished = true;
-    fill(el, lookUp('Look up', 'That was every card. Thank you. Waiting for everyone else to finish.').el);
+    shownId = null;
+    fill(
+      el,
+      lookUp('Look up', 'That was every card. Thank you. Waiting for everyone else to finish.').el,
+      h('button', { class: 'quiet', onclick: () => ((finished = false), (index = order().length - 1), show()) }, '◀ Back to the last card'),
+    );
     if (!sentDone) {
       sentDone = true;
       post('reactDone', { cid }).catch(() => (sentDone = false));
@@ -403,19 +412,23 @@ function reactScreen() {
 
   function show() {
     const ids = order();
-    const nextId = ids.find((id) => !done.has(id));
-    if (nextId === undefined) return finish();
-    if (current?.id === nextId) return;
-    current = groups.find((g) => g.id === nextId);
-    selected = new Set();
-    custom = [];
-    const position = ids.filter((id) => done.has(id)).length + 1;
+    if (!ids.length) return finish();
+    // Start at the first card this phone hasn't reacted to.
+    if (index === null) index = ids.findIndex((id) => !mine[id]);
+    if (index < 0 || index >= ids.length) return finish();
+    const id = ids[index];
+    if (shownId === id) return;
+    shownId = id;
+    const group = groups.find((g) => g.id === id);
+    const before = mine[id];
+    const selected = new Set(before?.emojis ?? []);
+    const custom = [...selected].filter((e) => !PRESETS.some((p) => p.e === e));
 
     const grid = h(
       'div',
       { class: 'emoji-grid' },
       PRESETS.map(({ e, label }) => {
-        const b = h('button', { 'aria-pressed': 'false' }, h('span', { class: 'e' }, e), h('span', { class: 'l' }, label));
+        const b = h('button', { class: selected.has(e) ? 'on' : '', 'aria-pressed': String(selected.has(e)) }, h('span', { class: 'e' }, e), h('span', { class: 'l' }, label));
         b.addEventListener('click', () => {
           if (selected.has(e)) selected.delete(e);
           else selected.add(e);
@@ -428,9 +441,19 @@ function reactScreen() {
     // Any emoji from the phone's keyboard: a clear button that opens a box
     // and explains how to get to the emoji keyboard.
     const chips = h('div', { class: 'row wrap' });
+    const addChip = (e) => {
+      const chip = h('button', { class: 'chip on' }, e);
+      chip.addEventListener('click', () => {
+        if (selected.has(e)) selected.delete(e);
+        else selected.add(e);
+        chip.classList.toggle('on', selected.has(e));
+      });
+      chips.append(chip);
+    };
+    custom.forEach(addChip);
     const input = h('input', { type: 'text', placeholder: 'Type an emoji', maxLength: 16, 'aria-label': 'Add your own emoji', hidden: true });
     const emojiHint = h('div', { class: 'emoji-hint', hidden: true }, 'Emojis only: switch to the emoji keyboard.');
-    const howTo = h('div', { class: 'small dim', hidden: true }, 'Switch your keyboard to emojis (the 😀 or 🌐 key), pick any, then tap Next.');
+    const howTo = h('div', { class: 'small dim', hidden: true }, EMOJI_KEYBOARD_HOWTO);
     const addOwn = h('button', { class: 'add-own' }, '＋ Add your own emoji');
     addOwn.addEventListener('click', () => {
       addOwn.hidden = true;
@@ -456,49 +479,57 @@ function reactScreen() {
       if (custom.includes(e) || custom.length >= 4) return;
       custom.push(e);
       selected.add(e);
-      const chip = h('button', { class: 'chip on' }, e);
-      chip.addEventListener('click', () => {
-        if (selected.has(e)) selected.delete(e);
-        else selected.add(e);
-        chip.classList.toggle('on', selected.has(e));
-      });
-      chips.append(chip);
-    });
-    const next = h('button', { class: 'primary' }, 'Next');
-    next.addEventListener('click', async () => {
-      next.disabled = true;
-      try {
-        await post('react', { cid, groupId: current.id, emojis: [...selected] });
-      } catch (err) {
-        if (!/every card|No such card/.test(err.message)) {
-          next.disabled = false;
-          return showError(el, err);
-        }
-      }
-      done.add(current.id);
-      local.set('reacted', [...done]);
-      show();
+      addChip(e);
     });
 
-    fill(el, 
-      h('div', { class: 'small faint' }, `Card ${position} of ${ids.length}`),
-      h('div', { class: 'react-card' }, textFor(current)),
+    // Sends this card's reactions (or the changed ones, with the receipt),
+    // then moves by `step` cards.
+    async function save(step) {
+      const emojis = [...selected];
+      const unchanged = before && emojis.length === before.emojis.length && emojis.every((e) => before.emojis.includes(e));
+      if (!unchanged && (before || step > 0)) {
+        try {
+          const { receipt } = await post('react', { cid, groupId: id, emojis, receipt: before?.receipt });
+          mine[id] = { emojis, receipt: receipt ?? before?.receipt };
+          local.set('reactions', mine);
+        } catch (err) {
+          if (!/every card|No such card/.test(err.message)) return showError(el, err);
+        }
+      }
+      index += step;
+      show();
+    }
+
+    const next = h('button', { class: 'primary grow' }, 'Next');
+    next.addEventListener('click', () => ((next.disabled = true), save(1)));
+    const back = h('button', { disabled: index === 0 }, '◀ Previous');
+    back.addEventListener('click', () => ((back.disabled = true), save(-1)));
+
+    fill(
+      el,
+      h('div', { class: 'small faint' }, `Card ${index + 1} of ${ids.length}`, before ? ' · you reacted to this one' : ''),
+      h('div', { class: 'react-card' }, textFor(group)),
       grid,
       h('div', { class: 'row wrap custom-row' }, addOwn, input, chips),
       howTo,
       emojiHint,
-      next,
+      h('div', { class: 'row' }, back, next),
     );
   }
 
   return {
     el,
     update(v) {
-      if (finished) return;
       groups = v.react.groups;
-      if (v.react.done) return finish();
-      // A hidden card leaves the stack, even mid-way.
-      if (current && !groups.some((g) => g.id === current.id)) current = null;
+      if (finished) return;
+      if (v.react.done && index === null) return finish();
+      // Keep the place by card, not by position: a hidden card leaves the
+      // stack, even mid-way, and the cards after it move up.
+      if (shownId !== null) {
+        const i = order().indexOf(shownId);
+        if (i >= 0) index = i;
+        else shownId = index = null;
+      }
       show();
     },
   };

@@ -334,3 +334,23 @@ test('each session has its own id, kept through the shred, new after a reset', a
   session.reset();
   assert.notEqual(session.view('phone', { cid: A }).session, first);
 });
+
+test('a phone can go back and change its reactions to a card', async () => {
+  const { session } = make();
+  await toReact(session);
+  const [g1, g2] = session.view('phone', { cid: A }).react.groups;
+  const { receipt } = session.react(A, g1.id, ['😢', '🫂']);
+  assert.match(receipt, /^[0-9a-f]{16}$/);
+  session.react(A, g2.id, ['🎉']);
+  // Back to the first card: swap the reactions, keep the other card's.
+  session.react(A, g1.id, ['🎉'], receipt);
+  assert.deepEqual(session.emojiMix(g1.id), [['🎉', 1]]);
+  assert.deepEqual(session.emojiMix(g2.id), [['🎉', 1]]);
+  // Changing doesn't use up the one pass.
+  assert.equal(session.state.clients[A].reacted, 2);
+  // A receipt only works for its own card.
+  assert.throws(() => session.react(B, g2.id, [], receipt), /Nothing to change/);
+  assert.throws(() => session.react(B, g1.id, [], 'feedfacefeedface'), /Nothing to change/);
+  // Receipts carry no phone id.
+  assert.equal(JSON.stringify(session.state.receipts).includes(A), false);
+});

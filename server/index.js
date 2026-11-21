@@ -104,7 +104,7 @@ function openStream(req, res, url) {
 
 const PHONE_ACTIONS = {
   submit: (b) => session.submitCards(b.cid, b.texts),
-  react: (b) => session.react(b.cid, b.groupId, b.emojis),
+  react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt),
   reactDone: (b) => session.reactDone(b.cid),
   signal: (b) => session.signal(b.cid, b.kind, b.on),
   requestPause: (b) => session.requestPause(b.cid, b.on),
@@ -156,8 +156,8 @@ async function handleAction(req, res, name) {
   if (facilitator && !isFacilitator(req.headers['x-facilitator-token'])) return notFound(res);
   try {
     const body = await readJson(req);
-    (facilitator ?? phone)(body);
-    json(res, 200, { ok: true });
+    const result = (facilitator ?? phone)(body);
+    json(res, 200, { ok: true, ...(result && typeof result === 'object' ? result : {}) });
   } catch (err) {
     if (err instanceof ActionError) return json(res, 400, { error: err.message });
     console.error('action failed:', name, err?.name ?? 'Error');
