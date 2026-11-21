@@ -1,8 +1,8 @@
 // The participant's phone. Private notes live only in this tab's
-// sessionStorage: they never leave the phone. They're wiped at the shred, when
-// the tab closes, and, for a phone that was offline at the shred, as soon as
-// it reconnects to a later session or 4 hours after it last heard from the server,
-// whichever comes first.
+// sessionStorage: they never leave the phone. They're wiped when the shred
+// reaches the phone or the tab closes. A phone that was offline at the shred
+// wipes them as soon as it reconnects to a later session; the phone also says
+// that closing the tab is the sure way.
 import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle } from './shared/client.js';
 import { PRESETS, firstEmoji } from './shared/emoji.js';
 import { loadChecker, HINT } from './shared/identifier-check.js';
@@ -10,8 +10,6 @@ import { loadChecker, HINT } from './shared/identifier-check.js';
 const PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
-
-const MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
 const local = {
   get(key, fallback) {
@@ -24,7 +22,6 @@ const local = {
   set(key, value) {
     try {
       sessionStorage.setItem(`otr.${key}`, JSON.stringify(value));
-      sessionStorage.setItem('otr.savedAt', String(Date.now()));
     } catch {}
   },
   clear() {
@@ -38,19 +35,6 @@ function newId() {
   const bytes = crypto.getRandomValues(new Uint8Array(12));
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-// Wipe anything older than 4 hours, even if this phone never heard about the
-// shred (offline, or the server is already gone).
-function wipeIfStale() {
-  const savedAt = Number(local.get('savedAt', 0));
-  if (savedAt && Date.now() - savedAt > MAX_AGE_MS) {
-    local.clear();
-    return true;
-  }
-  return false;
-}
-wipeIfStale();
-setInterval(() => wipeIfStale() && location.reload(), 60_000);
-
 let cid = local.get('cid');
 if (!cid) local.set('cid', (cid = newId()));
 
@@ -141,11 +125,11 @@ const SCREENS = {
   finale: () => lookUp(),
   shred: () => {
     local.clear();
-    return { el: h('div', { class: 'black' }, 'Shredded.') };
+    return { el: h('div', { class: 'black' }, 'Shredded. You can close this tab.') };
   },
   closing: () => {
     local.clear();
-    return { el: h('div', { class: 'black' }, 'Thank you.') };
+    return { el: h('div', { class: 'black' }, 'Thank you. You can close this tab.') };
   },
 };
 
@@ -238,7 +222,7 @@ function submitScreen() {
     doneText.hidden = left > 0;
     doneText.textContent = `You've shared ${view?.submit.max ?? 3} cards. Thank you. Look up when Erik moves on.`;
     listHead.hidden = notes.length === 0;
-    listHead.textContent = left > 0 ? 'Private notes (only on this phone)' : 'Not shared. Only on this phone; wiped at the shred.';
+    listHead.textContent = left > 0 ? 'Private notes (only on this phone)' : 'Not shared. Only on this phone; wiped at the shred. To be sure, close this tab.';
     sentHead.hidden = sent.length === 0;
     fill(sentList, sent.map((text) => h('div', { class: 'note sent' }, h('span', { class: 'tick' }, '✓'), h('div', { class: 'text' }, text))));
     fill(
