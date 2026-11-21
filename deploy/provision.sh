@@ -3,8 +3,8 @@
 # their official release tarballs and keeps the system journal in memory only.
 set -euo pipefail
 
-NODE_VERSION=22.22.1
-CADDY_VERSION=2.10.2
+NODE_VERSION=22.23.5
+CADDY_VERSION=2.11.9
 
 # Journal in RAM only: nothing survives a reboot or the instance's termination.
 mkdir -p /etc/systemd/journald.conf.d
