@@ -11,6 +11,8 @@ const PROMPT = 'Write down something you experienced, felt, or were surprised by
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
 // Every keyboard puts its emojis somewhere slightly different.
+const MAX_OWN = 6; // own-emoji chips shown on a card
+
 const EMOJI_KEYBOARD_HOWTO =
   'Open your keyboard’s emojis: usually a smiley key (😀 or ☺) by the space bar or above the keys. Then tap Next.';
 
@@ -422,7 +424,11 @@ function reactScreen() {
     const group = groups.find((g) => g.id === id);
     const before = mine[id];
     const selected = new Set(before?.emojis ?? []);
-    const custom = [...selected].filter((e) => !PRESETS.some((p) => p.e === e));
+    // Your own emojis: this card's, then ones you've used on other cards,
+    // offered as one-tap chips so you don't have to find them again.
+    const isPreset = (e) => PRESETS.some((p) => p.e === e);
+    const recent = local.get('recentEmojis', []);
+    const custom = [...new Set([...[...selected].filter((e) => !isPreset(e)), ...recent])].slice(0, MAX_OWN);
 
     const grid = h(
       'div',
@@ -442,7 +448,7 @@ function reactScreen() {
     // and explains how to get to the emoji keyboard.
     const chips = h('div', { class: 'row wrap' });
     const addChip = (e) => {
-      const chip = h('button', { class: 'chip on' }, e);
+      const chip = h('button', { class: `chip${selected.has(e) ? ' on' : ''}` }, e);
       chip.addEventListener('click', () => {
         if (selected.has(e)) selected.delete(e);
         else selected.add(e);
@@ -476,7 +482,12 @@ function reactScreen() {
         if (!selected.has(e)) grid.children[preset].click();
         return;
       }
-      if (custom.includes(e) || custom.length >= 4) return;
+      if (custom.includes(e)) {
+        // Already a chip: just select it.
+        if (!selected.has(e)) chips.children[custom.indexOf(e)].click();
+        return;
+      }
+      if (custom.length >= MAX_OWN) return;
       custom.push(e);
       selected.add(e);
       addChip(e);
@@ -492,6 +503,9 @@ function reactScreen() {
           const { receipt } = await post('react', { cid, groupId: id, emojis, receipt: before?.receipt });
           mine[id] = { emojis, receipt: receipt ?? before?.receipt };
           local.set('reactions', mine);
+          // Remember your own emojis for later cards, most recent first.
+          const own = emojis.filter((e) => !isPreset(e));
+          if (own.length) local.set('recentEmojis', [...new Set([...own, ...local.get('recentEmojis', [])])].slice(0, MAX_OWN));
         } catch (err) {
           if (!/every card|No such card/.test(err.message)) return showError(el, err);
         }
