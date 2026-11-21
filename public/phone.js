@@ -517,7 +517,13 @@ function reactScreen() {
           const own = custom.filter((e) => selected.has(e)); // newest first, as shown
           if (own.length) local.set('recentEmojis', [...new Set([...own, ...local.get('recentEmojis', [])])].slice(0, MAX_OWN));
         } catch (err) {
-          if (!/every card|No such card/.test(err.message)) return showError(el, err);
+          if (!/every card|No such card/.test(err.message)) {
+            // Stay on this card, with both buttons working again, so a
+            // dropped connection never leaves the phone stuck here.
+            next.disabled = false;
+            back.disabled = index === 0;
+            return showError(el, err);
+          }
         }
       }
       index += step;
@@ -616,11 +622,15 @@ function walkScreen(first) {
       parts.push(h('p', { class: 'dim' }, 'Sent. Look up.'));
     } else if (pause.opened) {
       const input = h('textarea', { rows: 3, maxLength: HARD_MAX, placeholder: 'Your anonymous comment' });
-      input.value = local.get('comment', '');
+      // The draft survives a reload, but only within this pause: an unsent
+      // comment about one card never turns up in a later pause about another.
+      const at = pause.startedAt;
+      const draft = local.get('comment', null);
+      input.value = draft?.at === at ? draft.text : '';
       const hint = h('div');
       const send = h('button', { class: 'primary grow' }, 'Send');
       const refresh = () => {
-        local.set('comment', input.value);
+        local.set('comment', { at, text: input.value });
         send.disabled = !input.value.trim();
         fill(hint, identifierHint(input.value) ?? '');
       };
@@ -630,7 +640,7 @@ function walkScreen(first) {
         send.disabled = true;
         try {
           await post('comment', { cid, text: input.value });
-          local.set('comment', '');
+          local.set('comment', null);
         } catch (err) {
           send.disabled = false;
           showError(pausePanel, err);
@@ -638,7 +648,7 @@ function walkScreen(first) {
       });
       const cancel = h('button', { class: 'quiet' }, 'Cancel');
       cancel.addEventListener('click', () => {
-        local.set('comment', '');
+        local.set('comment', null);
         post('cancelComment', { cid }).catch(() => {});
       });
       parts.push(input, hint, h('div', { class: 'row' }, cancel, send));

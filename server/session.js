@@ -80,6 +80,13 @@ export function normalizeClusters(rawThemes, cardIds) {
   return themes;
 }
 
+// Without the AI (it failed, or the facilitator skipped it): one theme, every
+// card its own group, no name until the facilitator gives it one.
+export const SKIPPED = 'Skipped';
+function fallbackClusters(ids, error) {
+  return { themes: normalizeClusters([], ids).map((t) => ({ ...t, name: '' })), status: 'failed', error, local: true };
+}
+
 export class Session {
   constructor({
     state,
@@ -171,7 +178,9 @@ export class Session {
   }
 
   client(cid) {
-    if (typeof cid !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(cid)) fail('Missing phone id');
+    // Hex only, as phones make them. This also keeps out names like
+    // "__proto__" or "constructor", which every plain object already has.
+    if (typeof cid !== 'string' || !/^[0-9a-f]{16,64}$/.test(cid)) fail('Missing phone id');
     return (this.s.clients[cid] ??= { cards: 0, reacted: 0, reactDone: false });
   }
 
@@ -210,6 +219,10 @@ export class Session {
       this.s.submitEndsAt =
         direction === 'forward' ? now + SUBMIT_MINUTES * 60_000 : Math.max(this.s.submitEndsAt ?? 0, now + 60_000);
     }
+    // The room's section timer starts when a part is entered going forward,
+    // so going back (from last call to the walk-through, say) doesn't
+    // restart it.
+    if ((to === 'react' || to === 'walk') && direction === 'forward') this.s.sectionStartedAt = { ...this.s.sectionStartedAt, [to]: now };
     if (to === 'cluster') this.startClustering(false);
     if (to === 'walk' && direction === 'forward') this.buildWalk();
     if (to === 'walk' && direction === 'back') this.s.walk.cardStartedAt = now;
@@ -241,6 +254,9 @@ export class Session {
       while (this.card(id));
       this.s.cards.push({ id, text, hidden: false });
     }
+    // Kept in id order, not the order they arrived, so neither the database
+    // nor the shredder's sheets show which cards one phone sent together.
+    this.s.cards.sort((a, b) => a.id - b.id);
     client.cards += clean.length;
     this.changed();
     this.scheduleNudge();
@@ -300,7 +316,13 @@ export class Session {
     const cards = this.s.cards.filter((c) => !c.hidden);
     const key = cards.map((c) => c.id).sort((a, b) => a - b).join(',');
     const c = this.s.clustering;
-    if (!force && c.key === key && (c.status === 'done' || c.status === 'failed')) return;
+    // Coming back to grouping only regroups when there are cards without a
+    // group (new submissions). A card hidden since doesn't regroup: that
+    // would give every group a new id, cutting reactions off from their
+    // cards and losing approved names.
+    const grouped = new Set(this.s.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds)));
+    const settled = c.key === key || (this.s.themes.length > 0 && cards.every((card) => grouped.has(card.id)));
+    if (!force && settled && (c.status === 'done' || c.status === 'failed')) return;
     const run = ++this.clusterRun;
     if (cards.length === 0) {
       this.s.themes = [];
@@ -314,24 +336,31 @@ export class Session {
       .then(() => this.clusterCards(input))
       .then(
         (result) => ({ themes: normalizeClusters(result.themes, ids), status: 'done', error: null, local: !!result.local }),
-        (err) => ({
-          themes: normalizeClusters([], ids).map((t) => ({ ...t, name: '' })),
-          status: 'failed',
-          error: String(err?.message ?? err).slice(0, 200),
-          local: true,
-        }),
+        (err) => fallbackClusters(ids, String(err?.message ?? err).slice(0, 200)),
       )
-      .then(({ themes, status, error, local }) => {
-        if (run !== this.clusterRun || this.shredded) return;
-        this.s.themes = themes.map((t) => ({
-          id: this.newId(),
-          name: t.name,
-          approved: false,
-          groups: t.groups.map((cardIds) => ({ id: this.newId(), cardIds })),
-        }));
-        this.s.clustering = { status, error, key, local };
-        this.changed();
-      });
+      .then((result) => this.applyClusters(run, key, result));
+  }
+
+  applyClusters(run, key, { themes, status, error, local }) {
+    if (run !== this.clusterRun || this.shredded) return;
+    this.s.themes = themes.map((t) => ({
+      id: this.newId(),
+      name: t.name,
+      approved: false,
+      groups: t.groups.map((cardIds) => ({ id: this.newId(), cardIds })),
+    }));
+    this.s.clustering = { status, error, key, local };
+    this.changed();
+  }
+
+  // While the AI is grouping, the facilitator can stop waiting: every card
+  // becomes its own group in one theme, exactly as when grouping fails, and
+  // Retry runs the AI again.
+  skipClustering() {
+    if (this.s.phase !== 'cluster' || this.s.clustering.status !== 'running') fail('Grouping is not running');
+    const ids = this.s.cards.filter((c) => !c.hidden).map((c) => c.id).sort((a, b) => a - b);
+    const run = ++this.clusterRun;
+    this.applyClusters(run, this.s.clustering.key, fallbackClusters(ids, SKIPPED));
   }
 
   recluster() {
@@ -684,7 +713,7 @@ export class Session {
       s.phase === 'submit'
         ? s.submitEndsAt
         : ['react', 'walk'].includes(s.phase)
-          ? s.phaseStartedAt + (PLAN[s.phase][1] - PLAN[s.phase][0]) * 60_000
+          ? (s.sectionStartedAt?.[s.phase] ?? s.phaseStartedAt) + (PLAN[s.phase][1] - PLAN[s.phase][0]) * 60_000
           : null;
     if (sectionEnd) v.section = { endsAt: sectionEnd };
     if (s.phase === 'walk' || s.phase === 'lastcall') {

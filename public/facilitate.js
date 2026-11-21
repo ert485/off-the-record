@@ -316,7 +316,9 @@ const PHASES = {
         : c.empty
           ? 'No cards were submitted, so there’s nothing to group.'
           : c.status === 'failed'
-            ? `Grouping failed: ${c.error}. Showing one card per group.`
+            ? c.error === 'Skipped'
+              ? 'Skipped the AI: one card per group. Name the theme, or Retry.'
+              : `Grouping failed: ${c.error}. Showing one card per group.`
             : c.local
               ? 'Grouped without AI (no API key on the server): one card per group.'
               : unapproved
@@ -335,6 +337,8 @@ const PHASES = {
         '',
         h('div', { class: 'row' },
           h('span', { class: 'grow dim small' }, status),
+          // Don't wait on a slow or stuck API: every card becomes its own group.
+          c.status === 'running' ? h('button', { class: 'small-btn', onclick: () => act('skipClustering') }, 'Skip the AI') : '',
           c.status === 'failed' ? h('button', { class: 'small-btn', onclick: () => act('recluster') }, 'Retry') : '',
           v.themes.length && unapproved && c.status !== 'running' ? h('button', { class: 'small-btn primary', onclick: approveAll }, 'Approve all') : ''),
       ),

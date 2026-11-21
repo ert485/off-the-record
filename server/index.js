@@ -121,6 +121,7 @@ const FACILITATOR_ACTIONS = {
   extend: () => session.extendSubmit(),
   nudges: (b) => session.setNudges(b.on),
   recluster: () => session.recluster(),
+  skipClustering: () => session.skipClustering(),
   approveTheme: (b) => session.approveTheme(b.id, b.name),
   approveAll: (b) => session.approveAll(b.names),
   reset: (b) => {

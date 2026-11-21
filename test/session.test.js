@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Session, normalizeClusters, PAUSE } from '../server/session.js';
+import { Session, normalizeClusters, PAUSE, SKIPPED } from '../server/session.js';
 import { paceMinutes, PHASES } from '../server/phases.js';
 
-const A = 'phone-aaaaaaaa';
-const B = 'phone-bbbbbbbb';
+const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+const B = 'bbbbbbbbbbbbbbbbbbbbbbbb';
 
 function make({ cluster } = {}) {
   let t = 1_000_000;
@@ -353,4 +353,83 @@ test('a phone can go back and change its reactions to a card', async () => {
   assert.throws(() => session.react(B, g1.id, [], 'feedfacefeedface'), /Nothing to change/);
   // Receipts carry no phone id.
   assert.equal(JSON.stringify(session.state.receipts).includes(A), false);
+});
+
+test('cards are kept in id order, so storage never shows who sent which together', () => {
+  const { session } = make();
+  session.advance();
+  session.submitCards(A, ['a1', 'a2', 'a3']);
+  session.submitCards(B, ['b1', 'b2', 'b3']);
+  const ids = session.state.cards.map((c) => c.id);
+  assert.deepEqual(ids, [...ids].sort((x, y) => x - y));
+});
+
+test('phone ids are hex only, so object built-ins can never be one', () => {
+  const { session } = make();
+  session.advance();
+  for (const bad of ['__proto__', 'constructor', 'hasOwnProperty', 'phone-aaaaaaaa']) {
+    assert.throws(() => session.submitCards(bad, ['x']), /phone id/);
+  }
+  assert.equal({}.cards, undefined);
+});
+
+test('going back to grouping after hiding a card keeps the groups, names and reactions', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.back(); // cluster
+  session.approveAll({ [session.state.themes[0].id]: 'Named' });
+  session.advance(); // react
+  const [g1] = session.view('phone', { cid: A }).react.groups;
+  session.react(A, g1.id, ['🙋']);
+  const before = JSON.stringify(session.state.themes.map((t) => t.groups.map((g) => g.id)));
+  session.hideCard(session.state.cards.find((c) => !g1.texts.includes(c.text)).id, true);
+  session.back(); // cluster
+  await flush();
+  assert.equal(JSON.stringify(session.state.themes.map((t) => t.groups.map((g) => g.id))), before);
+  assert.equal(session.state.themes[0].name, 'Named');
+  assert.deepEqual(session.emojiMix(g1.id), [['🙋', 1]]);
+});
+
+test('going back to grouping regroups when new cards came in', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.back(); // cluster
+  session.back(); // submit
+  session.submitCards(B, ['four']);
+  session.advance(); // cluster
+  await flush();
+  const grouped = session.state.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds));
+  assert.equal(grouped.length, 4);
+});
+
+test('the facilitator can skip a slow grouping; its late result is ignored', async () => {
+  let finish;
+  const { session } = make({ cluster: () => new Promise((r) => (finish = r)) });
+  session.advance();
+  session.submitCards(A, ['one', 'two']);
+  assert.throws(() => session.skipClustering(), /not running/);
+  session.advance(); // cluster
+  await flush();
+  assert.equal(session.state.clustering.status, 'running');
+  session.skipClustering();
+  assert.equal(session.state.clustering.status, 'failed');
+  assert.equal(session.state.clustering.error, SKIPPED);
+  assert.equal(session.state.themes.flatMap((t) => t.groups).length, 2);
+  finish({ themes: [{ name: 'Late', groups: [session.state.cards.map((c) => c.id)] }] });
+  await flush();
+  assert.equal(session.state.themes[0].name, '');
+  session.advance(); // react: no longer blocked
+  assert.equal(session.state.phase, 'react');
+});
+
+test('going back to the walk-through does not restart its section timer', async () => {
+  const { session, clock } = make();
+  await toReact(session);
+  session.advance(); // walk
+  const endsAt = session.view('projector').section.endsAt;
+  clock.tick(120_000);
+  session.advance(); // lastcall
+  clock.tick(30_000);
+  session.back(); // walk
+  assert.equal(session.view('projector').section.endsAt, endsAt);
 });

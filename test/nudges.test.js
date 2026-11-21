@@ -4,7 +4,7 @@ import { Session } from '../server/session.js';
 import { leastCovered, NUDGES } from '../server/nudges.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const cid = (i) => `phone-${String(i).padStart(8, '0')}`;
+const cid = (i) => String(i).padStart(24, '0');
 
 function make(tagCards) {
   const s = new Session({

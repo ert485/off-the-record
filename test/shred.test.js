@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const TOKEN = 'test-token-' + randomBytes(4).toString('hex');
 const MARKER = 'MARKER' + randomBytes(8).toString('hex');
-const PHONES = ['phone-aaaaaaaa', 'phone-bbbbbbbb', 'phone-cccccccc'];
+const PHONES = ['a'.repeat(24), 'b'.repeat(24), 'c'.repeat(24)];
 
 const freePort = () =>
   new Promise((ok) => {
