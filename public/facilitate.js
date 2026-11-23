@@ -116,14 +116,16 @@ setInterval(() => {
   for (const { el, fn } of [...barLive, ...live]) el.textContent = fn();
 }, 1000);
 
-// Returns true when the action went through. "Already moved on" means another
-// device (or an earlier tap) got there first: a no-op, not an error.
+// Returns true when the action went through. "Already moved on" and "Already
+// extended" mean another device (or an earlier tap) got there first: a no-op,
+// not an error.
+const ALREADY = ['Already moved on', 'Already extended'];
 async function act(action, body = {}) {
   try {
     await post(action, body, { 'x-facilitator-token': token });
     return true;
   } catch (err) {
-    if (err.message === 'Already moved on') return false;
+    if (ALREADY.includes(err.message)) return false;
     const t = h('div', {}, err.message);
     toasts.append(t);
     setTimeout(() => t.remove(), 4000);
@@ -143,7 +145,7 @@ function renderBar() {
   const color = Math.abs(pace) < 0.5 ? 'var(--ok)' : pace < 0 ? 'var(--warn)' : '#6aa9ff';
   const talkInfo = info(
     'talk',
-    `Time left in the talk (${talk?.minutes ?? 25} minutes in all), counted from when you tapped “Start talk clock”. Only you see it.`,
+    `Time left in the talk (${talk?.minutes ?? 25} minutes in all), counted from when you tapped “Start talk clock”, or, if you didn’t, from when the room moved on (set back to the plan’s start for that part). Only you see it.`,
   );
   const paceInfo = info(
     'pace',
@@ -245,7 +247,12 @@ function nav(v) {
   const back = h('button', { disabled: !v.canBack, onclick: () => act('back', { from: v.phase }) }, v.prev ? `◀ Back to ${BACK_TO[v.prev]}` : '◀ Back');
   let next;
   if (v.phase === 'cluster') {
-    next = h('button', { class: 'primary prompt', onclick: async () => (await approveAll(v)) && act('advance', { from: 'cluster' }) }, 'Approve all and start reactions ▶');
+    const c = v.clustering;
+    const wait =
+      c.status === 'running' || c.late?.status === 'running' ? 'Grouping…' : c.late?.status === 'flagged' ? 'Choose keep or regroup first' : null;
+    next = wait
+      ? h('button', { class: 'primary prompt', disabled: true }, wait)
+      : h('button', { class: 'primary prompt', onclick: async () => (await approveAll(v)) && act('advance', { from: 'cluster' }) }, 'Approve all and start reactions ▶');
   } else if (v.next === 'shred') {
     next = h('button', { class: 'danger prompt' }, v.move ? `${v.move.label} ▶` : 'Shred…');
     next.addEventListener('click', () => {
@@ -414,7 +421,7 @@ const PHASES = {
   demo: (v) => {
     const d = v.demo;
     if (!d) return { content: h('p', { class: 'dim' }, 'Talk through the app, then start the session.') };
-    const stepInfo = info('demo', 'The demo is a short scripted tour on the projector and the phones. Next shows the next step; Back goes to the one before.');
+    const stepInfo = info('demo', 'The demo is a short scripted tour on the projector; phones show only “Starting soon” until you start the session. Next shows the next step; Back goes to the one before.');
     return {
       now: now(
         d.name,
@@ -423,8 +430,8 @@ const PHASES = {
         '',
         stepInfo.text,
         h('div', { class: 'nav' },
-          h('button', { disabled: d.step === 0, onclick: () => act('demoBack') }, '◀ Back'),
-          h('button', { class: 'primary', disabled: d.step >= d.steps - 1, onclick: () => act('demoNext') }, 'Next ▶')),
+          h('button', { disabled: d.step === 0, onclick: () => act('demoBack', { from: d.step }) }, '◀ Back'),
+          h('button', { class: 'primary', disabled: d.step >= d.steps - 1, onclick: () => act('demoNext', { from: d.step }) }, 'Next ▶')),
       ),
     };
   },
@@ -452,7 +459,7 @@ const PHASES = {
         countInfo.text,
         timeInfo.text,
         h('div', { class: 'row wrap' },
-          h('button', { class: 'small-btn', onclick: () => act('extend') }, '+1 minute'),
+          h('button', { class: 'small-btn', onclick: () => act('extend', { from: v.submit.endsAt }) }, '+1 minute'),
           h('button', { class: `small-btn${v.submit.nudgesOn ? ' on' : ''}`, onclick: () => act('nudges', { on: !v.submit.nudgesOn }) }, `Nudges ${v.submit.nudgesOn ? 'on' : 'off'}`),
           h('span', { class: 'small dim grow' }, nudgeStatus(v.submit))),
         c.status === 'running' ? h('div', { class: 'small dim' }, 'Grouping started (about 40 seconds)…') : '',
@@ -499,7 +506,8 @@ const PHASES = {
       ),
       content: [
         themeDrafts(v),
-        c.status !== 'running' && c.status !== 'idle' && !c.empty ? h('button', { class: 'quiet', onclick: () => act('recluster') }, 'Re-run grouping') : '',
+        // Not once there are reactions: new groups would cut them (and comments) off their cards.
+        c.status !== 'running' && c.status !== 'idle' && !c.empty && !v.react.reactions ? h('button', { class: 'quiet', onclick: () => act('recluster') }, 'Re-run grouping') : '',
       ],
     };
   },
@@ -518,7 +526,7 @@ const PHASES = {
         [' left ', timeInfo.button],
         pctInfo.text,
         timeInfo.text,
-        h('div', { class: 'row wrap' }, h('button', { class: 'small-btn', onclick: () => act('extendReact') }, '+1 minute')),
+        h('div', { class: 'row wrap' }, h('button', { class: 'small-btn', onclick: () => act('extendReact', { from: v.react.endsAt }) }, '+1 minute')),
       ),
       content: h('div', {}, h('span', { class: 'dim small' }, `${v.react.reactions} reactions so far `), countInfo.button, countInfo.text),
       lists: allCards(v),
@@ -583,7 +591,12 @@ const PHASES = {
                 mixLine(item?.mix),
               ],
         lastSlide ? '' : h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
-        commentList('Comments on this card, live on the projector', v.comments?.current),
+        commentList(
+          item?.hidden
+            ? 'Comments on this card (hidden, so none are on the projector)'
+            : 'Comments on this card: the first 5 are on the projector, the rest as “+N more”',
+          v.comments?.current,
+        ),
         commentList('Comments on the next card, not shown yet', v.comments?.next),
       ],
       lists: foldable(
@@ -613,7 +626,7 @@ const PHASES = {
       h('p', { class: 'dim' }, 'What the app does, what was left out, and: what do you think? The projector shows a QR code to the feedback thread.'),
       h('button', {
         onclick: () => {
-          if (confirm('Start a new session? Every phone and the projector go back to the Join screen.')) act('reset', { confirm: true });
+          if (confirm('Start a new session? The projector goes back to the demo, and every phone to “Starting soon”.')) act('reset', { confirm: true });
         },
       }, 'Start a new session…'),
     ],
