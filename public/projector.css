@@ -184,6 +184,7 @@ body { background: #000; overflow: hidden; cursor: none; }
 .demo .dscreen p { margin: 0; }
 .demo .dscreen button { font-size: 22px; min-height: 52px; pointer-events: none; }
 .demo .dscreen .small { font-size: 18px; }
+.demo .dscreen .small.faint { color: var(--text-dim); }
 .demo .note { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%; color: var(--text); }
 .demo .note .text { flex: 1; }
 .demo .note .check { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); flex: none; margin-top: 2px; transition: background 0.3s, border-color 0.3s; }
@@ -203,10 +204,10 @@ body { background: #000; overflow: hidden; cursor: none; }
 .demo .chip { font-family: var(--emoji); font-size: 32px; padding: 4px 12px; min-height: 52px; }
 .demo .dtextarea { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-height: 100px; font-size: 22px; overflow-wrap: anywhere; }
 .demo .dtextarea.empty { color: var(--text-faint); }
-.demo .dfolder { display: flex; flex-direction: column; align-items: flex-start; margin-top: 120px; }
+.demo .dfolder { display: flex; flex-direction: column; align-items: flex-start; margin-top: 60px; }
 .demo .dtab { background: var(--manila); color: #2b2209; font-size: 25px; font-weight: 700; padding: 6px 20px 7px; margin-left: 14px; border-radius: 12px 12px 0 0; border: 2px solid var(--manila-edge); border-bottom: 0; margin-bottom: -2px; position: relative; z-index: 1; overflow-wrap: anywhere; max-width: 330px; }
 .demo .dfolder-card { align-self: stretch; background: #1c1d22; border: 2px solid var(--manila-edge); border-radius: 0 12px 12px 12px; padding: 36px 24px; text-align: center; font-size: 28px; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere; }
-.demo .dhaiku { margin-top: 26px; font-size: 22px; font-style: italic; color: var(--text-dim); white-space: pre-line; text-align: center; }
+.demo .dhaiku { margin-top: 30px; font-size: 34px; line-height: 1.3; font-weight: 500; text-wrap: balance; color: var(--text); white-space: pre-line; text-align: center; }
 
 /* Entrances: only on a forward step (.animate); Back shows everything settled. */
 .demo .animate .pop { animation: demo-in 0.55s ease both; animation-delay: var(--d, 0s); }
