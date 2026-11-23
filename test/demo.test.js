@@ -203,13 +203,41 @@ test('Next or Back takes the demo off the loop; the switch puts it back', () => 
   s.demoAuto(true);
   assert.equal(s.state.demo.auto, true);
   assert.equal(s.state.demo.stepStartedAt, s.clock.now());
-  s.demoStep(-1);
+  s.demoStep(1);
   assert.equal(s.state.demo.auto, false);
   s.demoAuto(true);
   s.demoAuto(false);
   assert.equal(s.view('facilitator').demo.auto, false);
   s.advance();
   assert.throws(() => s.demoAuto(true), /The demo is over/);
+});
+
+test('play on a loop starts again from the first step', () => {
+  const s = make();
+  // Stepped by hand to the last step, then put back on the loop.
+  for (let i = 1; i < DEMO_STEPS.length; i++) s.demoStep(1);
+  assert.equal(s.state.demo.step, DEMO_STEPS.length - 1);
+  s.clock.tick(30_000);
+  let changes = 0;
+  s.onChange = () => changes++;
+  s.demoAuto(true);
+  assert.deepEqual(
+    { step: s.state.demo.step, auto: s.state.demo.auto, stepStartedAt: s.state.demo.stepStartedAt },
+    { step: 0, auto: true, stepStartedAt: s.clock.now() },
+  );
+  assert.equal(changes, 1);
+  assert.equal(s.view('projector').demo.step, 0);
+  // ...and loops from there: step 2 after the first step's time.
+  s.clock.tick(DEMO_STEP_MS[0]);
+  s.tick();
+  assert.equal(s.state.demo.step, 1);
+  // A second tap (another device) while it loops doesn't restart it.
+  const startedAt = s.state.demo.stepStartedAt;
+  s.clock.tick(1000);
+  s.demoAuto(true);
+  assert.equal(s.state.demo.step, 1);
+  assert.equal(s.state.demo.stepStartedAt, startedAt);
+  assert.equal(changes, 2);
 });
 
 test('starting the talk clock takes the demo off the loop and back to step 1', () => {

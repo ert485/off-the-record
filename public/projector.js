@@ -97,7 +97,8 @@ function teaserScreen() {
 // the facilitator view. Steps 1-4 happen on a drawn phone (the real phone's
 // look, scaled up so it reads from the back row); step 5 is the walk-through's
 // own card layout. Entering a step animates (a step forward, the loop wrapping
-// round, or the loop's step that has only just begun); going Back, or
+// round or starting again from step 1 on "Play on a loop", or the loop's step
+// that has only just begun); going Back, or
 // reloading mid-step, shows it settled. Every step's animation is over at
 // least 3 seconds before the loop moves on. Every timeout is cleared when the
 // step changes and when the screen is destroyed.
@@ -277,6 +278,7 @@ function demoScreen() {
 
   const STEPS = [notesStep, pickStep, groupStep, reactStep, revealStep];
   let shown = null; // the step on screen, or 'none' when there is no demo content
+  let shownAuto = null; // whether it was looping at the last update (null before the first)
 
   return {
     el,
@@ -287,13 +289,18 @@ function demoScreen() {
         shown = 'none';
         return;
       }
-      if (shown === d.step) return;
-      // A step forward animates, and so does the loop wrapping back to the
-      // first step, or a loop step that has only just begun (the demo
-      // arriving from the teaser). Back, and a reload mid-step, show it settled.
-      const wrapped = d.auto && shown === STEPS.length - 1 && d.step === 0;
+      // "Play on a loop" starts again from the first step, even when that is
+      // the step already showing.
+      const played = shownAuto === false && d.auto;
+      shownAuto = d.auto;
+      if (shown === d.step && !played) return;
+      // A step forward animates, and so does the loop going back to the first
+      // step (wrapping round, or "Play on a loop"), or a loop step that has
+      // only just begun (the demo arriving from the teaser). Back, and a
+      // reload mid-step, show it settled.
+      const restarted = d.auto && typeof shown === 'number' && d.step === 0;
       const fresh = shown === null && d.auto && serverNow() - d.stepStartedAt < 2000;
-      const animate = (typeof shown === 'number' && (d.step === shown + 1 || wrapped)) || fresh;
+      const animate = (typeof shown === 'number' && d.step === shown + 1) || restarted || fresh;
       if (shown === 'none') fill(el, main, reveal);
       shown = d.step;
       clearTimers();

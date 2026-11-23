@@ -445,7 +445,7 @@ const PHASES = {
   demo: (v) => {
     const d = v.demo;
     if (!d) return { content: h('p', { class: 'dim' }, 'Talk through the app, then start the session.') };
-    const stepInfo = info('demo', 'It loops by itself while people arrive. Back or Next stops the loop and puts you in control, and so does starting the talk clock while it loops (it puts you on step 1); Play on a loop starts it again.');
+    const stepInfo = info('demo', 'It loops by itself while people arrive. Back or Next stops the loop and puts you in control, and so does starting the talk clock while it loops (it puts you on step 1); Play on a loop starts it again from step 1.');
     return {
       now: now(
         d.name,

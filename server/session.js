@@ -365,11 +365,13 @@ export class Session {
     this.changed();
   }
 
-  // The facilitator's switch for the loop: on plays from the current step.
+  // The facilitator's switch for the loop: on starts again from the first
+  // step, so the room sees the loop begin at once. A second tap while it
+  // already loops (another device) leaves it where it is. Off stays put.
   demoAuto(on) {
     if (this.s.phase !== 'demo') fail('The demo is over');
-    this.s.demo.auto = !!on;
-    this.s.demo.stepStartedAt = this.now();
+    if (on && this.s.demo.auto) return;
+    Object.assign(this.s.demo, { auto: !!on, stepStartedAt: this.now() }, on ? { step: 0 } : {});
     this.changed();
   }
 
