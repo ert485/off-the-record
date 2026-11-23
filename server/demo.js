@@ -6,7 +6,7 @@ import { isSingleEmoji, PRESETS } from '../public/shared/emoji.js';
 
 export const DEMO_STEPS = ['notes', 'pick', 'group', 'react', 'reveal'];
 // How long each step shows while the demo plays on a loop (about a minute in
-// all; step 3 includes the send animation).
+// all; step 2, the pick step, includes the send animation).
 export const DEMO_STEP_MS = [10_000, 14_000, 12_000, 14_000, 14_000];
 // Shown before the event when the demo file has no teaser of its own.
 export const DEFAULT_TEASER = { title: 'Off the Record', lines: ['Starting soon.'] };

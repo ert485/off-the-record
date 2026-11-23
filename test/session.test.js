@@ -292,7 +292,6 @@ test('the projector shows up to 5 comments, the rest counted', async () => {
   const one = session.view('projector').walk.comments;
   assert.equal(one.shown.length, 5);
   assert.equal(one.more, 2);
-  assert.deepEqual(Object.keys(one.shown[0]), ['id', 'text']);
   assert.deepEqual(session.view('projector').walk.comments, one);
   assert.equal(JSON.stringify(session.view('phone', { cid: A })).includes('comment 0'), false);
 });
@@ -692,4 +691,12 @@ test('a theme without a haiku shows none on the projector', async () => {
   session.advance();
   session.moveCard(1);
   assert.equal('haiku' in session.view('projector').walk.item, false);
+});
+
+test("the projector's comments carry text only", async () => {
+  const { session } = await sevenComments();
+  const { shown } = session.view('projector').walk.comments;
+  assert.equal(shown.length, 5);
+  for (const c of shown) assert.deepEqual(Object.keys(c), ['text']);
+  assert.deepEqual(Object.keys(session.view('facilitator').comments.current[0]).includes('id'), true);
 });

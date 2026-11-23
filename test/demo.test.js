@@ -269,3 +269,27 @@ test('an older saved state loads without the loop fields', () => {
   again.tick();
   assert.equal(again.view('projector').demo.step, 0);
 });
+
+test('starting the talk clock mid-demo by hand keeps the step', () => {
+  const s = make();
+  s.demoStep(1);
+  s.demoStep(1);
+  assert.equal(s.state.demo.auto, false);
+  const startedAt = s.state.demo.stepStartedAt;
+  s.clock.tick(5000);
+  s.startTalk();
+  assert.equal(s.state.demo.auto, false);
+  assert.equal(s.state.demo.step, 2);
+  assert.equal(s.state.demo.stepStartedAt, startedAt);
+});
+
+test("back to the teaser and into the demo during the talk doesn't loop", () => {
+  const s = make({ teaser: true });
+  s.advance();
+  s.startTalk();
+  s.back();
+  assert.equal(s.state.phase, 'teaser');
+  s.advance();
+  assert.equal(s.state.phase, 'demo');
+  assert.equal(s.state.demo.auto, false);
+});

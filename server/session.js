@@ -334,7 +334,7 @@ export class Session {
     this.s.speedUp = null; // each part starts at its own speed
     // The demo plays on a loop when the room first reaches it; coming back to
     // it later waits for the facilitator.
-    if (to === 'demo') Object.assign(this.s.demo, { auto: from === 'teaser' && direction === 'forward', step: from === 'teaser' ? 0 : this.s.demo.step, stepStartedAt: now });
+    if (to === 'demo') Object.assign(this.s.demo, { auto: from === 'teaser' && direction === 'forward' && this.s.talk.startedAt === null, step: from === 'teaser' ? 0 : this.s.demo.step, stepStartedAt: now });
     if (to === 'react') {
       this.s.reactEndsAt =
         direction === 'forward' ? now + REACT_MINUTES * 60_000 : Math.max(this.s.reactEndsAt ?? 0, now + 60_000);
@@ -393,8 +393,9 @@ export class Session {
   startTalk() {
     if (this.s.talk.startedAt !== null) return;
     this.s.talk.startedAt = this.now();
-    // The talk has begun: the demo stops looping and waits on its first step.
-    if (this.s.phase === 'demo') Object.assign(this.s.demo, { auto: false, step: 0, stepStartedAt: this.now() });
+    // The talk has begun: a looping demo stops and waits on its first step; one
+    // the facilitator is stepping by hand is left where it is.
+    if (this.s.phase === 'demo' && this.s.demo.auto) Object.assign(this.s.demo, { auto: false, step: 0, stepStartedAt: this.now() });
     this.changed();
   }
 
@@ -1039,6 +1040,13 @@ export class Session {
     return { shown: all.slice(0, COMMENTS_SHOWN), more: Math.max(0, all.length - COMMENTS_SHOWN) };
   }
 
+  // The public projector gets the text only: ids come from one session-wide
+  // counter, so neighbouring ids could link one phone's comments across cards.
+  projectorComments(groupId) {
+    const c = this.commentsFor(groupId);
+    return { shown: c.shown.map(({ text }) => ({ text })), more: c.more };
+  }
+
   // The themes, biggest first, with how many cards and reactions each drew.
   overviewView() {
     const counts = this.reactionCounts();
@@ -1118,7 +1126,7 @@ export class Session {
         paused: s.walk.paused,
         item: this.itemView(item),
         // A hidden card's comments stay off the projector (the facilitator still sees them).
-        comments: this.itemView(item)?.hidden ? { shown: [], more: 0 } : this.commentsFor(this.commentKey(item)),
+        comments: this.itemView(item)?.hidden ? { shown: [], more: 0 } : this.projectorComments(this.commentKey(item)),
         stay: count(s.walk.signals.stay),
         back: count(s.walk.signals.back),
       };
