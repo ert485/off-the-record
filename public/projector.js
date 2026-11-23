@@ -14,9 +14,9 @@ const waiting = h('div', { class: 'waiting', hidden: true }, 'Waiting for the fa
 document.body.append(waiting);
 
 // The planned time left for this part of the session: a hint for the room,
-// hidden once it runs out.
+// hidden once it runs out, and while the app waits on the facilitator.
 function tickSection() {
-  const left = latest?.section ? latest.section.endsAt - serverNow() : 0;
+  const left = latest?.section && !latest.waiting ? latest.section.endsAt - serverNow() : 0;
   section.hidden = left <= 0;
   if (left > 0) section.textContent = `${formatClock(left)} left for this part`;
 }
@@ -104,6 +104,7 @@ function demoScreen() {
   const main = h('div', { class: 'demo-main' }, h('div', { class: 'demo-phone-wrap' }, phone), h('div', { class: 'demo-side' }, caption, dots));
   const revealTop = h('div', { class: 'top demo-top' });
   const reveal = h('div', { class: 'walk demo-reveal', hidden: true });
+  const under = underCard(reveal);
   const el = h('div', { class: 'demo' }, main, reveal);
   const title = message('Off the Record').el; // when there is no demo content
 
@@ -210,6 +211,7 @@ function demoScreen() {
       h('div', { class: 'under' }, list, h('div', { class: 'haiku', style: `--d:${2 + comments.length * 0.5}s` }, d.theme.haiku || '')),
       h('div', { class: 'bottom' }),
     );
+    under.layout();
   }
 
   const STEPS = [notesStep, pickStep, groupStep, reactStep, revealStep];
@@ -246,6 +248,7 @@ function demoScreen() {
     destroy() {
       clearTimers();
       removeEventListener('resize', fit);
+      under.disconnect();
     },
   };
 }
@@ -309,8 +312,45 @@ function mixRow(mix) {
   return mix.slice(0, 12).map(([e, n]) => {
     // Area, not radius, carries the count.
     const vw = 2.2 + 3.8 * Math.sqrt(n / max);
-    return h('span', {}, h('span', { style: { fontSize: `${vw}vw` } }, e), h('small', {}, n));
+    return h('span', {}, h('span', { style: { fontSize: `calc(${vw}vw * var(--mix-scale, 1))` } }, e), h('small', {}, n));
   });
+}
+
+// Lays out what sits under the card. The emoji mix stays one row: when it is
+// wider than its space (up to 12 big emojis), the whole row shrinks to fit
+// instead of wrapping (no room for a second row) or running under the corner
+// QR. The comments column starts at the card's left edge, wherever the centred
+// card lands; offsetLeft is the laid-out position, so the demo's entrance
+// animations (transforms) don't skew it. Re-run when the card or screen
+// resizes, and once the emoji font has loaded.
+function underCard(walk) {
+  const layout = () => {
+    const mix = walk.querySelector('.mix');
+    if (mix?.offsetParent) {
+      mix.style.removeProperty('--mix-scale');
+      const css = getComputedStyle(mix);
+      const gaps = parseFloat(css.columnGap) * Math.max(0, mix.children.length - 1);
+      const room = mix.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight) - gaps;
+      const need = [...mix.children].reduce((n, c) => n + c.offsetWidth, 0);
+      if (need > room && need > 0) mix.style.setProperty('--mix-scale', String(Math.max(0.3, room / need)));
+    }
+    const card = walk.querySelector('.card');
+    const under = walk.querySelector('.under');
+    if (!under) return;
+    under.style.paddingLeft = '';
+    if (card?.offsetParent === walk) under.style.paddingLeft = `${Math.max(0, card.offsetLeft - under.offsetLeft)}px`;
+  };
+  const observer = new ResizeObserver(layout);
+  observer.observe(walk);
+  document.fonts?.ready.then(layout);
+  return {
+    layout() {
+      const card = walk.querySelector('.card');
+      if (card) observer.observe(card);
+      layout();
+    },
+    disconnect: () => observer.disconnect(),
+  };
 }
 
 // The overview: the themes as folders in a file drawer, biggest first.
@@ -352,6 +392,7 @@ function walkScreen() {
     h('div', { class: 'under' }, comments, commentsMore, haiku),
     h('div', { class: 'bottom' }, h('div', { class: 'grow' }, controls), counts),
   );
+  const under = underCard(el);
   let view = null;
   let barWidth = null; // the last width seen while the card was running
   let barIndex = null; // the card that width belongs to
@@ -419,17 +460,20 @@ function walkScreen() {
         more.textContent = bits.join(' · ');
         fill(mix, ...mixRow(item?.mix));
       }
-      // Comments no longer arrive live: the server sends a stable few.
-      fill(comments, ...w.comments.shown.map((c) => h('div', { class: 'comment' }, c.text)));
-      commentsMore.textContent = w.comments.more > 0 ? `+${w.comments.more} more` : '';
+      // Comments no longer arrive live: the server sends a stable few (none for a hidden card).
+      const said = item?.hidden ? { shown: [], more: 0 } : w.comments;
+      fill(comments, ...said.shown.map((c) => h('div', { class: 'comment' }, c.text)));
+      commentsMore.textContent = said.more > 0 ? `+${said.more} more` : '';
       haiku.textContent = !overview && !last && item?.haiku ? item.haiku : '';
       const chip = (n, label) => h('span', { class: n ? '' : 'zero' }, `${label} ${n}`);
       fill(counts, ...(last || overview ? [] : [chip(w.stay, 'Stay'), chip(w.back, 'Go back')]));
       controls.hidden = last;
       drawBar();
+      under.layout();
     },
     destroy() {
       cancelAnimationFrame(frame);
+      under.disconnect();
     },
   };
 }
