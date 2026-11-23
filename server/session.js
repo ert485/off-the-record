@@ -293,7 +293,10 @@ export class Session {
     this.changed();
   }
 
-  back() {
+  // `from` is the phase the facilitator's screen showed; if the room has moved
+  // on, the tap is ignored (a double-tapped Back).
+  back({ from } = {}) {
+    if (from !== undefined && from !== null && from !== this.s.phase) fail('Already moved on');
     const to = previousPhase(this.s.phase);
     if (!to) fail(this.shredded ? 'The shred cannot be undone' : 'Nothing to go back to');
     this.enter(to, 'back');

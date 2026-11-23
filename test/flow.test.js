@@ -155,6 +155,15 @@ test('a second tap on the same move is ignored', async () => {
   await flush();
 });
 
+test('a second tap on Back is ignored', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.back({ from: 'react' });
+  assert.equal(session.state.phase, 'cluster');
+  assert.throws(() => session.back({ from: 'react' }), /Already moved on/);
+  assert.equal(session.state.phase, 'cluster');
+});
+
 test('the finale asks for the shred once it has played', async () => {
   const { session, clock } = make();
   await toReact(session);

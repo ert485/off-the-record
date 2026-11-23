@@ -184,6 +184,9 @@ function render() {
   if (!view) return;
   if (typing() || fingerDown()) {
     pending = true;
+    // A focused field holds back only its own zone: a new move prompt and the
+    // late-arrival panel still appear, without touching the field.
+    if (typing() && !fingerDown()) renderWhileTyping();
     return;
   }
   pending = false;
@@ -192,6 +195,22 @@ function render() {
   const v = view;
   const p = PHASES[v.phase](v);
   fill(app, zone('move', p.move ?? nav(v)), zone('now', p.now), zone('room', p.room), zone('content', p.content), p.lists);
+}
+
+function renderWhileTyping() {
+  renderBar();
+  const v = view;
+  const p = PHASES[v.phase](v);
+  const move = zone('move', p.move ?? nav(v));
+  const oldMove = app.querySelector('.zone-move');
+  if (move && oldMove) oldMove.replaceWith(move);
+  else if (move) app.prepend(move);
+  else oldMove?.remove();
+  const late = v.clustering ? latePanel(v.clustering.late) : '';
+  const oldLate = app.querySelector('.alert.late');
+  if (late && oldLate) oldLate.replaceWith(late);
+  else if (late) app.querySelector('.zone-content')?.prepend(late);
+  else oldLate?.remove();
 }
 
 function zone(kind, ...children) {
@@ -223,7 +242,7 @@ async function approveAll(v) {
 // forward button is the server's prompt ("Ready for grouping?"); otherwise it
 // says where it goes. `from` makes a double tap, on this or another device, move once.
 function nav(v) {
-  const back = h('button', { disabled: !v.canBack, onclick: () => act('back') }, v.prev ? `◀ Back to ${BACK_TO[v.prev]}` : '◀ Back');
+  const back = h('button', { disabled: !v.canBack, onclick: () => act('back', { from: v.phase }) }, v.prev ? `◀ Back to ${BACK_TO[v.prev]}` : '◀ Back');
   let next;
   if (v.phase === 'cluster') {
     next = h('button', { class: 'primary prompt', onclick: async () => (await approveAll(v)) && act('advance', { from: 'cluster' }) }, 'Approve all and start reactions ▶');
@@ -518,7 +537,7 @@ const PHASES = {
     const posInfo = info('walk-pos', 'Where you are: the themes overview first, then the cards in order of reactions, then a last slide that invites the room to speak.');
     const timeInfo = info('walk-time', 'How long this card has been on screen. The projector shows the time left in the whole walk-through instead.');
     const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (20 seconds are kept for the last slide). It’s a rough average, not a limit: spend longer where the room wants to.');
-    const signalInfo = info('signals', 'Phones asking to stay on this card or to go back. They reset on every card, and the room can’t see these counts.');
+    const signalInfo = info('signals', 'Phones asking to stay on this card or to go back. They reset on every card; the room sees the same counts on the projector.');
     const showLeft = !lastSlide && !w.done && w.cardsLeft !== null;
     return {
       move: [
