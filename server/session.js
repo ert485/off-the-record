@@ -2,7 +2,7 @@
 // server persists `session.state` after each change and wires up the shred.
 import { randomBytes, randomInt } from 'node:crypto';
 import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
-import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue } from './flow.js';
+import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP } from './flow.js';
 import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
@@ -176,6 +176,7 @@ export class Session {
     this.shredAnimationMs = shredAnimationMs;
     this.onReset = onReset;
     this.closingTimer = null;
+    this.closingAt = null; // when the closing screen is due, before any speed-up
     this.clusterRun = 0;
     this.shredPayload = null;
     this.state = state ?? freshState(now(), talkMinutes);
@@ -330,6 +331,7 @@ export class Session {
     if (from === 'react' && direction === 'forward') this.s.reactClosedAt = now;
     this.s.phase = to;
     this.s.phaseStartedAt = now;
+    this.s.speedUp = null; // each part starts at its own speed
     // The demo plays on a loop when the room first reaches it; coming back to
     // it later waits for the facilitator.
     if (to === 'demo') Object.assign(this.s.demo, { auto: from === 'teaser' && direction === 'forward', step: from === 'teaser' ? 0 : this.s.demo.step, stepStartedAt: now });
@@ -915,6 +917,18 @@ export class Session {
     this.changed();
   }
 
+  // The facilitator's "Speed up" during the finale or the shred: the rest of
+  // the part plays three times faster, once (a second tap does nothing more).
+  // The finale's prompt and the closing screen come sooner to match.
+  speedUp({ from } = {}) {
+    if (from !== undefined && from !== null && from !== this.s.phase) fail('Already moved on');
+    if (this.s.phase !== 'finale' && this.s.phase !== 'shred') fail('Speed up is only for the finale and the shred');
+    if (this.s.speedUp) return;
+    this.s.speedUp = { at: this.now(), factor: SPEED_UP };
+    if (this.s.phase === 'shred') this.scheduleClosing();
+    this.changed();
+  }
+
   // ---- shred ------------------------------------------------------------
 
   shred() {
@@ -925,18 +939,30 @@ export class Session {
     this.clusterRun += 1;
     clearTimeout(this.nudgeTimer);
     this.shredded = true;
-    this.state = { sessionId: this.s.sessionId, phase: 'shred', phaseStartedAt: this.now(), shredded: true, walk: { stream: [], index: 0 } };
+    this.state = {
+      sessionId: this.s.sessionId,
+      phase: 'shred',
+      phaseStartedAt: this.now(),
+      shredded: true,
+      speedUp: null,
+      walk: { stream: [], index: 0 },
+    };
     this.onShred();
-    // Once the animation and a beat of black are over, drop the payload and
-    // move everyone on to the closing screen.
-    const ms = this.shredAnimationMs ?? shredTimeline(this.shredPayload).closingAt;
+    this.closingAt = this.now() + (this.shredAnimationMs ?? shredTimeline(this.shredPayload).closingAt);
+    this.scheduleClosing();
+    this.changed();
+  }
+
+  // Once the animation and a beat of black are over (sooner if sped up), drop
+  // the payload and move everyone on to the closing screen.
+  scheduleClosing() {
+    clearTimeout(this.closingTimer);
     this.closingTimer = setTimeout(() => {
       this.shredPayload = null;
       if (this.s.phase === 'shred') this.enter('closing', 'forward');
       this.changed();
-    }, ms);
+    }, Math.max(0, spedUp(this.closingAt ?? this.now(), this.s.speedUp) - this.now()));
     this.closingTimer.unref?.();
-    this.changed();
   }
 
   // After the shred, start over for another session. Only allowed once
@@ -1056,6 +1082,7 @@ export class Session {
     const s = this.s;
     const v = { role: 'projector', phase: s.phase, now: this.now(), phaseStartedAt: s.phaseStartedAt };
     if (s.phase === 'shred') v.shred = this.shredPayload;
+    if (s.phase === 'finale' || s.phase === 'shred') v.speedUp = s.speedUp ?? null;
     if (this.shredded) return v;
     if (s.phase === 'teaser') v.teaser = this.teaser();
     if (s.phase === 'demo' && this.demo) {
@@ -1114,6 +1141,7 @@ export class Session {
       shredded: this.shredded,
       phones: phoneCount,
     };
+    if (s.phase === 'finale' || s.phase === 'shred') v.speedUp = s.speedUp ?? null;
     if (this.shredded) return v;
     const { startedAt, minutes } = s.talk;
     if (s.phase === 'teaser') v.teaser = this.teaser();

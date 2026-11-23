@@ -119,6 +119,7 @@ const FACILITATOR_ACTIONS = {
   demoNext: (b) => session.demoStep(1, { from: b.from }),
   demoBack: (b) => session.demoStep(-1, { from: b.from }),
   demoAuto: (b) => session.demoAuto(b.on === true),
+  speedUp: (b) => session.speedUp({ from: b.from }),
   nextCard: (b) => session.moveCard(1, { from: b.from }),
   prevCard: (b) => session.moveCard(-1, { from: b.from }),
   pauseWalk: (b) => session.pauseWalk(b.paused),

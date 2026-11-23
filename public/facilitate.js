@@ -418,6 +418,18 @@ function themeDrafts(v) {
   ];
 }
 
+// The finale and the shred play by themselves; this plays the rest faster, once.
+function speedUpButton(v) {
+  const i = info('speed-up', 'Plays the rest about three times faster. Use it if the room is ready to move on.');
+  const on = !!v.speedUp;
+  return [
+    h('div', { class: 'room-row' },
+      h('button', { class: 'speed-btn', disabled: on, onclick: () => act('speedUp', { from: v.phase }) }, on ? 'Speeding up' : 'Speed up ⏩'),
+      i.button),
+    i.text,
+  ];
+}
+
 // ---- phases ----------------------------------------------------------------
 
 const PHASES = {
@@ -622,14 +634,17 @@ const PHASES = {
     };
   },
 
-  finale: () => ({
+  finale: (v) => ({
+    // Once it has played, there's nothing left to speed up.
+    now: v.move ? undefined : speedUpButton(v),
     content: h('p', { class: 'dim' }, 'The fingerprint is on the projector. Let it sit. Next is the shred, which needs a confirm.'),
   }),
 
   // After the shred there's nothing to move back or forward to: the closing
   // screen comes up by itself.
-  shred: () => ({
+  shred: (v) => ({
     move: h('p', { class: 'dim' }, 'Shredding. The closing screen comes up by itself.'),
+    now: speedUpButton(v),
     content: h('p', { class: 'dim' }, 'The database and every file in the data directory are deleted.'),
   }),
 

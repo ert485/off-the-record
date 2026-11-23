@@ -630,14 +630,29 @@ function walkScreen() {
 
 // ---- the finale and the shred: one clock, drawn on canvases ----------------
 // Each plays on its own clock: ms since the part started on the server, so a
-// projector that reloads mid-part picks up where the room is. The hundreds of
-// things that move (emoji particles, paper strips) are drawn on a canvas each
-// frame rather than being DOM elements; everything else moves by transform
-// and opacity only, so the laptop's GPU composites it.
+// projector that reloads mid-part picks up where the room is. When the
+// facilitator taps "Speed up", the clock runs three times faster from that
+// moment, as the server assumes when it brings the next step forward. The
+// hundreds of things that move (emoji particles, paper strips) are drawn on a
+// canvas each frame rather than being DOM elements; everything else moves by
+// transform and opacity only, so the laptop's GPU composites it.
 
 function partClock(v) {
   const origin = performance.now() - Math.max(0, v.now - v.phaseStartedAt);
-  return { at: (now = performance.now()) => now - origin };
+  let speed = null; // `at` in ms since the part started
+  return {
+    at(now = performance.now()) {
+      const t = now - origin;
+      return !speed || t <= speed.at ? t : speed.at + (t - speed.at) * speed.factor;
+    },
+    rate: () => speed?.factor ?? 1,
+    // Takes the view's speed-up, once; says whether the speed changed.
+    speedUp(view) {
+      if (speed || !view.speedUp) return false;
+      speed = { at: view.speedUp.at - view.phaseStartedAt, factor: view.speedUp.factor };
+      return true;
+    },
+  };
 }
 
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
@@ -728,6 +743,7 @@ function finaleScreen(v) {
   }
   return {
     el: stage,
+    update: (v) => clock.speedUp(v),
     destroy() {
       live = false;
       cancelAnimationFrame(frame);
@@ -832,7 +848,7 @@ function deletePrelude(animate) {
     const ty = target.top + target.height * 0.6;
     const sx = innerWidth * 0.82;
     const sy = innerHeight * 0.9;
-    const clickAt = PRELUDE_MS - 1050;
+    const clickAt = PRELUDE_MS - 1000;
     animate(dialog, [{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 300, fill: 'backwards' });
     animate(
       cursor,
@@ -849,7 +865,7 @@ function deletePrelude(animate) {
       duration: 260,
       delay: clickAt,
     });
-    animate(layer, [{ opacity: 1 }, { opacity: 0 }], { duration: 500, delay: PRELUDE_MS - 700, fill: 'forwards' });
+    animate(layer, [{ opacity: 1 }, { opacity: 0 }], { duration: 450, delay: PRELUDE_MS - 650, fill: 'forwards' });
   }
   return { layer, start };
 }
@@ -955,6 +971,7 @@ function shredScreen(v) {
   const animations = [];
   const animate = (el, keyframes, options) => {
     const a = el.animate(keyframes, options);
+    a.playbackRate = clock.rate();
     a.currentTime = clock.at();
     animations.push(a);
     return a;
@@ -1159,6 +1176,14 @@ function shredScreen(v) {
 
   return {
     el: root,
+    update(v) {
+      if (!clock.speedUp(v)) return;
+      // The prelude, the fades: the same speed, from the same moment.
+      for (const a of animations) {
+        a.playbackRate = v.speedUp.factor;
+        a.currentTime = clock.at();
+      }
+    },
     destroy() {
       cancelAnimationFrame(frame);
       for (const a of animations) a.cancel();

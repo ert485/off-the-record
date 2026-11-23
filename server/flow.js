@@ -20,11 +20,22 @@ export function pendingMove(state, now, { phoneCount = 0 } = {}) {
       if (state.walk.done) return { to: 'finale', label: 'Ready for the finale?' };
       return null;
     case 'finale':
-      if (now >= state.phaseStartedAt + finaleTimeline(state.reactions.length).doneAt) return { to: 'shred', label: 'Ready to shred?' };
+      if (now >= spedUp(state.phaseStartedAt + finaleTimeline(state.reactions.length).doneAt, state.speedUp)) {
+        return { to: 'shred', label: 'Ready to shred?' };
+      }
       return null;
     default:
       return null;
   }
+}
+
+// The facilitator's "Speed up" in the finale or the shred: what's left of
+// the part plays `factor` times faster from `at`, so a part that would end at
+// `end` ends at at + (end - at) / factor. One already over is unchanged.
+export const SPEED_UP = 3;
+export function spedUp(end, speedUp) {
+  if (!speedUp || end <= speedUp.at) return end;
+  return speedUp.at + (end - speedUp.at) / speedUp.factor;
 }
 
 // The phones' last warning comes a minute before submissions close; the

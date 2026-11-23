@@ -75,3 +75,4 @@ details summary { cursor: pointer; color: var(--text-dim); }
 .theme .row input[type='text'] { flex: 1; min-width: 0; }
 .zone-now .nav { margin-top: 4px; }
 .loop-btn { min-height: 48px; font-size: 16px; width: 100%; margin-top: 4px; }
+.speed-btn { flex: 1; min-height: 48px; font-size: 16px; }

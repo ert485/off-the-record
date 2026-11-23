@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Session, normalizeClusters, cleanHaiku, SKIPPED } from '../server/session.js';
 import { paceMinutes, PHASES, PLAN } from '../server/phases.js';
+import { shredTimeline } from '../public/shared/shred-timing.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbbbbbbbbbbbbbb';
@@ -399,6 +400,33 @@ test('after the shred, the closing screen comes up by itself', async () => {
   session.advance({ confirm: true });
   assert.equal(session.state.phase, 'shred');
   await new Promise((r) => setTimeout(r, 30));
+  assert.equal(session.state.phase, 'closing');
+  assert.equal(session.shredPayload, null);
+});
+
+test('speeding up the shred brings the closing screen sooner', async () => {
+  let t = 1_000_000;
+  const session = new Session({
+    now: () => t,
+    clusterCards: async (cards) => ({ themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }),
+    shredAnimationMs: null, // the real timeline
+  });
+  session.advance(); // demo
+  session.advance(); // join
+  await toReact(session);
+  for (let i = 0; i < 2; i++) session.advance(); // walk, finale
+  session.advance({ confirm: true });
+  const start = session.state.phaseStartedAt;
+  const { closingAt } = shredTimeline(session.shredPayload);
+  assert.ok(closingAt > 5000);
+  // 300 ms before the end on the session's clock, the rest is sped up:
+  // the closing comes at t + (closingAt - (t - start)) / 3, 100 ms later.
+  t = start + closingAt - 300;
+  session.speedUp({ from: 'shred' });
+  assert.deepEqual(session.view('projector').speedUp, { at: t, factor: 3 });
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(session.state.phase, 'shred');
+  await new Promise((r) => setTimeout(r, 120));
   assert.equal(session.state.phase, 'closing');
   assert.equal(session.shredPayload, null);
 });
