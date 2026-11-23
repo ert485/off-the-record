@@ -74,7 +74,7 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
 
 // A theme's haiku as one line: newlines become " / ". Not text, or too long to
 // show whole, means none (a cut haiku reads broken; the facilitator can write one).
-const oneLine = (raw) => raw.replace(/\s*[\r\n]+\s*/g, ' / ').replace(/ {2,}/g, ' ').trim();
+const oneLine = (raw) => raw.trim().replace(/\s*[\r\n]+\s*/g, ' / ').replace(/ {2,}/g, ' ');
 export function cleanHaiku(raw) {
   if (typeof raw !== 'string') return '';
   const clean = oneLine(raw);
@@ -342,8 +342,10 @@ export class Session {
   }
 
   // The facilitator's taps through the demo's steps. Only while in the demo.
-  demoStep(delta) {
+  // `from` is the step the facilitator's screen showed; a double tap moves once.
+  demoStep(delta, { from } = {}) {
     if (this.s.phase !== 'demo') fail('The demo is over');
+    if (from !== undefined && from !== null && from !== this.s.demo.step) fail('Already moved on');
     const step = this.s.demo.step + delta;
     if (step < 0) fail('This is the first step');
     if (step >= DEMO_STEPS.length) fail('That was the last step');
@@ -351,14 +353,18 @@ export class Session {
     this.changed();
   }
 
-  extendSubmit() {
+  // `from` is the end time the facilitator's screen showed: "+1 minute" tapped
+  // on two devices (or twice) adds one minute.
+  extendSubmit({ from } = {}) {
     if (this.s.phase !== 'submit') fail('Submissions are not open');
+    if (from !== undefined && from !== null && from !== this.s.submitEndsAt) fail('Already extended');
     this.s.submitEndsAt = Math.max(this.s.submitEndsAt ?? 0, this.now()) + 60_000;
     this.changed();
   }
 
-  extendReact() {
+  extendReact({ from } = {}) {
     if (this.s.phase !== 'react') fail('Reactions are not open');
+    if (from !== undefined && from !== null && from !== this.s.reactEndsAt) fail('Already extended');
     this.s.reactEndsAt = Math.max(this.s.reactEndsAt ?? 0, this.now()) + 60_000;
     this.changed();
   }
@@ -851,13 +857,21 @@ export class Session {
     this.changed();
   }
 
+  // When the walk-through's time is up, a card that was already running skips
+  // to the last slide. A card shown or resumed after that (it was held) runs
+  // its own fresh share, then goes to the last slide. A hidden card gets no time.
   tickWalk() {
     const w = this.s.walk;
     if (w.paused || w.done) return;
     const now = this.now();
     const last = w.stream.length - 1;
-    if (w.index < last && now >= w.endsAt - LAST_SLIDE_MS) this.moveTo(last);
-    else if (w.cardEndsAt !== null && now >= w.cardEndsAt) this.moveCard(1);
+    const timeUp = w.endsAt - LAST_SLIDE_MS;
+    const shownLate = w.cardStartedAt !== null && w.cardStartedAt >= timeUp;
+    if (w.index < last && !shownLate && now >= timeUp) return this.moveTo(last);
+    const over = this.itemView(this.currentItem())?.hidden || (w.cardEndsAt !== null && now >= w.cardEndsAt);
+    if (!over) return;
+    if (w.index < last && shownLate) this.moveTo(last);
+    else this.moveCard(1);
   }
 
   moveTo(index) {
@@ -1031,7 +1045,8 @@ export class Session {
         cardEndsAt: s.walk.cardEndsAt,
         paused: s.walk.paused,
         item: this.itemView(item),
-        comments: this.commentsFor(this.commentKey(item)),
+        // A hidden card's comments stay off the projector (the facilitator still sees them).
+        comments: this.itemView(item)?.hidden ? { shown: [], more: 0 } : this.commentsFor(this.commentKey(item)),
         stay: count(s.walk.signals.stay),
         back: count(s.walk.signals.back),
       };

@@ -221,3 +221,46 @@ test('a Back near the end holds the card instead of snapping forward', async () 
   session.tick();
   assert.equal(w.done, true);
 });
+
+test('resuming a held card after time is up lets it run, then goes to the last slide', async () => {
+  const { session, clock } = await toWalk({ cards: 4 });
+  const w = session.state.walk;
+  const last = w.stream.length - 1;
+  clock.set(w.endsAt - 20_000);
+  session.tick();
+  assert.equal(w.index, last);
+  session.moveCard(-1); // held after time-up
+  assert.equal(w.index, last - 1);
+  assert.equal(w.paused, true);
+  clock.tick(3_000);
+  session.pauseWalk(false);
+  assert.equal(w.paused, false);
+  assert.ok(w.cardEndsAt >= clock.now() + 15_000);
+  clock.tick(5_000);
+  session.tick();
+  assert.equal(w.index, last - 1);
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.index, last);
+  assert.equal(w.done, false);
+  clock.tick(20_000);
+  session.tick();
+  assert.equal(w.done, true);
+});
+
+test("a hidden card's comments never reach the projector, and the walk moves past it", async () => {
+  const { session } = await toWalk({ cards: 4 });
+  const w = session.state.walk;
+  const commented = session.state.comments[0].g;
+  const at = w.stream.findIndex((it) => it.groupId === commented);
+  while (w.index < at) session.moveCard(1);
+  assert.deepEqual(proj(session).walk.comments.shown.map((c) => c.text), ['hello']);
+  for (const id of session.findGroup(commented).group.cardIds) session.hideCard(id, true);
+  const p = proj(session);
+  assert.equal(p.walk.item.hidden, true);
+  assert.deepEqual(p.walk.comments, { shown: [], more: 0 });
+  assert.equal(JSON.stringify(p).includes('hello'), false);
+  assert.deepEqual(fac(session).comments.current.map((c) => c.text), ['hello']);
+  session.tick();
+  assert.equal(w.index, at + 1);
+});

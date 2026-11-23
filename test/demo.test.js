@@ -114,3 +114,13 @@ test('a session without a demo skips straight on, adding no card', () => {
   s.advance();
   assert.equal(s.state.cards.length, 0);
 });
+
+test('a second tap on demo Next is ignored', () => {
+  const s = make();
+  s.demoStep(1, { from: 0 });
+  assert.throws(() => s.demoStep(1, { from: 0 }), /Already moved on/);
+  assert.equal(s.state.demo.step, 1);
+  s.demoStep(-1, { from: 1 });
+  assert.throws(() => s.demoStep(-1, { from: 1 }), /Already moved on/);
+  assert.equal(s.state.demo.step, 0);
+});

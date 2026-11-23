@@ -95,6 +95,23 @@ test('extend adds a minute to the submission window', () => {
   assert.equal(session.state.submitEndsAt, before + 60_000);
 });
 
+test('+1 minute tapped on two devices adds one minute', async () => {
+  const { session } = make();
+  session.advance(); // submit
+  const seen = session.view('facilitator').submit.endsAt;
+  session.extendSubmit({ from: seen });
+  assert.throws(() => session.extendSubmit({ from: seen }), /Already extended/);
+  assert.equal(session.state.submitEndsAt, seen + 60_000);
+  session.submitCards(A, ['one']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  const reactSeen = session.view('facilitator').react.endsAt;
+  session.extendReact({ from: reactSeen });
+  assert.throws(() => session.extendReact({ from: reactSeen }), /Already extended/);
+  assert.equal(session.state.reactEndsAt, reactSeen + 60_000);
+});
+
 test('clustering groups every card once; hidden cards are never sent', async () => {
   let sent;
   const { session } = make({
@@ -548,6 +565,8 @@ test('a haiku is cleaned: newlines become " / ", too long is dropped', async () 
   assert.equal(cleanHaiku(42), '');
   assert.equal(cleanHaiku('  one\ntwo \r\n three  '), 'one / two / three');
   assert.equal(cleanHaiku('a   b'), 'a b');
+  assert.equal(cleanHaiku('abc\n'), 'abc');
+  assert.equal(cleanHaiku('\nabc'), 'abc');
   assert.equal(cleanHaiku('x'.repeat(121)), '');
   assert.equal(cleanHaiku('x'.repeat(120)).length, 120);
   const themes = normalizeClusters([{ name: 'W', haiku: 'a\nb\nc', groups: [[1]] }], [1]);
