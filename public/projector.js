@@ -957,12 +957,21 @@ function shredScreen(v) {
   const dpr = live.dpr;
   const [l0, r0] = binWall(binTop);
   const [l1, r1] = binWall(binBottom);
+  // The basket itself, rim to floor: nothing landed shows above its rim.
   const binOutline = new Path2D();
-  binOutline.moveTo(l0, 0);
-  binOutline.lineTo(r0, 0);
+  binOutline.moveTo(l0, binTop);
+  binOutline.lineTo(r0, binTop);
   binOutline.lineTo(r1, binBottom);
   binOutline.lineTo(l1, binBottom);
   binOutline.closePath();
+  // While a strip settles (a moment), only the basket's sides and floor hold
+  // it, so one landing high on the pile doesn't get cut at the rim.
+  const binSides = new Path2D();
+  binSides.moveTo(l0, 0);
+  binSides.lineTo(r0, 0);
+  binSides.lineTo(r1, binBottom);
+  binSides.lineTo(l1, binBottom);
+  binSides.closePath();
   bin.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   bin.ctx.clip(binOutline);
   const machine = h('div', { class: 'machine' }, binBack, bin.c, upper, live.c, head, slot, binFront);
@@ -1024,6 +1033,21 @@ function shredScreen(v) {
   const strips = []; // moving: being pulled through, falling, or flopping over in the bin
   const pile = new Float32Array(64); // how high the pile is across the bin
   const pileAt = (x) => pile[Math.min(63, Math.max(0, Math.floor((x / W) * 64)))];
+  // A sheet can be taller than the drop into the bin, so a long strip bunches
+  // up as it comes out (it hangs no lower than a quarter of the way into the
+  // basket) and crumples as it falls, to lie in the bottom half of the basket.
+  const binDepth = binBottom - binTop;
+  const hangMax = binTop - exitY + binDepth * 0.25;
+  const restMax = binDepth * 0.5;
+  const pileMax = binDepth * 0.4;
+  // How far a strip's flutter (skew) shifts its lower end, per px of length:
+  // less for a long strip, so it leans no more than a short one.
+  const lean = (s) => Math.tan((s.skew * Math.PI) / 180) * Math.min(1, s.fit / 0.45);
+  // Where a strip's lower end is, relative to its top centre, as drawn.
+  const lowerEnd = (s, angle = s.angle, curl = s.curl) => {
+    const a = (angle * Math.PI) / 180;
+    return { dx: s.h * (lean(s) * Math.cos(a) - curl * Math.sin(a)), dy: s.h * (lean(s) * Math.sin(a) + curl * Math.cos(a)) };
+  };
 
   function feed(sheet) {
     prepare(sheet);
@@ -1049,6 +1073,7 @@ function shredScreen(v) {
         vy: 0,
         va: 0,
         curl: 1,
+        fit: Math.min(0.45, restMax / sheet.sh), // how crumpled it ends up
         skew: 0,
       });
     }
@@ -1064,6 +1089,7 @@ function shredScreen(v) {
         const out = clamp01((s.y + s.h) / s.h); // share already through
         s.angle = Math.sin(t / 260 + s.phi) * s.sway * out;
         s.x = s.x0 + Math.sin(t / 410 + s.phi) * 3 * out;
+        s.curl = Math.min(1, hangMax / Math.max(1, s.y + s.h)); // a long strip bunches up
         if (s.y >= 0) {
           // Fully out: let go.
           s.phase = 'fall';
@@ -1079,28 +1105,39 @@ function shredScreen(v) {
         s.x += s.vx * dt;
         s.y += s.vy * dt;
         s.angle += s.va * dt;
-        s.curl = Math.max(0.45, s.curl - 0.35 * dt); // strips crumple as they fall
+        s.curl = Math.max(s.fit, s.curl - ((0.35 * 0.45) / s.fit) * dt); // strips crumple as they fall (long ones faster)
         s.skew = Math.sin(t / 150 + s.phi) * 14;
         const screenY = exitY + s.y;
-        if (screenY + s.h * s.curl > binTop) {
-          const [l, r] = binWall(screenY + s.h * s.curl);
-          if (s.x < l) (s.x = l), (s.vx = Math.abs(s.vx) * 0.3);
-          if (s.x + s.w > r) (s.x = r - s.w), (s.vx = -Math.abs(s.vx) * 0.3);
+        const end = lowerEnd(s);
+        const bottom = screenY + Math.max(s.h * s.curl, end.dy);
+        if (bottom > binTop) {
+          // Inside the basket's walls: its top, and its lower end where the tilt swings it.
+          const [l, r] = binWall(bottom);
+          const endX = s.x + end.dx;
+          const lo = Math.min(s.x, endX);
+          const hi = Math.max(s.x, endX) + s.w;
+          if (lo < l) (s.x += l - lo), (s.vx = Math.abs(s.vx) * 0.3);
+          else if (hi > r) (s.x -= hi - r), (s.vx = -Math.abs(s.vx) * 0.3);
         }
         const floor = binBottom - pileAt(s.x + s.w / 2);
-        if (screenY + s.h * s.curl >= floor) {
+        if (bottom >= floor) {
+          // It flops over about its top and comes to rest on the pile: fully
+          // crumpled, its lowest corner on the floor, inside the rim.
           s.phase = 'lie';
           s.landedAt = t;
-          s.y = floor - s.h * s.curl - exitY;
-          s.from = s.angle;
+          s.from = { angle: s.angle, curl: s.curl, y: screenY - exitY };
           s.lie = (Math.random() < 0.5 ? -1 : 1) * (35 + Math.random() * 50);
+          const drop = Math.abs(lowerEnd(s, s.lie, s.fit).dy) + (s.w / 2) * Math.abs(Math.sin((s.lie * Math.PI) / 180));
+          s.restY = Math.max(s.from.y, Math.max(binTop + 4, floor - drop) - exitY);
           const i = Math.min(63, Math.max(0, Math.floor(((s.x + s.w / 2) / W) * 64)));
-          for (let k = Math.max(0, i - 1); k <= Math.min(63, i + 1); k++) pile[k] += 1.6;
+          for (let k = Math.max(0, i - 1); k <= Math.min(63, i + 1); k++) pile[k] = Math.min(pileMax, pile[k] + 1.6);
         }
       } else if (s.phase === 'lie') {
-        const k = clamp01((t - s.landedAt) / LIE_MS);
-        s.angle = s.from + (s.lie - s.from) * easeOut(k);
-        if (k >= 1) {
+        const k = easeOut(clamp01((t - s.landedAt) / LIE_MS));
+        s.angle = s.from.angle + (s.lie - s.from.angle) * k;
+        s.curl = s.from.curl + (s.fit - s.from.curl) * k;
+        s.y = s.from.y + (s.restY - s.from.y) * k;
+        if (t - s.landedAt >= LIE_MS) {
           s.phase = 'landed';
           drawStrip(bin.ctx, s); // baked into the bin for good
         }
@@ -1116,7 +1153,7 @@ function shredScreen(v) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.translate(s.x + s.w / 2, exitY + s.y + pivotY);
     ctx.rotate((s.angle * Math.PI) / 180);
-    if (s.curl !== 1 || s.skew) ctx.transform(1, 0, Math.tan((s.skew * Math.PI) / 180), s.curl, 0, 0);
+    if (s.curl !== 1 || s.skew) ctx.transform(1, 0, lean(s), s.curl, 0, 0);
     ctx.translate(-s.w / 2, -pivotY);
     const paper = s.sheet.paper;
     const sx = s.sx * dpr;
@@ -1129,6 +1166,12 @@ function shredScreen(v) {
   let nextPrepare = 300;
   function loop(now) {
     const t = clock.at(now);
+    // After a reload mid-shred the emoji sheet may be due at once: wait for
+    // its font (at most a second, see loadEmoji), then catch up.
+    if (!emojiReady && !sheets[0].el && t >= sheets[0].at) {
+      frame = requestAnimationFrame(loop);
+      return;
+    }
     // Small steps, so a slow frame (or a reload mid-shred) plays out the same.
     const steps = Math.max(1, Math.ceil((t - last) / 1000 / STEP_S));
     for (let k = 1; k <= steps; k++) step(last + ((t - last) * k) / steps, (t - last) / 1000 / steps);
@@ -1153,7 +1196,7 @@ function shredScreen(v) {
     ctx.restore();
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clip(binOutline);
+    ctx.clip(binSides);
     for (const s of strips) if (s.phase === 'lie') drawStrip(ctx, s);
     ctx.restore();
     // Draw the next sheet ahead of time, one now and then, while little is moving.
