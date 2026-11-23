@@ -177,29 +177,29 @@ function walkScreen() {
     h('div', { class: 'bottom' }, h('div', { class: 'grow' }, controls), counts),
   );
   let view = null;
-  let barWidth = null; // the last width drawn, kept while paused
-  let barIndex = null;
+  let barWidth = null; // the last width seen while the card was running
+  let barIndex = null; // the card that width belongs to
   let frame = 0;
 
-  // The bar is full at cardStartedAt and empty at cardEndsAt; frozen while paused.
+  // The bar is full at cardStartedAt and empty at cardEndsAt. While paused it
+  // stays at the width last seen running on this page; a card this page never
+  // saw running (opened mid-pause, or held on arrival) shows no bar.
   function drawBar() {
     const w = view?.walk;
     const item = w?.item;
     const real = item && !item.overview && !item.last && !item.hidden;
     if (!real || !w) {
       bar.hidden = true;
-      barWidth = null;
+      barWidth = barIndex = null;
       return;
     }
     if (!w.paused && w.cardEndsAt !== null) {
       const span = w.cardEndsAt - w.cardStartedAt;
       barWidth = span > 0 ? Math.min(1, Math.max(0, (w.cardEndsAt - serverNow()) / span)) : 0;
-    } else if (barWidth === null || barIndex !== w.index) {
-      // Paused with nothing seen yet: a card held on arrival is full; a page
-      // opened mid-pause has no way to know, so it shows no bar.
-      barWidth = barIndex === null ? null : 1;
+      barIndex = w.index;
+    } else if (barIndex !== w.index) {
+      barWidth = barIndex = null;
     }
-    barIndex = w.index;
     bar.hidden = barWidth === null;
     if (barWidth !== null) bar.style.width = `${(barWidth * 100).toFixed(2)}%`;
   }
