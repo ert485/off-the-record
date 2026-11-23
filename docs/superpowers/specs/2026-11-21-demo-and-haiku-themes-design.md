@@ -140,7 +140,7 @@ What the practice runs and reflection since changed:
 | Batch 2, run 2 | 3.9 (764) | none | 5.3 (1104) | missing theme: all 3 truck cards |
 | Batch 2, run 3 | 1.2 (175) | none | 7.4 (1415) | missing theme: all 3 truck cards |
 
-B was flagged in 6 of 6 runs, A had 0 false flags in 6 runs, and the slowest call was 7.7 seconds, so the 10-second aim holds with some margin (it grows with the number of flagged cards, since each flag writes a reason). The prompt's key rules: a card that shares a theme's underlying experience fits well even loosely or from a different angle, and only a card no theme covers is flagged; two or more late cards sharing an experience no theme covers are reported as one missing theme even if each could be squeezed into some theme, and one card alone never makes a missing theme.
+B was flagged in 6 of 6 runs, A had 0 false flags in 6 runs, and the slowest call was 7.7 seconds, so the 10-second aim holds with some margin (it grows with the number of flagged cards, since each flag writes a reason). The prompt's key rules: a card that shares a theme's underlying experience fits well even loosely or from a different angle, and only a card no theme covers is flagged; two or more late cards sharing an experience no theme covers are reported as one missing theme even if each could be squeezed into some theme, and one card alone never makes a missing theme. The exact prompt and output schema are `LATE_SYSTEM` and `LATE_SCHEMA` in `spike/late-arrivals.mjs`; the final prompt is the first one, unrevised.
 
 ### Folder tabs
 
