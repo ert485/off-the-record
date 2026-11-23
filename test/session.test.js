@@ -19,6 +19,7 @@ function make({ cluster, atDemo = false } = {}) {
     onShred: () => shreds++,
     shredAnimationMs: 10,
   });
+  session.advance(); // teaser to demo
   if (!atDemo) session.advance();
   return { session, clock, changes: () => changes, shreds: () => shreds };
 }
@@ -37,7 +38,10 @@ async function toReact(session) {
 test('phases advance in order and back works until the shred', () => {
   const { session } = make({ atDemo: true });
   assert.equal(session.state.phase, 'demo');
+  session.back();
+  assert.equal(session.state.phase, 'teaser');
   assert.throws(() => session.back(), /Nothing to go back/);
+  session.advance();
   session.advance();
   assert.equal(session.state.phase, 'join');
   session.advance();
@@ -350,7 +354,7 @@ test('pace marker: ahead before the plan, behind after it', () => {
   assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 12 }), -2);
   // Walk-through: 6 minutes over 10 steps; at 17 minutes we should be on step 2 (16.7 to 17.3).
   assert.ok(Math.abs(paceMinutes({ phase: 'walk', elapsedMinutes: 18, walkIndex: 0, walkLength: 10 }) + 1.9) < 1e-9);
-  assert.deepEqual(PHASES, ['demo', 'join', 'submit', 'cluster', 'react', 'walk', 'finale', 'shred', 'closing']);
+  assert.deepEqual(PHASES, ['teaser', 'demo', 'join', 'submit', 'cluster', 'react', 'walk', 'finale', 'shred', 'closing']);
   assert.deepEqual(PLAN.walk, [15.5, 21.5]);
 });
 
@@ -373,9 +377,10 @@ test('a new session can start only after the shred', async () => {
   session.advance({ confirm: true });
   session.advance();
   session.reset();
-  assert.equal(session.state.phase, 'demo');
+  assert.equal(session.state.phase, 'teaser');
   assert.equal(session.state.cards.length, 0);
   assert.equal(session.shredded, false);
+  session.advance(); // demo
   session.advance(); // join
   session.advance(); // submit
   session.submitCards(A, ['a fresh card']);

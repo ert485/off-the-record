@@ -8,7 +8,7 @@ import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
 import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
-import { DEMO_STEPS } from './demo.js';
+import { DEMO_STEPS, DEMO_STEP_MS, DEFAULT_TEASER } from './demo.js';
 
 export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60, haiku: 120 };
 // The projector shows this many comments on a card, the rest as "+N more".
@@ -34,10 +34,11 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     // Random per session. Phones compare it with the one their notes were
     // written in, and wipe notes left over from a session they missed the end of.
     sessionId: randomBytes(8).toString('hex'),
-    phase: 'demo',
+    phase: 'teaser',
     phaseStartedAt: now,
-    // Which step of the demo the projector shows, and the card the demo added.
-    demo: { step: 0, cardId: null },
+    // Which step of the demo the projector shows, whether it plays on its own
+    // (and since when), and the card the demo added.
+    demo: { step: 0, cardId: null, auto: false, stepStartedAt: now },
     // The talk clock: starts with one tap, or backdated when the room moves
     // on without it, and never restarts.
     talk: { startedAt: null, minutes: talkMinutes },
@@ -186,7 +187,11 @@ export class Session {
       this.state.reactClosedAt ??= null;
     }
     if (!this.state.shredded) this.state.removedComments ??= {};
-    if (!this.state.shredded) this.state.demo ??= { step: 0, cardId: null };
+    if (!this.state.shredded) {
+      this.state.demo ??= { step: 0, cardId: null };
+      this.state.demo.auto ??= false;
+      this.state.demo.stepStartedAt ??= now();
+    }
     this.state.sessionId ??= randomBytes(8).toString('hex');
     this.shredded = !!this.state.shredded;
     const c = this.state.clustering;
@@ -321,10 +326,13 @@ export class Session {
     if (from === 'demo' && direction === 'forward' && this.demo && this.s.demo && this.s.demo.cardId === null) {
       this.s.demo.cardId = this.addCard(this.demo.notes.find((n) => n.share).text);
     }
-    if (direction === 'forward' && to !== 'demo' && this.s.talk && this.s.talk.startedAt === null) this.s.talk.startedAt = now - PLAN[to][0] * 60_000;
+    if (direction === 'forward' && PLAN[to] && to !== 'demo' && this.s.talk && this.s.talk.startedAt === null) this.s.talk.startedAt = now - PLAN[to][0] * 60_000;
     if (from === 'react' && direction === 'forward') this.s.reactClosedAt = now;
     this.s.phase = to;
     this.s.phaseStartedAt = now;
+    // The demo plays on a loop when the room first reaches it; coming back to
+    // it later waits for the facilitator.
+    if (to === 'demo') Object.assign(this.s.demo, { auto: from === 'teaser' && direction === 'forward', step: from === 'teaser' ? 0 : this.s.demo.step, stepStartedAt: now });
     if (to === 'react') {
       this.s.reactEndsAt =
         direction === 'forward' ? now + REACT_MINUTES * 60_000 : Math.max(this.s.reactEndsAt ?? 0, now + 60_000);
@@ -350,6 +358,16 @@ export class Session {
     if (step < 0) fail('This is the first step');
     if (step >= DEMO_STEPS.length) fail('That was the last step');
     this.s.demo.step = step;
+    this.s.demo.auto = false;
+    this.s.demo.stepStartedAt = this.now();
+    this.changed();
+  }
+
+  // The facilitator's switch for the loop: on plays from the current step.
+  demoAuto(on) {
+    if (this.s.phase !== 'demo') fail('The demo is over');
+    this.s.demo.auto = !!on;
+    this.s.demo.stepStartedAt = this.now();
     this.changed();
   }
 
@@ -373,6 +391,8 @@ export class Session {
   startTalk() {
     if (this.s.talk.startedAt !== null) return;
     this.s.talk.startedAt = this.now();
+    // The talk has begun: the demo stops looping and waits on its first step.
+    if (this.s.phase === 'demo') Object.assign(this.s.demo, { auto: false, step: 0, stepStartedAt: this.now() });
     this.changed();
   }
 
@@ -843,10 +863,22 @@ export class Session {
   // anything that isn't running does nothing.
   tick() {
     if (this.shredded) return;
+    if (this.s.phase === 'demo') this.tickDemo();
     if (this.s.phase === 'submit') this.tickSubmit();
     if (this.s.phase === 'walk') this.tickWalk();
     // A deadline simply passing changes the prompt with no event to broadcast it.
     if (this.timedPromptKey() !== this.promptKey) this.changed();
+  }
+
+  // On the loop, the server moves the demo on, so every projector shows the
+  // same step; the last step wraps to the first.
+  tickDemo() {
+    const d = this.s.demo;
+    const now = this.now();
+    if (!this.demo || !d.auto || now < d.stepStartedAt + DEMO_STEP_MS[d.step]) return;
+    d.step = (d.step + 1) % DEMO_STEPS.length;
+    d.stepStartedAt = now;
+    this.changed();
   }
 
   // At the 1-minute warning, group the cards so far, once per session.
@@ -917,6 +949,11 @@ export class Session {
 
   // ---- views: what each screen is allowed to see -------------------------
 
+  // The page anyone sees before the event; the only part of the demo file that is public.
+  teaser() {
+    return this.demo?.teaser ?? DEFAULT_TEASER;
+  }
+
   view(role, { cid, phoneCount = 0 } = {}) {
     if (role === 'facilitator') return this.facilitatorView({ phoneCount });
     if (role === 'projector') return this.projectorView({ phoneCount });
@@ -927,6 +964,7 @@ export class Session {
     const s = this.s;
     const v = { role: 'phone', session: s.sessionId, phase: s.phase, now: this.now() };
     if (this.shredded) return v;
+    if (s.phase === 'teaser') v.teaser = this.teaser();
     const c = typeof cid === 'string' ? s.clients[cid] : undefined;
     if (s.phase === 'submit') {
       const texts = this.nudgeTexts();
@@ -1016,7 +1054,11 @@ export class Session {
     const v = { role: 'projector', phase: s.phase, now: this.now(), phaseStartedAt: s.phaseStartedAt };
     if (s.phase === 'shred') v.shred = this.shredPayload;
     if (this.shredded) return v;
-    if (s.phase === 'demo' && this.demo) v.demo = { step: s.demo.step, ...this.demo };
+    if (s.phase === 'teaser') v.teaser = this.teaser();
+    if (s.phase === 'demo' && this.demo) {
+      const { teaser, ...content } = this.demo;
+      v.demo = { step: s.demo.step, auto: s.demo.auto, stepStartedAt: s.demo.stepStartedAt, ...content };
+    }
     if (s.phase === 'join') v.phones = phoneCount;
     // How long this part of the session is planned to take, as a hint the
     // room can see. Only while there's time left: a visible "over" would
@@ -1071,7 +1113,8 @@ export class Session {
     };
     if (this.shredded) return v;
     const { startedAt, minutes } = s.talk;
-    if (s.phase === 'demo' && this.demo) v.demo = { step: s.demo.step, steps: DEMO_STEPS.length, name: DEMO_STEPS[s.demo.step] };
+    if (s.phase === 'teaser') v.teaser = this.teaser();
+    if (s.phase === 'demo' && this.demo) v.demo = { step: s.demo.step, steps: DEMO_STEPS.length, name: DEMO_STEPS[s.demo.step], auto: s.demo.auto };
     v.talk = { startedAt, minutes, leftMs: startedAt === null ? minutes * 60_000 : startedAt + minutes * 60_000 - now };
     v.pace =
       startedAt === null

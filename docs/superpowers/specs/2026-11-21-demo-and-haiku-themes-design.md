@@ -71,13 +71,15 @@ What the practice runs and reflection since changed:
 
 ### Demo stage
 
-- A new first phase, before Join, shown on the **projector** (no screen-sharing of a participant or facilitator tab, so the facilitator token can't leak).
+- Before the demo comes a **teaser** phase: a title and up to four lines (the demo file's optional `teaser`; otherwise "Starting soon.") shown on phones and the projector, with no demo content. It is outside the talk plan, so leaving it never starts the talk clock.
+- The demo is a new phase, before Join, shown on the **projector** (no screen-sharing of a participant or facilitator tab, so the facilitator token can't leak).
 - It steps through a phone drawn on the projector, one step per "Next" on the facilitator view (with "Back"):
   1. The notepad with a few private notes, written in advance. One of them is the card to share (light); another is warmer and more personal, to show that both kinds belong.
   2. Picking one to share; it becomes a card.
   3. Grouping: the card under a folder tab with its theme name and a haiku.
   4. Reacting: tapping preset emojis, adding a keyboard emoji (🌉), typing a comment.
   5. The reveal: the card on the projector with its emoji mix and the comment(s).
+- The demo plays on a loop while people arrive (about a minute a round; the server moves the steps, so every projector agrees). Next or Back takes it off the loop, a facilitator switch puts it back, and starting the talk clock takes it off the loop and back to step 1.
 - Content comes from a small data file, so the haiku and comments in the demo are written ahead of time. A generic example is committed; the facilitator's own file sits next to it, gitignored (it still deploys, since the deploy script copies untracked files), and is used when present. Claude drafts Erik's file from the material in this conversation (the bridge card, the follow-up comments, the personal note) and Erik edits it before the solo run on Nov 24.
 - On leaving the demo, its card is added to the real session as an ordinary card (no author, like every card), so the room reacts to it for real. The demo's illustrative reactions and comments don't carry over.
 - Phones that open the join link during the demo see a "Starting soon" screen.

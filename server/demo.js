@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import { isSingleEmoji, PRESETS } from '../public/shared/emoji.js';
 
 export const DEMO_STEPS = ['notes', 'pick', 'group', 'react', 'reveal'];
+// How long each step shows while the demo plays on a loop (about a minute in
+// all; step 3 includes the send animation).
+export const DEMO_STEP_MS = [10_000, 14_000, 12_000, 14_000, 14_000];
+// Shown before the event when the demo file has no teaser of its own.
+export const DEFAULT_TEASER = { title: 'Off the Record', lines: ['Starting soon.'] };
 
 const fail = (reason) => {
   throw new Error(reason);
@@ -13,7 +18,7 @@ const isText = (s, max, min = 1) => typeof s === 'string' && s.trim().length >= 
 
 export function validateDemo(obj) {
   if (!obj || typeof obj !== 'object') fail('Demo must be an object');
-  const { notes, theme, react, reveal } = obj;
+  const { notes, theme, react, reveal, teaser } = obj;
   if (!Array.isArray(notes) || notes.length < 1 || notes.length > 5) fail('Demo needs 1 to 5 notes');
   if (!notes.every((n) => n && isText(n.text, 200))) fail('Demo notes are 1 to 200 characters');
   if (notes.filter((n) => n.share === true).length !== 1) fail('Demo needs exactly one shared note');
@@ -31,7 +36,15 @@ export function validateDemo(obj) {
   if (!Array.isArray(reveal.comments) || reveal.comments.length > 5 || !reveal.comments.every((c) => typeof c === 'string' && c.length <= 200)) {
     fail('Demo comments are up to 5, each up to 200 characters');
   }
+  if (teaser !== undefined) {
+    if (!teaser || typeof teaser !== 'object') fail('Demo teaser must be an object');
+    if (!isText(teaser.title, 60)) fail('Demo teaser title is 1 to 60 characters');
+    if (!Array.isArray(teaser.lines) || teaser.lines.length > 4 || !teaser.lines.every((l) => isText(l, 160))) {
+      fail('Demo teaser has up to 4 lines of 1 to 160 characters');
+    }
+  }
   return {
+    teaser: teaser ? { title: teaser.title, lines: [...teaser.lines] } : { ...DEFAULT_TEASER, lines: [...DEFAULT_TEASER.lines] },
     notes: notes.map((n) => ({ text: n.text, ...(n.share === true ? { share: true } : {}) })),
     theme: { name: theme.name, haiku: theme.haiku },
     react: { presets: [...react.presets], own: react.own, comment: react.comment },

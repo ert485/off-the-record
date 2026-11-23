@@ -123,6 +123,7 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   const facilitatorView = () => view(`role=facilitator&t=${encodeURIComponent(TOKEN)}`);
 
   // A whole session.
+  await run('advance'); // demo
   await run('advance'); // join
   await run('advance'); // submit
   for (const [i, cid] of PHONES.entries()) {
@@ -183,6 +184,6 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   const unconfirmed = await fetch(`${base}/api/reset`, { method: 'POST', headers: { 'x-facilitator-token': TOKEN }, body: '{}' });
   assert.equal(unconfirmed.status, 400);
   await run('reset', { confirm: true });
-  assert.equal((await view('role=projector')).phase, 'demo');
+  assert.equal((await view('role=projector')).phase, 'teaser');
   assert.deepEqual(filesContaining(scanned(), MARKER), [], 'still nothing after starting a new session');
 });

@@ -27,6 +27,7 @@ function make({ state } = {}) {
   const cluster = fakeCall();
   const place = fakeCall();
   const session = new Session({ state, now: clock.now, clusterCards: cluster.fn, placeLateCards: place.fn });
+  if (!state) session.advance(); // teaser to demo
   return { session, clock, cluster, place };
 }
 

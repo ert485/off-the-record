@@ -17,6 +17,7 @@ function make() {
     clusterCards: async (cards) => ({ themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }),
     shredAnimationMs: 10,
   });
+  session.advance(); // teaser to demo
   return { session, clock };
 }
 
@@ -32,12 +33,14 @@ async function toReact(session) {
   session.advance(); // react
 }
 
-test('a session starts on the demo, before join', () => {
+test('a session starts on the teaser, then the demo, before join', () => {
   const { session } = make();
   assert.equal(session.state.phase, 'demo');
   assert.deepEqual(Object.keys(session.view('phone', { cid: A })).sort(), ['now', 'phase', 'role', 'session']);
   session.advance();
   assert.equal(session.state.phase, 'join');
+  const fresh = new Session({ now: () => 1, clusterCards: async () => ({ themes: [] }) });
+  assert.equal(fresh.state.phase, 'teaser');
 });
 
 test('the talk clock starts with one tap and never restarts', () => {
@@ -204,6 +207,7 @@ test('a deadline passing is broadcast even when nothing else happens', async () 
     clusterCards: async (cards) => ({ themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }),
     onChange: () => changes++,
   });
+  session.advance(); // teaser to demo
   const expectPrompt = (label, to) => {
     t = to;
     const before = changes;

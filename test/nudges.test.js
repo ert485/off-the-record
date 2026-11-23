@@ -12,13 +12,14 @@ function make(tagCards) {
     tagCards,
     nudgeQuietMs: 5,
   });
+  s.advance(); // teaser to demo
   s.setNudges(true);
   return s;
 }
 
 test('nudges start off', () => {
   const s = new Session({ clusterCards: async () => ({ themes: [] }) });
-  s.advance(); s.advance(); // demo, join: now in submit
+  s.advance(); s.advance(); s.advance(); // demo, join, submit
   assert.equal(s.view('phone', { cid: cid(1) }).submit.nudge, null);
   assert.equal(s.view('facilitator').submit.nudgesOn, false);
 });

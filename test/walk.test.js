@@ -16,6 +16,7 @@ function make() {
     clusterCards: async (list) => ({ themes: [{ name: 'All', groups: list.map((c) => [c.id]) }] }),
     shredAnimationMs: 10,
   });
+  session.advance(); // teaser to demo
   return { session, clock };
 }
 

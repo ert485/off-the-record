@@ -1,4 +1,8 @@
 {
+  "teaser": {
+    "title": "Off the Record",
+    "lines": ["An anonymous retro, live from your phone.", "Starting soon."]
+  },
   "notes": [
     { "text": "The new build pipeline cut our wait from twenty minutes to five.", "share": true },
     { "text": "I wasn't sure my idea was worth raising, so I kept it to myself." },

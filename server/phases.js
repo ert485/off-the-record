@@ -1,9 +1,9 @@
 // The session's phases, in order. The facilitator moves forward and back;
 // every phone follows. See "Session flow" in the spec.
-export const PHASES = ['demo', 'join', 'submit', 'cluster', 'react', 'walk', 'finale', 'shred', 'closing'];
+export const PHASES = ['teaser', 'demo', 'join', 'submit', 'cluster', 'react', 'walk', 'finale', 'shred', 'closing'];
 
 // Planned talk-clock minutes for each phase: [start, end]. From the spec's
-// 25-minute talk plan. Drives the facilitator-only pace marker.
+// 25-minute talk plan. The teaser has no entry: it is before the talk. Drives the facilitator-only pace marker.
 export const PLAN = {
   demo: [1.5, 3.5],
   join: [3.5, 5],
