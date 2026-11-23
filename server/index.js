@@ -122,8 +122,8 @@ const FACILITATOR_ACTIONS = {
   nudges: (b) => session.setNudges(b.on),
   recluster: () => session.recluster(),
   skipClustering: () => session.skipClustering(),
-  approveTheme: (b) => session.approveTheme(b.id, b.name),
-  approveAll: (b) => session.approveAll(b.names),
+  approveTheme: (b) => session.approveTheme(b.id, b.name, b.haiku),
+  approveAll: (b) => session.approveAll(b.names, b.haikus),
   reset: (b) => {
     if (b.confirm !== true) throw new ActionError('Confirm the reset');
     session.reset();

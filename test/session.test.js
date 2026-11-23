@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Session, normalizeClusters, SKIPPED } from '../server/session.js';
+import { Session, normalizeClusters, cleanHaiku, SKIPPED } from '../server/session.js';
 import { paceMinutes, PHASES, PLAN } from '../server/phases.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
@@ -132,8 +132,8 @@ test('a clustering failure falls back to one card per group', async () => {
 test('normalizeClusters drops unknown and duplicate ids and keeps missing ones', () => {
   const themes = normalizeClusters([{ name: 'T', groups: [[1, 2, 99], [2, 3]] }], [1, 2, 3, 4]);
   assert.deepEqual(themes, [
-    { name: 'T', groups: [[1, 2], [3]] },
-    { name: 'Other', groups: [[4]] },
+    { name: 'T', haiku: '', groups: [[1, 2], [3]] },
+    { name: 'Other', haiku: '', groups: [[4]] },
   ]);
 });
 
@@ -524,4 +524,71 @@ test('going back to the walk-through does not restart its section timer', async 
   clock.tick(30_000);
   session.back(); // walk
   assert.equal(session.view('projector').section.endsAt, endsAt);
+});
+
+const HAIKU = 'Snow on the keyboard / we all stare at the same screen / thaw comes late again';
+const withHaiku = (haiku) => async (cards) => ({ themes: [{ name: 'Work', haiku, groups: cards.map((c) => [c.id]) }] });
+
+test('a haiku is cleaned: newlines become " / ", too long is dropped', async () => {
+  assert.equal(cleanHaiku(42), '');
+  assert.equal(cleanHaiku('  one\ntwo \r\n three  '), 'one / two / three');
+  assert.equal(cleanHaiku('a   b'), 'a b');
+  assert.equal(cleanHaiku('x'.repeat(121)), '');
+  assert.equal(cleanHaiku('x'.repeat(120)).length, 120);
+  const themes = normalizeClusters([{ name: 'W', haiku: 'a\nb\nc', groups: [[1]] }], [1]);
+  assert.equal(themes[0].haiku, 'a / b / c');
+  assert.equal(normalizeClusters([], [1])[0].haiku, '');
+});
+
+test('the facilitator can edit or clear a haiku; approving covers both', async () => {
+  const { session } = make({ cluster: withHaiku(HAIKU) });
+  await toReact(session);
+  const t = session.state.themes[0];
+  assert.equal(t.haiku, HAIKU);
+  assert.equal(t.approved, false);
+  assert.throws(() => session.approveTheme(t.id, 'Work', 'x'.repeat(121)), /Haiku are up to 120 characters/);
+  assert.equal(t.approved, false);
+  session.approveTheme(t.id, 'Work', 'my own / haiku / here');
+  assert.equal(t.haiku, 'my own / haiku / here');
+  assert.equal(t.approved, true);
+  session.approveTheme(t.id, 'Work', '');
+  assert.equal(t.haiku, '');
+  session.approveTheme(t.id, 'Work', 'kept / as / is');
+  session.approveTheme(t.id, 'Work');
+  assert.equal(t.haiku, 'kept / as / is');
+  session.approveAll({}, { [t.id]: 'typed / in / bulk' });
+  assert.equal(t.haiku, 'typed / in / bulk');
+  assert.throws(() => session.approveAll({}, { [t.id]: 'x'.repeat(121) }), /Haiku are up to 120 characters/);
+  assert.equal(session.view('facilitator').themes[0].haiku, 'typed / in / bulk');
+});
+
+test("the projector shows an approved theme's haiku on its cards, never on the overview; phones never get it", async () => {
+  const { session } = make({ cluster: withHaiku(HAIKU) });
+  const phoneJson = () => JSON.stringify([A, B].map((cid) => session.view('phone', { cid })));
+  session.advance(); // submit
+  session.submitCards(A, ['one', 'two']);
+  session.submitCards(B, ['three']);
+  session.advance(); // cluster
+  await flush();
+  assert.equal(phoneJson().includes('Snow on the keyboard'), false);
+  session.advance(); // react
+  assert.equal(phoneJson().includes('Snow on the keyboard'), false);
+  session.approveAll({});
+  session.advance(); // walk
+  assert.equal(phoneJson().includes('Snow on the keyboard'), false);
+  const overview = session.view('projector').walk.item;
+  assert.ok(overview.overview);
+  assert.equal(JSON.stringify(overview).includes('Snow on the keyboard'), false);
+  session.moveCard(1);
+  assert.equal(session.view('projector').walk.item.haiku, HAIKU);
+  assert.equal(phoneJson().includes('Snow on the keyboard'), false);
+});
+
+test('a theme without a haiku shows none on the projector', async () => {
+  const { session } = make({ cluster: withHaiku('') });
+  await toReact(session);
+  session.approveAll({});
+  session.advance();
+  session.moveCard(1);
+  assert.equal('haiku' in session.view('projector').walk.item, false);
 });

@@ -8,7 +8,7 @@ import { isSingleEmoji } from '../public/shared/emoji.js';
 import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 
-export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60 };
+export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60, haiku: 120 };
 // The projector shows this many comments on a card, the rest as "+N more".
 export const COMMENTS_SHOWN = 5;
 const OVERVIEW = 'overview';
@@ -66,6 +66,15 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
   };
 }
 
+// A theme's haiku as one line: newlines become " / ". Not text, or too long to
+// show whole, means none (a cut haiku reads broken; the facilitator can write one).
+const oneLine = (raw) => raw.replace(/\s*[\r\n]+\s*/g, ' / ').replace(/ {2,}/g, ' ').trim();
+export function cleanHaiku(raw) {
+  if (typeof raw !== 'string') return '';
+  const clean = oneLine(raw);
+  return clean.length > LIMITS.haiku ? '' : clean;
+}
+
 // Makes the model's grouping safe to use: every visible card exactly once.
 export function normalizeClusters(rawThemes, cardIds) {
   const wanted = new Set(cardIds);
@@ -78,10 +87,10 @@ export function normalizeClusters(rawThemes, cardIds) {
       ids.forEach((id) => seen.add(id));
       if (ids.length) groups.push(ids);
     }
-    if (groups.length) themes.push({ name: String(t?.name ?? '').trim().slice(0, LIMITS.themeName), groups });
+    if (groups.length) themes.push({ name: String(t?.name ?? '').trim().slice(0, LIMITS.themeName), haiku: cleanHaiku(t?.haiku), groups });
   }
   const missing = cardIds.filter((id) => !seen.has(id));
-  if (missing.length) themes.push({ name: 'Other', groups: missing.map((id) => [id]) });
+  if (missing.length) themes.push({ name: 'Other', haiku: '', groups: missing.map((id) => [id]) });
   return themes;
 }
 
@@ -303,7 +312,7 @@ export class Session {
     // If it is shown again later, give it a group of its own.
     if (!card.hidden && this.s.themes.length && !this.s.themes.some((t) => t.groups.some((g) => g.cardIds.includes(id)))) {
       let other = this.s.themes.find((t) => t.name === 'Other');
-      if (!other) this.s.themes.push((other = { id: this.newId(), name: 'Other', approved: false, groups: [] }));
+      if (!other) this.s.themes.push((other = { id: this.newId(), name: 'Other', haiku: '', approved: false, groups: [] }));
       other.groups.push({ id: this.newId(), cardIds: [id] });
     }
     this.changed();
@@ -366,7 +375,7 @@ export class Session {
     const input = cards.map(({ id, text }) => ({ id, text })).sort((a, b) => a.id - b.id);
     const ids = input.map((x) => x.id);
     Promise.resolve()
-      .then(() => this.clusterCards(input))
+      .then(() => this.clusterCards(input, { effort: 'high' }))
       .then(
         (result) => ({ themes: normalizeClusters(result.themes, ids), status: 'done', error: null, local: !!result.local }),
         (err) => fallbackClusters(ids, String(err?.message ?? err).slice(0, 200)),
@@ -379,6 +388,7 @@ export class Session {
     this.s.themes = themes.map((t) => ({
       id: this.newId(),
       name: t.name,
+      haiku: t.haiku ?? '',
       approved: false,
       groups: t.groups.map((cardIds) => ({ id: this.newId(), cardIds })),
     }));
@@ -402,11 +412,19 @@ export class Session {
     this.changed();
   }
 
-  // names: { themeId: name } for names typed but not yet approved.
-  approveAll(names = {}) {
+  // names: { themeId: name } and haikus: { themeId: haiku } for what was typed
+  // but not yet approved. A typed haiku replaces the stored one ('' clears it).
+  approveAll(names = {}, haikus = {}) {
+    const typed = new Map();
+    for (const theme of this.s.themes) {
+      const raw = haikus?.[theme.id];
+      if (raw === undefined) continue;
+      typed.set(theme.id, this.typedHaiku(raw));
+    }
     let missing = 0;
     for (const theme of this.s.themes) {
-      const raw = names[theme.id] ?? theme.name;
+      if (typed.has(theme.id)) theme.haiku = typed.get(theme.id);
+      const raw = names?.[theme.id] ?? theme.name;
       const clean = typeof raw === 'string' ? raw.trim().slice(0, LIMITS.themeName) : '';
       if (!clean) {
         missing += 1;
@@ -419,14 +437,25 @@ export class Session {
     if (missing) fail(`${missing} ${missing === 1 ? 'theme needs' : 'themes need'} a name first`);
   }
 
-  approveTheme(id, name) {
+  approveTheme(id, name, haiku) {
     const theme = this.s.themes.find((t) => t.id === id);
     if (!theme) fail('No such theme');
     const clean = typeof name === 'string' ? name.trim() : '';
     if (!clean || clean.length > LIMITS.themeName) fail(`Theme names are 1 to ${LIMITS.themeName} characters`);
+    const typed = haiku === undefined ? theme.haiku : this.typedHaiku(haiku);
     theme.name = clean;
+    theme.haiku = typed;
     theme.approved = true;
     this.changed();
+  }
+
+  // A haiku the facilitator typed: joined onto one line, empty to clear it,
+  // refused (not silently dropped) when too long.
+  typedHaiku(raw) {
+    if (typeof raw !== 'string') return '';
+    const clean = oneLine(raw);
+    if (clean.length > LIMITS.haiku) fail(`Haiku are up to ${LIMITS.haiku} characters`);
+    return clean;
   }
 
   // ---- reactions --------------------------------------------------------
@@ -716,11 +745,13 @@ export class Session {
     const found = this.findGroup(item.groupId);
     const text = this.groupText(item.groupId);
     if (!found || !text) return { hidden: true };
+    const { theme } = found;
     return {
       text,
       similar: Math.max(0, this.visibleCardIds(found.group).length - 1),
       moreInTheme: item.moreInTheme,
-      theme: found.theme.approved ? found.theme.name : null,
+      theme: theme.approved ? theme.name : null,
+      ...(theme.approved && theme.haiku ? { haiku: theme.haiku } : {}),
       mix: this.emojiMix(item.groupId),
     };
   }
@@ -808,6 +839,7 @@ export class Session {
     v.themes = s.themes.map((t) => ({
       id: t.id,
       name: t.name,
+      haiku: t.haiku,
       approved: t.approved,
       groups: t.groups.map((g) => ({
         id: g.id,
