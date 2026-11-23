@@ -398,7 +398,7 @@ function reactScreen() {
   function tickTimer() {
     const left = endsAt ? endsAt - serverNow() : Infinity;
     timer.hidden = finished || left > 60_000 || left <= 0;
-    if (left > 15_000) timer.textContent = `About a minute left. Finish the card you're on (${formatClock(left)}).`;
+    if (left > 15_000) timer.textContent = `Finish the card you're on (${formatClock(left)}).`;
     else timer.textContent = `15 seconds: send this card (${formatClock(left)}).`;
     timer.classList.toggle('urgent', left <= 15_000);
   }
@@ -594,7 +594,7 @@ function reactScreen() {
 
     fill(
       body,
-      h('div', { class: 'small faint' }, `Card ${index + 1} of ${ids.length}`, before ? ' · you reacted to this one' : ''),
+      h('div', { class: 'small faint' }, `Card ${index + 1} of ${ids.length}`, (before?.emojis.length || before?.comment) ? ' · you reacted to this one' : ''),
       h('div', { class: 'react-card' }, textFor(group)),
       grid,
       h('div', { class: 'row wrap custom-row' }, addOwn, input, chips),
