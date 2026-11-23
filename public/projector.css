@@ -15,6 +15,11 @@ body { background: #000; overflow: hidden; cursor: none; }
 .huge { font-size: 7vw; font-weight: 600; letter-spacing: -0.01em; }
 .sub { font-size: 2.2vw; color: var(--text-dim); margin-top: 2vh; }
 
+/* Teaser: the title large, its lines below. */
+.teaser .huge { font-size: 7.5vw; line-height: 1.1; }
+.teaser-lines { margin-top: 3vh; }
+.teaser-lines .sub { font-size: 2.8vw; margin-top: 1.4vh; line-height: 1.3; }
+
 .join { position: absolute; inset: 0; display: grid; grid-template-columns: auto 1fr; gap: 5vw; align-items: center; padding: 6vh 6vw; }
 .join .qr { width: min(42vw, 78vh); background: white; padding: 1.2vw; border-radius: 1.4vw; }
 .join h1 { font-size: 4.8vw; margin: 0 0 1vh; }
@@ -101,8 +106,14 @@ body { background: #000; overflow: hidden; cursor: none; }
 .comments .comment { font-size: 1.7vw; line-height: 1.25; background: #15161a; border-left: 0.35vw solid var(--accent); padding: 0.6vh 1.2vw; border-radius: 0 0.8vw 0.8vw 0; overflow-wrap: anywhere; }
 .comments-more { font-size: 1.5vw; color: var(--text-dim); padding-left: 1.2vw; }
 .comments-more:empty { display: none; }
-.haiku { font-size: 1.5vw; font-style: italic; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 1.2vw; }
+.haiku { font-size: 1.5vw; font-style: italic; color: var(--text-dim); line-height: 1.35; overflow: hidden; padding-left: 1.2vw; }
 .haiku:empty { display: none; }
+/* Haiku segments stay whole; lines break only at the space after a slash
+   (projector.js shrinks a segment that is too wide, and wraps one only past
+   its smallest size). */
+.hseg { display: inline-block; white-space: nowrap; }
+.hseg.hwrap { white-space: normal; text-wrap: balance; }
+.hsep { color: var(--text-faint); }
 .walk .bottom { display: flex; gap: 2vw; align-items: flex-end; min-height: 3vh; padding-right: 10vw; }
 .walk .counts { display: flex; gap: 1.2vw; font-size: 1.5vw; color: var(--text-dim); }
 .walk .counts span { background: #15161a; border-radius: 99px; padding: 0.5vh 1.1vw; }
@@ -192,13 +203,37 @@ body { background: #000; overflow: hidden; cursor: none; }
 .demo .dscreen .small.faint { color: var(--text-dim); }
 .demo .note { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%; color: var(--text); }
 .demo .note .text { flex: 1; }
-.demo .note .check { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); flex: none; margin-top: 2px; transition: background 0.3s, border-color 0.3s; }
-.demo .note.pickable { transition: border-color 0.3s, box-shadow 0.3s; }
-.demo .note.picked { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
-.demo .note.picked .check { background: var(--accent); border-color: var(--accent); }
-.demo .card-wrap { flex: 1; display: grid; align-items: center; }
+.demo .note .check { position: relative; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); flex: none; margin-top: 2px; }
 .demo .react-card { background: var(--text); color: #15161a; border-radius: 18px; padding: 22px 20px; font-size: 24px; line-height: 1.35; display: grid; place-items: center; text-align: center; overflow-wrap: anywhere; }
-.demo .card-wrap .react-card { min-height: 230px; font-size: 28px; }
+
+/* Step 2, sharing. Picked: the check fills and a ring lights up. Then the note
+   turns to blank paper, folds to an envelope's size, and the envelope takes
+   its place: its flap closes, a seal goes on, and it slides up out of the
+   phone. All transform and opacity. */
+.demo .note.pickable { position: relative; transition: opacity 0.35s, transform 0.55s ease-in-out; }
+.demo .note.pickable .text, .demo .note.pickable .check { transition: opacity 0.3s; }
+.demo .note.pickable .check::after { content: ''; position: absolute; inset: -2px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform 0.35s cubic-bezier(0.3, 1.6, 0.5, 1); }
+.demo .note.pickable.picked .check::after { transform: scale(1); }
+.demo .note.pickable::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; box-shadow: 0 0 0 3px var(--accent) inset; opacity: 0; transition: opacity 0.3s; }
+.demo .note.pickable.picked::after { opacity: 1; }
+.demo .note.pickable::before { content: ''; position: absolute; inset: -1px; border-radius: inherit; background: #ece6d6; opacity: 0; transition: opacity 0.35s; }
+.demo .note.pickable.blank::before { opacity: 1; }
+.demo .note.pickable.blank::after, .demo .note.pickable.blank .text, .demo .note.pickable.blank .check { opacity: 0; }
+.demo .note.pickable.away, .demo .note.pickable.gone { opacity: 0; }
+.demo .note.pickable.gone { transition-duration: 0.25s; }
+.demo .dscreen button.dshare { position: relative; overflow: hidden; transition: opacity 0.4s; }
+.demo .dscreen button.dshare.away { opacity: 0; }
+.demo .dshare.press { animation: demo-press 0.45s ease; }
+.demo .dtouch { position: absolute; left: 50%; top: 50%; width: 90px; height: 90px; margin: -45px 0 0 -45px; border-radius: 50%; background: rgba(255, 255, 255, 0.6); opacity: 0; pointer-events: none; }
+.demo .dshare.press .dtouch { animation: demo-touch 0.6s ease-out; }
+.demo .denv { position: absolute; width: 200px; height: 124px; z-index: 1; opacity: 0; background: #ddd5c0; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); transition: opacity 0.25s, transform 0.9s cubic-bezier(0.55, 0, 0.8, 0.2); }
+.demo .denv::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: #ece6d6; clip-path: polygon(0 100%, 50% 42%, 100% 100%); }
+.demo .denv.shown { opacity: 1; }
+.demo .denv-flap { position: absolute; left: 0; right: 0; top: 0; height: 62%; background: #e4dcc8; clip-path: polygon(0 0, 100% 0, 50% 100%); transform-origin: top; transform: perspective(500px) rotateX(180deg); transition: transform 0.5s ease-in-out; }
+.demo .denv.sealed .denv-flap { transform: perspective(500px) rotateX(0deg); }
+.demo .denv-seal { position: absolute; left: 50%; top: 62%; width: 28px; height: 28px; margin: -16px 0 0 -14px; border-radius: 50%; background: var(--accent); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); transform: scale(0); transition: transform 0.3s cubic-bezier(0.3, 1.6, 0.5, 1) 0.45s; }
+.demo .denv.sealed .denv-seal { transform: scale(1); }
+.demo .dtoast { background: color-mix(in srgb, var(--ok) 18%, transparent); border: 1px solid var(--ok); border-radius: var(--radius); padding: 16px 18px; font-size: 24px; font-weight: 600; line-height: 1.3; margin-top: 40px; }
 .demo .emoji-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .demo .emoji-grid button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; min-height: 84px; transition: background 0.25s, color 0.25s, transform 0.25s; }
 .demo .emoji-grid .e { font-size: 38px; line-height: 1.1; font-family: var(--emoji); }
@@ -212,7 +247,8 @@ body { background: #000; overflow: hidden; cursor: none; }
 .demo .dfolder { display: flex; flex-direction: column; align-items: flex-start; margin-top: 60px; }
 .demo .dtab { background: var(--manila); color: #2b2209; font-size: 25px; font-weight: 700; padding: 6px 20px 7px; margin-left: 14px; border-radius: 12px 12px 0 0; border: 2px solid var(--manila-edge); border-bottom: 0; margin-bottom: -2px; position: relative; z-index: 1; overflow-wrap: anywhere; max-width: 330px; }
 .demo .dfolder-card { align-self: stretch; background: #1c1d22; border: 2px solid var(--manila-edge); border-radius: 0 12px 12px 12px; padding: 36px 24px; text-align: center; font-size: 28px; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere; }
-.demo .dhaiku { margin-top: 30px; font-size: 34px; line-height: 1.3; font-weight: 500; text-wrap: balance; color: var(--text); white-space: pre-line; text-align: center; }
+.demo .dhaiku { margin-top: 30px; font-size: 34px; line-height: 1.3; font-weight: 500; color: var(--text); display: flex; flex-direction: column; align-items: center; text-align: center; }
+.demo .dhaiku .hsep { color: var(--text-faint); }
 
 /* Entrances: only on a forward step (.animate); Back shows everything settled. */
 .demo .animate .pop { animation: demo-in 0.55s ease both; animation-delay: var(--d, 0s); }
@@ -226,3 +262,5 @@ body { background: #000; overflow: hidden; cursor: none; }
 @keyframes demo-drop { from { opacity: 0; transform: translateY(-14px); } }
 @keyframes demo-grow { from { opacity: 0; transform: scale(0.94); } }
 @keyframes demo-tap { 50% { transform: scale(1.12); } }
+@keyframes demo-press { 40% { transform: scale(0.93); } }
+@keyframes demo-touch { from { opacity: 0.8; transform: scale(0.2); } to { opacity: 0; transform: scale(1.8); } }

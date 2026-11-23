@@ -9,14 +9,15 @@ const cornerQr = document.getElementById('corner-qr');
 const status = document.getElementById('status');
 const section = document.getElementById('section');
 let latest = null;
-// Shown while the app waits on the facilitator; never during the finale, shred or closing.
+// Shown while the app waits on the facilitator; never during the teaser, the
+// demo, the finale, the shred or the closing.
 const waiting = h('div', { class: 'waiting', hidden: true }, 'Waiting for the facilitator to confirm');
 document.body.append(waiting);
 
 // The planned time left for this part of the session: a hint for the room,
-// hidden once it runs out, and while the app waits on the facilitator.
+// hidden once it runs out, while the app waits on the facilitator, and on the teaser.
 function tickSection() {
-  const left = latest?.section && !latest.waiting ? latest.section.endsAt - serverNow() : 0;
+  const left = latest?.section && !latest.waiting && latest.phase !== 'teaser' ? latest.section.endsAt - serverNow() : 0;
   section.hidden = left <= 0;
   if (left > 0) section.textContent = `${formatClock(left)} left for this part`;
 }
@@ -38,11 +39,11 @@ subscribe(
     }
     screen.update?.(view);
     latest = view;
-    waiting.hidden = !view.waiting || ['demo', 'finale', 'shred', 'closing'].includes(view.phase);
+    waiting.hidden = !view.waiting || ['teaser', 'demo', 'finale', 'shred', 'closing'].includes(view.phase);
     tickSection();
     // The join QR stays small in a corner for latecomers, and is hidden for
-    // the demo, the finale, the shred and the closing.
-    cornerQr.classList.toggle('hidden', ['demo', 'join', 'finale', 'shred', 'closing'].includes(view.phase));
+    // the teaser, the demo, the finale, the shred and the closing.
+    cornerQr.classList.toggle('hidden', ['teaser', 'demo', 'join', 'finale', 'shred', 'closing'].includes(view.phase));
   },
   (online) => status.classList.toggle('offline', !online),
 );
@@ -52,6 +53,7 @@ const host = () => config.publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '
 const message = (title, sub) => ({ el: h('div', { class: 'center' }, h('div', {}, h('div', { class: 'huge' }, title), sub && h('div', { class: 'sub' }, sub))) });
 
 const SCREENS = {
+  teaser: teaserScreen,
   demo: demoScreen,
   join: joinScreen,
   submit: () => message('On your phone'),
@@ -74,12 +76,31 @@ const SCREENS = {
   }),
 };
 
+// ---- teaser: before anything else, while the room fills ----------------------
+// The title large, its lines below, centred. Nothing from the demo.
+
+function teaserScreen() {
+  const title = h('div', { class: 'huge' });
+  const lines = h('div', { class: 'teaser-lines' });
+  return {
+    el: h('div', { class: 'center teaser' }, h('div', {}, title, lines)),
+    update(v) {
+      title.textContent = v.teaser?.title ?? 'Off the Record';
+      fill(lines, (v.teaser?.lines ?? []).map((line) => h('div', { class: 'sub' }, line)));
+    },
+  };
+}
+
 // ---- demo: a phone drawn on the projector -------------------------------------
-// One step per "Next" on the facilitator view. Steps 1-4 happen on a drawn
-// phone (the real phone's look, scaled up so it reads from the back row);
-// step 5 is the walk-through's own card layout. Entering a step animates;
-// going Back (or reloading) shows it settled. Every timeout is cleared when
-// the step changes and when the screen is destroyed.
+// The server picks the step: on its own while the demo loops (each step for
+// its DEMO_STEP_MS, wrapping from the last to the first), or one per "Next" on
+// the facilitator view. Steps 1-4 happen on a drawn phone (the real phone's
+// look, scaled up so it reads from the back row); step 5 is the walk-through's
+// own card layout. Entering a step animates (a step forward, the loop wrapping
+// round, or the loop's step that has only just begun); going Back, or
+// reloading mid-step, shows it settled. Every step's animation is over at
+// least 3 seconds before the loop moves on. Every timeout is cleared when the
+// step changes and when the screen is destroyed.
 
 const DEMO_CAPTIONS = [
   'Write private notes. They never leave your phone.',
@@ -125,25 +146,66 @@ function demoScreen() {
     );
   }
 
-  // Step 2: the shared note is highlighted, then shown as a card.
+  // Step 2: one note is picked, Share goes live and is tapped, and the note
+  // folds into a plain sealed envelope (nothing written on it) that slides up
+  // out of the phone. Ends on what the phone says after sharing; the card's
+  // text is never shown in this step. Over by about 9 s of the step's 14 s.
   function pickStep(d, animate) {
-    const asCard = () => fill(body, h('div', { class: 'card-wrap pop' }, cardText(sharedText(d))));
-    if (!animate) return asCard();
-    const share = h('button', { class: 'primary', disabled: true }, 'Share 1 card');
+    const shared = () =>
+      fill(
+        body,
+        h('div', { class: 'dtoast pop' }, 'Shared. You can still share 2 more.'),
+        h('p', { class: 'small faint pop', style: '--d:0.3s' }, 'Private notes (only on this phone)'),
+        d.notes.filter((n) => !n.share).map((n, i) => h('div', { class: 'note pop', style: `--d:${0.5 + i * 0.25}s` }, h('div', { class: 'text' }, n.text))),
+      );
+    if (!animate) return shared();
+    const share = h('button', { class: 'primary dshare pop', style: `--d:${d.notes.length * 0.15}s`, disabled: true }, h('span', { class: 'dtouch' }), 'Share 1 card');
     const rows = d.notes.map((n, i) => h('div', { class: 'note pickable pop', style: `--d:${i * 0.15}s` }, h('span', { class: 'check' }), h('span', { class: 'text' }, n.text)));
+    const note = rows[d.notes.findIndex((n) => n.share)];
+    const env = { w: 200, h: 124 };
+    const envelope = h('div', { class: 'denv' }, h('div', { class: 'denv-flap' }), h('div', { class: 'denv-seal' }));
     fill(body, rows, share);
     later(() => {
-      rows[d.notes.findIndex((n) => n.share)].classList.add('picked');
-      share.disabled = false;
-    }, 1000);
-    later(asCard, 2600);
+      // The entrances are over; drop them so the transitions below own transform and opacity.
+      [...rows, share].forEach((el) => el.classList.remove('pop'));
+      note.classList.add('picked');
+    }, 1500);
+    later(() => (share.disabled = false), 2500);
+    later(() => share.classList.add('press'), 3600);
+    later(() => {
+      // The rest of the list steps back; the note turns to blank paper.
+      [...rows.filter((r) => r !== note), share].forEach((el) => el.classList.add('away'));
+      note.classList.add('blank');
+    }, 4300);
+    later(() => {
+      // It folds down to the envelope's size as it moves to the middle of the
+      // screen, so the envelope has a long way to fly.
+      const x = note.offsetLeft + note.offsetWidth / 2;
+      const y = note.offsetTop + note.offsetHeight / 2;
+      const cx = body.clientWidth / 2;
+      const cy = body.clientHeight * 0.42;
+      note.style.transform = `translate(${cx - x}px, ${cy - y}px) scale(${env.w / note.offsetWidth}, ${env.h / note.offsetHeight})`;
+      Object.assign(envelope.style, { left: `${cx - env.w / 2}px`, top: `${cy - env.h / 2}px` });
+      body.append(envelope);
+    }, 4700);
+    later(() => {
+      envelope.classList.add('shown');
+      note.classList.add('gone');
+    }, 5300);
+    later(() => envelope.classList.add('sealed'), 5700); // the flap closes, then the seal
+    later(() => (envelope.style.transform = `translateY(${-(envelope.offsetTop + env.h + 60)}px) scale(0.85)`), 6800);
+    later(shared, 8100);
   }
 
   // Step 3: the card under its folder tab, with the theme name and haiku.
   function groupStep(d) {
     const tab = h('div', { class: 'dtab' }, d.theme.name);
-    const haiku = d.theme.haiku ? h('div', { class: 'dhaiku' }, d.theme.haiku.split(' / ').join('\n')) : null;
+    const haiku = d.theme.haiku ? h('div', { class: 'dhaiku' }, haikuParts(d.theme.haiku)) : null;
     fill(body, h('div', { class: 'dfolder' }, tab, h('div', { class: 'dfolder-card' }, sharedText(d))), haiku);
+    if (haiku) {
+      fitHaiku(haiku);
+      document.fonts?.ready.then(() => haiku.isConnected && fitHaiku(haiku));
+    }
   }
 
   // Step 4: presets tapped one by one, the keyboard emoji added, the comment typed.
@@ -208,7 +270,7 @@ function demoScreen() {
       revealTop,
       h('div', { class: 'stage-card' }, h('div', { class: 'folder-card' }, h('div', { class: 'tab' }, d.theme.name), card), h('div', { class: 'more' })),
       mixEl,
-      h('div', { class: 'under' }, list, h('div', { class: 'haiku', style: `--d:${2 + comments.length * 0.5}s` }, d.theme.haiku || '')),
+      h('div', { class: 'under' }, list, h('div', { class: 'haiku', style: `--d:${2 + comments.length * 0.5}s` }, haikuParts(d.theme.haiku))),
       h('div', { class: 'bottom' }),
     );
     under.layout();
@@ -227,8 +289,12 @@ function demoScreen() {
         return;
       }
       if (shown === d.step) return;
-      // Only a forward step animates; Back and a reload show the step settled.
-      const animate = typeof shown === 'number' && d.step === shown + 1;
+      // A step forward animates, and so does the loop wrapping back to the
+      // first step, or a loop step that has only just begun (the demo
+      // arriving from the teaser). Back, and a reload mid-step, show it settled.
+      const wrapped = d.auto && shown === STEPS.length - 1 && d.step === 0;
+      const fresh = shown === null && d.auto && serverNow() - d.stepStartedAt < 2000;
+      const animate = (typeof shown === 'number' && (d.step === shown + 1 || wrapped)) || fresh;
       if (shown === 'none') fill(el, main, reveal);
       shown = d.step;
       clearTimers();
@@ -305,6 +371,45 @@ function cardFontSize(text) {
   return n < 50 ? '4.6vw' : n < 100 ? '3.8vw' : n < 150 ? '3.2vw' : '2.8vw';
 }
 
+// A haiku that looks like one: split at " / ", each segment kept whole on one
+// line, with a dimmed " /" after every segment but the last (an element, so
+// the room sees the break). Lines break only between segments. fitHaiku
+// shrinks a segment wider than its container, down to HAIKU_FLOOR of the base
+// size; past that floor, and only then, the segment wraps rather than lose words.
+const HAIKU_FLOOR = 0.7;
+
+function haikuParts(text) {
+  const segs = String(text ?? '')
+    .split(' / ')
+    .map((seg) => seg.trim())
+    .filter(Boolean);
+  return segs.flatMap((seg, i) => {
+    if (i === segs.length - 1) return [h('span', { class: 'hseg' }, seg)];
+    return [h('span', { class: 'hseg' }, seg, h('span', { class: 'hsep' }, ' /')), ' '];
+  });
+}
+
+function fitHaiku(el) {
+  const segs = [...el.querySelectorAll('.hseg')];
+  for (const seg of segs) {
+    seg.style.fontSize = '';
+    seg.classList.remove('hwrap');
+  }
+  if (!segs.length || !el.offsetParent) return; // not laid out
+  const css = getComputedStyle(el);
+  const room = el.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
+  if (room <= 0) return;
+  for (const seg of segs) {
+    let scale = 1;
+    // Text width isn't exactly proportional to font size: a few passes settle it.
+    for (let i = 0; i < 4 && seg.offsetWidth > room && scale > HAIKU_FLOOR; i++) {
+      scale = Math.max(HAIKU_FLOOR, Math.floor(scale * (room / seg.offsetWidth) * 1000) / 1000 - 0.005);
+      seg.style.fontSize = `${scale}em`;
+    }
+    if (seg.offsetWidth > room) seg.classList.add('hwrap');
+  }
+}
+
 // The emoji mix under the card: size carries the count.
 function mixRow(mix) {
   if (!mix?.length) return [];
@@ -339,6 +444,7 @@ function underCard(walk) {
     if (!under) return;
     under.style.paddingLeft = '';
     if (card?.offsetParent === walk) under.style.paddingLeft = `${Math.max(0, card.offsetLeft - under.offsetLeft)}px`;
+    walk.querySelectorAll('.haiku').forEach(fitHaiku); // its width follows that padding
   };
   const observer = new ResizeObserver(layout);
   observer.observe(walk);
@@ -440,7 +546,7 @@ function walkScreen() {
       if (overview) {
         fill(folder, h('div', { class: 'overview-title' }, 'Themes'), drawer(item.overview));
         folder.classList.add('plain');
-        more.textContent = 'First reactions? Anything surprise you?';
+        more.textContent = '';
         fill(mix);
       } else {
         // Put the tab and card back (the overview replaced them).
@@ -464,7 +570,7 @@ function walkScreen() {
       const said = item?.hidden ? { shown: [], more: 0 } : w.comments;
       fill(comments, ...said.shown.map((c) => h('div', { class: 'comment' }, c.text)));
       commentsMore.textContent = said.more > 0 ? `+${said.more} more` : '';
-      haiku.textContent = !overview && !last && item?.haiku ? item.haiku : '';
+      fill(haiku, !overview && !last && item?.haiku ? haikuParts(item.haiku) : []);
       const chip = (n, label) => h('span', { class: n ? '' : 'zero' }, `${label} ${n}`);
       fill(counts, ...(last || overview ? [] : [chip(w.stay, 'Stay'), chip(w.back, 'Go back')]));
       controls.hidden = last;
