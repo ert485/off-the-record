@@ -7,10 +7,6 @@ body { background: #000; overflow: hidden; cursor: none; }
 #corner-qr span { font-size: 1.6vw; font-weight: 600; color: var(--text); text-align: center; line-height: 1.2; }
 #corner-qr img { width: 100%; background: white; padding: 0.4vw; border-radius: 0.6vw; }
 #section { position: fixed; top: 1.6vh; left: 50%; transform: translateX(-50%); font-size: 1.8vw; color: var(--text-dim); font-variant-numeric: tabular-nums; z-index: 5; }
-.overview-title { font-size: 3vw; color: var(--text-dim); margin-bottom: 3vh; }
-.overview { display: grid; gap: 1.6vh; font-size: 3.4vw; }
-.overview div { display: flex; justify-content: center; align-items: baseline; gap: 1.5vw; }
-.overview small { font-size: 1.5vw; color: var(--text-faint); }
 .closing { animation: fade-in 1.6s ease; }
 @keyframes fade-in { from { opacity: 0; } }
 #corner-qr.hidden { display: none; }
@@ -27,24 +23,91 @@ body { background: #000; overflow: hidden; cursor: none; }
 .join .disclosure { font-size: 1.1vw; line-height: 1.45; color: var(--text-faint); max-width: 46vw; }
 .join .phones { font-size: 1.6vw; color: var(--text-faint); margin-top: 3vh; }
 
-.walk { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr auto auto; padding: 4vh 6vw 3vh; gap: 2vh; }
-.walk .top { display: flex; justify-content: space-between; font-size: 1.6vw; color: var(--text-faint); }
-.walk .theme { color: var(--accent); }
-.walk .card { align-self: center; justify-self: center; text-align: center; font-weight: 500; line-height: 1.25; max-width: 78vw; overflow-wrap: anywhere; }
-.walk .more { font-size: 1.5vw; color: var(--text-faint); text-align: center; margin-top: 1.5vh; }
-.walk .mix { display: flex; justify-content: center; align-items: flex-end; gap: 2.4vw; min-height: 9vw; }
+:root { --manila: #e6cf94; --manila-edge: #b99a4c; }
+/* Leaves room under the walk for the waiting line. */
+.walk { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr auto auto auto; padding: 3vh 6vw 8.5vh; gap: 1.4vh; }
+.walk .top { display: flex; justify-content: flex-end; font-size: 1.5vw; color: var(--text-faint); min-height: 1.6em; }
+.stage-card { align-self: center; justify-self: center; display: flex; flex-direction: column; align-items: center; max-width: 80vw; }
+
+/* A manila folder: the theme name on its tab, the card on the folder. */
+.folder-card { display: flex; flex-direction: column; align-items: flex-start; max-width: 80vw; }
+.tab {
+  background: var(--manila);
+  color: #2b2209;
+  font-size: 2.3vw;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 0.8vh 2.2vw 0.9vh;
+  margin-left: 1.5vw;
+  border-radius: 1vw 1vw 0 0;
+  border: 0.22vw solid var(--manila-edge);
+  border-bottom: 0;
+  position: relative;
+  max-width: 60vw;
+  overflow-wrap: anywhere;
+}
+/* The tab opens into the folder: its bottom edge covers the folder's top line. */
+.folder-card > .tab { margin-bottom: -0.22vw; z-index: 1; }
+.card {
+  position: relative;
+  overflow: hidden;
+  background: #1c1d22;
+  border: 0.22vw solid var(--manila-edge);
+  border-radius: 0.8vw;
+  padding: 3.2vh 3.6vw 3.8vh;
+  text-align: center;
+  font-weight: 500;
+  line-height: 1.25;
+  max-width: 80vw;
+  overflow-wrap: anywhere;
+  align-self: stretch;
+}
+.folder-card:has(> .tab[hidden]) .card { border-radius: 0.8vw; }
+.folder-card > .tab:not([hidden]) + .card { border-top-left-radius: 0; }
+.card-text { position: relative; }
+.folder-card.last .card { background: transparent; border-color: transparent; }
+.folder-card.last { align-items: center; }
+/* The one per-card clock: a bar along the bottom edge that drains. No numbers. */
+.drain { position: absolute; left: 0; bottom: 0; height: 0.7vh; width: 100%; background: var(--accent); }
+
+/* Overview: the themes as folders in a file drawer. */
+.folder-card.plain { align-items: center; }
+.overview-title { font-size: 2.6vw; color: var(--text-dim); margin-bottom: 2.4vh; text-align: center; }
+.drawer { display: grid; grid-template-columns: repeat(auto-fit, minmax(24vw, 30vw)); justify-content: center; gap: 3vh 2.4vw; width: 84vw; }
+.folder { display: flex; flex-direction: column; align-items: flex-start; }
+.folder .tab { font-size: 2.1vw; margin-bottom: -0.22vw; z-index: 1; max-width: 100%; }
+.folder-body {
+  align-self: stretch;
+  background: #1c1d22;
+  border: 0.22vw solid var(--manila-edge);
+  border-radius: 0 0.8vw 0.8vw 0.8vw;
+  padding: 1.6vh 1.6vw;
+  font-size: 2.3vw;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.walk .more { font-size: 1.6vw; color: var(--text-dim); text-align: center; margin-top: 1.2vh; min-height: 1.3em; }
+.walk .mix { display: flex; justify-content: center; align-items: flex-end; gap: 2vw; min-height: 6.5vw; }
 .walk .mix span { display: flex; flex-direction: column; align-items: center; line-height: 1; }
-.walk .mix small { font-family: var(--font); font-size: 1.2vw; color: var(--text-faint); margin-top: 0.6vh; }
-.walk .bottom { display: flex; gap: 2vw; align-items: flex-end; min-height: 4vh; padding-right: 10vw; }
+.walk .mix small { font-family: var(--font); font-size: 1.2vw; color: var(--text-faint); margin-top: 0.5vh; }
+.walk .under { display: flex; flex-direction: column; gap: 0.8vh; min-width: 0; padding-right: 14vw; }
+.comments { display: flex; flex-direction: column; gap: 0.6vh; }
+.comments .comment { font-size: 1.7vw; line-height: 1.25; background: #15161a; border-left: 0.35vw solid var(--accent); padding: 0.6vh 1.2vw; border-radius: 0 0.8vw 0.8vw 0; overflow-wrap: anywhere; }
+.comments-more { font-size: 1.5vw; color: var(--text-dim); padding-left: 1.2vw; }
+.comments-more:empty { display: none; }
+.haiku { font-size: 1.5vw; font-style: italic; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 1.2vw; }
+.haiku:empty { display: none; }
+.walk .bottom { display: flex; gap: 2vw; align-items: flex-end; min-height: 3vh; padding-right: 10vw; }
 .walk .counts { display: flex; gap: 1.2vw; font-size: 1.5vw; color: var(--text-dim); }
 .walk .counts span { background: #15161a; border-radius: 99px; padding: 0.5vh 1.1vw; }
 .walk .counts span.zero { visibility: hidden; }
-.walk .controls-line { font-size: 1.3vw; color: var(--text-faint); }
-.comments { display: flex; flex-direction: column; gap: 1vh; max-height: 34vh; overflow: hidden; justify-content: flex-end; }
-.comments .comment { font-size: 1.9vw; background: #15161a; border-left: 0.35vw solid var(--accent); padding: 1vh 1.4vw; border-radius: 0 0.8vw 0.8vw 0; animation: arrive 0.5s ease-out; overflow-wrap: anywhere; }
-@keyframes arrive { from { opacity: 0; transform: translateY(1vh); } }
-.pause-banner { font-size: 1.8vw; color: var(--accent); display: flex; gap: 1.5vw; align-items: baseline; }
-.pause-banner .clock { font-variant-numeric: tabular-nums; font-size: 2.6vw; }
+.walk .controls-line { font-size: 1.4vw; color: var(--text-faint); }
+.walk.is-last .stage-card { margin-top: 0; }
+.walk.is-last .card-text { font-size: inherit; }
+
+/* The app is waiting on the facilitator: said plainly, at the bottom. */
+.waiting { position: fixed; left: 0; right: 0; bottom: 1.8vh; text-align: center; font-size: 2.2vw; font-weight: 600; color: var(--accent); z-index: 6; pointer-events: none; }
 
 /* Finale: the emotional fingerprint */
 .stage { position: absolute; inset: 0; overflow: hidden; }
@@ -91,4 +154,3 @@ body { background: #000; overflow: hidden; cursor: none; }
 .del-cancel { color: var(--text-dim); }
 .del { background: var(--danger); color: white; font-weight: 600; }
 .cursor { position: absolute; left: 0; top: 0; width: 2.2vw; height: 2.2vw; pointer-events: none; }
-.walk .more.lastcall-sub { font-size: 2.8vw; color: var(--text-dim); margin-top: 3vh; }

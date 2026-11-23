@@ -8,6 +8,9 @@ const cornerQr = document.getElementById('corner-qr');
 const status = document.getElementById('status');
 const section = document.getElementById('section');
 let latest = null;
+// Shown while the app waits on the facilitator; never during the finale, shred or closing.
+const waiting = h('div', { class: 'waiting', hidden: true }, 'Waiting for the facilitator to confirm');
+document.body.append(waiting);
 
 // The planned time left for this part of the session: a hint for the room,
 // hidden once it runs out.
@@ -34,6 +37,7 @@ subscribe(
     }
     screen.update?.(view);
     latest = view;
+    waiting.hidden = !view.waiting || ['finale', 'shred', 'closing'].includes(view.phase);
     tickSection();
     // The join QR stays small in a corner for latecomers, and is hidden for
     // the finale, the shred and the closing.
@@ -47,12 +51,13 @@ const host = () => config.publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '
 const message = (title, sub) => ({ el: h('div', { class: 'center' }, h('div', {}, h('div', { class: 'huge' }, title), sub && h('div', { class: 'sub' }, sub))) });
 
 const SCREENS = {
+  // Task 11 draws the demo; until then, a plain title.
+  demo: () => message('Off the Record'),
   join: joinScreen,
   submit: () => message('On your phone'),
   cluster: () => message('Grouping the cards…'),
   react: () => message('On your phone'),
   walk: walkScreen,
-  lastcall: walkScreen,
   finale: finaleScreen,
   shred: shredScreen,
   closing: () => ({
@@ -97,7 +102,7 @@ function joinScreen() {
         { class: 'disclosure' },
         'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. ',
         'Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. ',
-        'I see cards before they’re shown and can remove any card or comment to prevent abuse. ',
+        'I see cards and comments before they’re shown and can remove any of them to prevent abuse. ',
         'Everything on our server is shredded tonight. Code: ',
         repo,
       ),
@@ -114,104 +119,141 @@ function joinScreen() {
   };
 }
 
-// ---- walk-through and last call ---------------------------------------------
+// ---- walk-through ------------------------------------------------------------
 
 function cardFontSize(text) {
   const n = text.length;
-  return n < 50 ? '5.6vw' : n < 100 ? '4.4vw' : n < 150 ? '3.6vw' : '3vw';
+  return n < 50 ? '4.6vw' : n < 100 ? '3.8vw' : n < 150 ? '3.2vw' : '2.8vw';
 }
 
+// The emoji mix under the card: size carries the count.
 function mixRow(mix) {
   if (!mix?.length) return [];
   const max = mix[0][1];
   return mix.slice(0, 12).map(([e, n]) => {
     // Area, not radius, carries the count.
-    const vw = 2.4 + 4.6 * Math.sqrt(n / max);
+    const vw = 2.2 + 3.8 * Math.sqrt(n / max);
     return h('span', {}, h('span', { style: { fontSize: `${vw}vw` } }, e), h('small', {}, n));
   });
 }
 
-function walkScreen(first) {
-  const last = first.phase === 'lastcall';
-  const theme = h('span', { class: 'theme' });
+// The overview: the themes as folders in a file drawer, biggest first.
+function drawer(themes) {
+  return h(
+    'div',
+    { class: 'drawer' },
+    themes.map((t) =>
+      h(
+        'div',
+        { class: 'folder' },
+        h('div', { class: 'tab' }, t.name ?? 'A theme'),
+        h('div', { class: 'folder-body' }, `${t.cards} ${t.cards === 1 ? 'card' : 'cards'}`),
+      ),
+    ),
+  );
+}
+
+function walkScreen() {
   const position = h('span');
-  const card = h('div', { class: 'card' });
+  const tab = h('div', { class: 'tab' });
+  const text = h('div', { class: 'card-text' });
+  const bar = h('div', { class: 'drain' });
+  const card = h('div', { class: 'card' }, text, bar);
+  const folder = h('div', { class: 'folder-card' }, tab, card);
   const more = h('div', { class: 'more' });
   const mix = h('div', { class: 'mix' });
   const comments = h('div', { class: 'comments' });
-  const banner = h('div', { class: 'pause-banner' });
+  const commentsMore = h('div', { class: 'comments-more' });
+  const haiku = h('div', { class: 'haiku' });
   const counts = h('div', { class: 'counts' });
-  const controls = h('div', { class: 'controls-line' }, last ? '' : 'Erik sets the pace. From your phone you can ask to stay, move on, or go back, or ask for an anonymous pause.');
+  const controls = h('div', { class: 'controls-line' }, 'From your phone you can ask to stay, or to go back a card.');
   const el = h(
     'div',
     { class: 'walk' },
-    h('div', { class: 'top' }, theme, position),
-    h('div', { style: { alignSelf: 'center' } }, card, more),
+    h('div', { class: 'top' }, position),
+    h('div', { class: 'stage-card' }, folder, more),
     mix,
-    h('div', { class: 'bottom' }, h('div', { class: 'grow stack' }, banner, comments, controls), counts),
+    h('div', { class: 'under' }, comments, commentsMore, haiku),
+    h('div', { class: 'bottom' }, h('div', { class: 'grow' }, controls), counts),
   );
-  let view = first;
+  let view = null;
+  let barWidth = null; // the last width drawn, kept while paused
+  let barIndex = null;
+  let frame = 0;
 
-  function tick() {
-    const w = view.walk;
-    if (w?.pause) {
-      const end = w.pause.graceEndsAt ?? w.pause.endsAt;
-      fill(banner, h('span', {}, w.pause.graceEndsAt ? 'Last few seconds' : 'Anonymous pause: comment from your phone'), h('span', { class: 'clock' }, formatClock(end - serverNow())));
-    } else fill(banner);
+  // The bar is full at cardStartedAt and empty at cardEndsAt; frozen while paused.
+  function drawBar() {
+    const w = view?.walk;
+    const item = w?.item;
+    const real = item && !item.overview && !item.last && !item.hidden;
+    if (!real || !w) {
+      bar.hidden = true;
+      barWidth = null;
+      return;
+    }
+    if (!w.paused && w.cardEndsAt !== null) {
+      const span = w.cardEndsAt - w.cardStartedAt;
+      barWidth = span > 0 ? Math.min(1, Math.max(0, (w.cardEndsAt - serverNow()) / span)) : 0;
+    } else if (barWidth === null || barIndex !== w.index) {
+      // Paused with nothing seen yet: a card held on arrival is full; a page
+      // opened mid-pause has no way to know, so it shows no bar.
+      barWidth = barIndex === null ? null : 1;
+    }
+    barIndex = w.index;
+    bar.hidden = barWidth === null;
+    if (barWidth !== null) bar.style.width = `${(barWidth * 100).toFixed(2)}%`;
   }
-  const interval = setInterval(tick, 500);
+  function loop() {
+    drawBar();
+    frame = requestAnimationFrame(loop);
+  }
+  frame = requestAnimationFrame(loop);
 
-  let shownComments = new Set();
   return {
     el,
     update(v) {
       view = v;
       const w = v.walk;
-      if (last) {
-        card.textContent = 'Last call';
-        card.style.fontSize = '6vw';
-        more.textContent = 'Anything else to say? Out loud, or anonymously from your phone.';
-        more.classList.add('lastcall-sub');
-      } else if (w.item?.overview) {
-        // Before the first card: what came up, biggest themes first.
-        theme.textContent = '';
-        position.textContent = '';
-        card.style.fontSize = '';
-        fill(
-          card,
-          h('div', { class: 'overview-title' }, 'Themes'),
-          h('div', { class: 'overview' }, w.item.overview.map((t) => h('div', {}, h('span', {}, t.name ?? 'A theme'), h('small', {}, `${t.cards} ${t.cards === 1 ? 'card' : 'cards'}`)))),
-        );
+      const item = w.item;
+      const overview = !!item?.overview;
+      const last = !!item?.last;
+      el.classList.toggle('is-overview', overview);
+      el.classList.toggle('is-last', last);
+      position.textContent = w.total > 2 && !overview && !last ? `${w.index} / ${w.total - 2}` : '';
+      if (overview) {
+        fill(folder, h('div', { class: 'overview-title' }, 'Themes'), drawer(item.overview));
+        folder.classList.add('plain');
         more.textContent = 'First reactions? Anything surprise you?';
         fill(mix);
       } else {
-        const item = w.item;
-        const text = item && !item.hidden ? item.text : '';
-        card.textContent = text;
-        card.style.fontSize = cardFontSize(text);
-        theme.textContent = item?.theme ?? '';
-        position.textContent = w.total > 1 ? `${w.index} / ${w.total - 1}` : '';
+        // Put the tab and card back (the overview replaced them).
+        if (folder.firstChild !== tab) fill(folder, tab, card);
+        folder.classList.remove('plain');
+        folder.classList.toggle('last', last);
+        folder.hidden = !!item?.hidden;
+        const body = last ? 'Anything else? Out loud.' : item && !item.hidden ? item.text : '';
+        text.textContent = body;
+        card.style.fontSize = last ? '6vw' : cardFontSize(body);
+        const theme = !last && item?.theme ? item.theme : '';
+        tab.textContent = theme;
+        tab.hidden = !theme;
         const bits = [];
         if (item?.similar) bits.push(`+${item.similar} similar`);
         if (item?.moreInTheme) bits.push(`+${item.moreInTheme} more like this`);
         more.textContent = bits.join(' · ');
         fill(mix, ...mixRow(item?.mix));
       }
-      // Comments arrive live; only new ones animate in.
-      const ids = new Set(w.comments.map((c) => c.id));
-      if ([...ids].some((id) => !shownComments.has(id)) || ids.size !== shownComments.size) {
-        fill(comments, ...w.comments.slice(-6).map((c) => h('div', { class: 'comment', style: shownComments.has(c.id) ? { animation: 'none' } : {} }, c.text)));
-        shownComments = ids;
-      }
+      // Comments no longer arrive live: the server sends a stable few.
+      fill(comments, ...w.comments.shown.map((c) => h('div', { class: 'comment' }, c.text)));
+      commentsMore.textContent = w.comments.more > 0 ? `+${w.comments.more} more` : '';
+      haiku.textContent = !overview && !last && item?.haiku ? item.haiku : '';
       const chip = (n, label) => h('span', { class: n ? '' : 'zero' }, `${label} ${n}`);
-      fill(counts, 
-        ...(last ? [] : [chip(w.stay, 'Stay'), chip(w.back, 'Go back')]),
-        w.pauseHeld && w.pauseRequests ? h('span', {}, 'Pause: coming up') : chip(w.pauseRequests, 'Pause'),
-      );
-      tick();
+      fill(counts, ...(last || overview ? [] : [chip(w.stay, 'Stay'), chip(w.back, 'Go back')]));
+      controls.hidden = last;
+      drawBar();
     },
     destroy() {
-      clearInterval(interval);
+      cancelAnimationFrame(frame);
     },
   };
 }
