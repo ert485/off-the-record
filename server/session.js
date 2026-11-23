@@ -1,6 +1,6 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
-import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
 import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue } from './flow.js';
 import { localPlacer } from './cluster.js';
@@ -10,7 +10,7 @@ import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 import { DEMO_STEPS, DEMO_STEP_MS, DEFAULT_TEASER } from './demo.js';
 
-export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60, haiku: 120 };
+export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 14, themeName: 60, haiku: 120 };
 // The projector shows this many comments on a card, the rest as "+N more".
 export const COMMENTS_SHOWN = 5;
 const OVERVIEW = 'overview';
@@ -727,17 +727,21 @@ export class Session {
     const client = this.client(cid);
     const found = this.findGroup(groupId);
     if (!found || this.visibleCardIds(found.group).length === 0) fail('No such card');
-    if (!Array.isArray(emojis) || emojis.length > LIMITS.emojisPerCard) fail('Too many emojis');
+    if (!Array.isArray(emojis)) fail('Reactions are emojis only');
+    if (emojis.length > LIMITS.emojisPerCard) fail(`Up to ${LIMITS.emojisPerCard} emojis on a card: remove ${emojis.length - LIMITS.emojisPerCard}`);
     const unique = [...new Set(emojis)];
     if (!unique.every(isSingleEmoji)) fail('Reactions are emojis only');
     const text = typeof comment === 'string' ? comment.trim() : '';
     if (text.length > LIMITS.commentMax) fail(`Comments are up to ${LIMITS.commentMax} characters`);
     const resend = receipt !== undefined && receipt !== null;
+    let keepId; // an edited comment keeps its id, so it keeps its place in the order
     // Clearing a card with its receipt is fine; a first send needs something.
     if (!resend && unique.length === 0 && !text) fail('Pick an emoji or write a comment');
     if (resend) {
       if (typeof receipt !== 'string' || this.s.receipts[receipt] !== groupId) fail('Nothing to change');
       this.s.reactions = this.s.reactions.filter((r) => r.r !== receipt);
+      const old = this.s.comments.find((c) => c.r === receipt);
+      keepId = old?.id;
       this.s.comments = this.s.comments.filter((c) => c.r !== receipt);
     } else {
       if (client.reacted >= this.visibleGroups().length) fail('You have reacted to every card');
@@ -746,7 +750,7 @@ export class Session {
       this.s.receipts[receipt] = groupId;
     }
     for (const e of unique) this.s.reactions.push({ g: groupId, e, r: receipt });
-    if (text && !this.s.removedComments[receipt]) this.s.comments.push({ id: this.newId(), g: groupId, text, r: receipt });
+    if (text && !this.s.removedComments[receipt]) this.s.comments.push({ id: keepId ?? this.newId(), g: groupId, text, r: receipt });
     this.changed();
     return { receipt };
   }
@@ -995,14 +999,13 @@ export class Session {
     return v;
   }
 
-  // Every comment on a card, in an order that is the same on every screen and
-  // every refresh but says nothing about when each was sent.
+  // Every comment on a card, oldest first (ids are sequential, and an edit
+  // keeps its id), so the newest are the ones counted in "+N more".
   allCommentsFor(groupId) {
-    const order = (id) => createHash('sha256').update(`${this.s.sessionId}:${id}`).digest('hex');
     return this.s.comments
       .filter((c) => c.g === groupId)
       .map(({ id, text }) => ({ id, text }))
-      .sort((a, b) => (order(a.id) < order(b.id) ? -1 : 1));
+      .sort((a, b) => Number(a.id) - Number(b.id));
   }
 
   commentsFor(groupId) {

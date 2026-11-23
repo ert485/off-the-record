@@ -5,6 +5,7 @@ import { paceMinutes, PHASES, PLAN } from '../server/phases.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+const C = 'cccccccccccccccccccccccc';
 
 // Starts at join: the demo before it is covered in flow.test.js.
 function make({ cluster, atDemo = false } = {}) {
@@ -285,7 +286,7 @@ async function sevenComments() {
   return made;
 }
 
-test('the projector shows up to 5 comments in a stable order, the rest counted', async () => {
+test('the projector shows up to 5 comments, the rest counted', async () => {
   const { session } = await sevenComments();
   const one = session.view('projector').walk.comments;
   assert.equal(one.shown.length, 5);
@@ -293,6 +294,39 @@ test('the projector shows up to 5 comments in a stable order, the rest counted',
   assert.deepEqual(Object.keys(one.shown[0]), ['id', 'text']);
   assert.deepEqual(session.view('projector').walk.comments, one);
   assert.equal(JSON.stringify(session.view('phone', { cid: A })).includes('comment 0'), false);
+});
+
+test('comments show oldest first; the newest are the ones counted in +N more', async () => {
+  const { session } = await sevenComments();
+  const { shown, more } = session.view('projector').walk.comments;
+  assert.deepEqual(shown.map((c) => c.text), [0, 1, 2, 3, 4].map((i) => `comment ${i}`));
+  assert.equal(more, 2);
+  const all = session.view('facilitator').comments.current;
+  assert.deepEqual(all.map((c) => c.text), [0, 1, 2, 3, 4, 5, 6].map((i) => `comment ${i}`));
+});
+
+test('editing a comment keeps its place', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const { receipt } = session.react(A, g, ['🙋'], null, 'first');
+  session.react(B, g, ['🙋'], null, 'second');
+  session.react(A, g, ['🙋'], receipt, 'first, edited');
+  assert.deepEqual(session.allCommentsFor(g).map((c) => c.text), ['first, edited', 'second']);
+  // A comment added on a later resend goes to the end.
+  const { receipt: rb } = session.react(C, g, ['🙋']);
+  session.react(C, g, ['🙋'], rb, 'late');
+  assert.deepEqual(session.allCommentsFor(g).map((c) => c.text), ['first, edited', 'second', 'late']);
+});
+
+test('the emoji limit says how many to remove', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const many = (n) => Array.from({ length: n }, (_, i) => String.fromCodePoint(0x1f600 + i));
+  session.react(A, g, many(14));
+  assert.throws(() => session.react(B, g, many(15)), /Up to 14 emojis on a card: remove 1$/);
+  assert.throws(() => session.react(B, g, many(17)), /remove 3$/);
 });
 
 test('the facilitator sees every comment on the current and next card, and can remove one', async () => {
