@@ -135,19 +135,13 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   await run('advance'); // react
   const groups = (await view(`role=phone&cid=${PHONES[0]}`)).react.groups;
   for (const cid of PHONES) {
-    for (const g of groups) await post('react', { cid, groupId: g.id, emojis: ['🙋', '🦆'] });
+    for (const g of groups) await post('react', { cid, groupId: g.id, emojis: ['🙋', '🦆'], comment: `comment ${MARKER}` });
     await post('reactDone', { cid });
   }
   await run('advance'); // walk
   await post('signal', { cid: PHONES[0], kind: 'stay', on: true });
-  await post('requestPause', { cid: PHONES[1], on: true });
-  await run('acceptPause');
-  await post('comment', { cid: PHONES[1], text: `comment ${MARKER}` });
-  await run('endPause');
   await run('nextCard');
   await run('advance'); // lastcall
-  await run('acceptPause');
-  await post('comment', { cid: PHONES[2], text: `last ${MARKER}` });
   await run('advance'); // finale
   assert.ok(JSON.stringify(await view('role=projector')).includes('🦆'));
 

@@ -104,13 +104,9 @@ function openStream(req, res, url) {
 
 const PHONE_ACTIONS = {
   submit: (b) => session.submitCards(b.cid, b.texts),
-  react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt),
+  react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt, b.comment),
   reactDone: (b) => session.reactDone(b.cid),
   signal: (b) => session.signal(b.cid, b.kind, b.on),
-  requestPause: (b) => session.requestPause(b.cid, b.on),
-  openComment: (b) => session.openComment(b.cid),
-  cancelComment: (b) => session.cancelComment(b.cid),
-  comment: (b) => session.submitComment(b.cid, b.text),
 };
 
 const FACILITATOR_ACTIONS = {
@@ -129,9 +125,6 @@ const FACILITATOR_ACTIONS = {
     session.reset();
   },
   hideCard: (b) => session.hideCard(b.id, b.hidden),
-  acceptPause: () => session.acceptPause(),
-  holdPause: () => session.holdPause(),
-  endPause: () => session.endPause(),
   removeComment: (b) => session.removeComment(b.id),
 };
 

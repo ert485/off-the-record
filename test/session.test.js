@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Session, normalizeClusters, PAUSE, SKIPPED } from '../server/session.js';
+import { Session, normalizeClusters, SKIPPED } from '../server/session.js';
 import { paceMinutes, PHASES } from '../server/phases.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
@@ -141,7 +141,7 @@ test('reactions are pooled per group and capped at one pass', async () => {
   assert.equal(groups.length, 3);
   session.react(A, groups[0].id, ['🙋', '🫂', '🙋']);
   session.react(A, groups[1].id, ['🦆']);
-  session.react(A, groups[2].id, []);
+  session.react(A, groups[2].id, [], null, 'no emoji for this one');
   assert.throws(() => session.react(A, groups[0].id, ['😂']), /every card/);
   assert.throws(() => session.react(B, groups[0].id, ['hello']), /emojis only/);
   session.reactDone(A);
@@ -149,19 +149,16 @@ test('reactions are pooled per group and capped at one pass', async () => {
   assert.equal(session.view('facilitator').react.done, 1);
 });
 
-test('walk-through: cards move, signals reset per card, move-on stays private', async () => {
+test('walk-through: cards move, signals reset per card, stay and back counted', async () => {
   const { session } = make();
   await toReact(session);
   session.advance();
   assert.equal(session.state.phase, 'walk');
   session.signal(A, 'stay', true);
-  session.signal(B, 'moveOn', true);
   session.signal(B, 'back', true);
   const p = session.view('projector');
   assert.equal(p.walk.stay, 1);
   assert.equal(p.walk.back, 1);
-  assert.equal(JSON.stringify(p).includes('moveOn'), false);
-  assert.equal(session.view('facilitator').walk.moveOn, 1);
   session.moveCard(1);
   assert.equal(session.view('projector').walk.stay, 0);
   session.moveCard(-1);
@@ -181,49 +178,115 @@ test('hidden cards leave the stream and the reaction stack', async () => {
   assert.equal(JSON.stringify(session.view('projector')).includes(card.text), false);
 });
 
-test('pause: ends when everyone who opened has submitted (after the minimum)', async () => {
-  const { session, clock } = make();
+// Seven phones, hex ids like the real ones.
+const PHONES = Array.from({ length: 7 }, (_, i) => String(i).repeat(24));
+
+test('a comment is sent with a card\'s reactions and stored with no author', async () => {
+  const { session } = make();
   await toReact(session);
-  session.advance();
-  session.requestPause(A, true);
-  assert.equal(session.view('projector').walk.pauseRequests, 1);
-  session.acceptPause();
-  assert.equal(session.view('projector').walk.pauseRequests, 0);
-  session.openComment(A);
-  session.openComment(B);
-  session.submitComment(A, 'me too, honestly');
-  assert.ok(session.state.pause);
-  session.submitComment(B, 'same');
-  clock.tick(PAUSE.minMs);
-  session.tick();
-  assert.equal(session.state.pause, null);
-  assert.equal(session.view('projector').walk.comments.length, 2);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  session.react(A, g, ['🙋'], null, '  ha ');
+  const { comments } = session.state;
+  assert.equal(comments.length, 1);
+  assert.deepEqual(Object.keys(comments[0]), ['id', 'g', 'text', 'r']);
+  assert.equal(comments[0].text, 'ha');
+  assert.equal(JSON.stringify(comments).includes(A), false);
 });
 
-test('pause: 90 seconds, then 20 seconds grace for anyone still typing', async () => {
-  const { session, clock } = make();
+test('sending again with the receipt replaces the reactions and the comment', async () => {
+  const { session } = make();
   await toReact(session);
-  session.advance();
-  session.acceptPause();
-  session.openComment(A);
-  clock.tick(PAUSE.maxMs);
-  session.tick();
-  assert.ok(session.state.pause.graceAt);
-  assert.throws(() => session.openComment(B), /ending/);
-  clock.tick(PAUSE.graceMs);
-  session.tick();
-  assert.equal(session.state.pause, null);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const { receipt } = session.react(A, g, ['🙋'], null, 'first');
+  session.react(A, g, ['🦆'], receipt, 'new');
+  assert.deepEqual(session.state.comments.map((c) => c.text), ['new']);
+  assert.deepEqual(session.state.reactions.map((r) => r.e), ['🦆']);
+  session.react(A, g, ['🫂'], receipt, '');
+  assert.equal(session.state.comments.length, 0);
+  assert.deepEqual(session.state.reactions.map((r) => r.e), ['🫂']);
 });
 
-test('the facilitator can remove a comment after it appears', async () => {
+test('a comment alone counts as a send; nothing at all does not', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  session.react(A, g, [], null, 'x');
+  assert.equal(session.state.comments.length, 1);
+  assert.throws(() => session.react(B, g, [], null, ''), /Pick an emoji or write a comment/);
+  assert.throws(() => session.react(B, g, []), /Pick an emoji or write a comment/);
+});
+
+test('comments are capped like cards', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  assert.throws(() => session.react(A, g, ['🙋'], null, 'x'.repeat(201)), /up to 200/);
+  session.react(A, g, ['🙋'], null, 'x'.repeat(200));
+});
+
+async function sevenComments() {
+  const made = make();
+  const { session } = made;
+  await toReact(session);
+  const groups = session.view('phone', { cid: A }).react.groups;
+  const stream = groups.map((g) => g.id);
+  PHONES.forEach((cid, i) => session.react(cid, stream[0], ['🙋'], null, `comment ${i}`));
+  session.advance(); // walk, on the overview
+  const idOf = (groupId) => session.state.walk.stream.findIndex((it) => it.groupId === groupId);
+  while (session.state.walk.index < idOf(stream[0])) session.moveCard(1);
+  return made;
+}
+
+test('the projector shows up to 5 comments in a stable order, the rest counted', async () => {
+  const { session } = await sevenComments();
+  const one = session.view('projector').walk.comments;
+  assert.equal(one.shown.length, 5);
+  assert.equal(one.more, 2);
+  assert.deepEqual(Object.keys(one.shown[0]), ['id', 'text']);
+  assert.deepEqual(session.view('projector').walk.comments, one);
+  assert.equal(JSON.stringify(session.view('phone', { cid: A })).includes('comment 0'), false);
+});
+
+test('the facilitator sees every comment on the current and next card, and can remove one', async () => {
+  const { session } = await sevenComments();
+  const f = session.view('facilitator').comments;
+  assert.equal(f.current.length, 7);
+  assert.deepEqual(f.next, []);
+  const gone = f.current[0];
+  session.removeComment(gone.id);
+  assert.equal(JSON.stringify(session.view('projector')).includes(gone.text), false);
+  assert.equal(session.view('facilitator').comments.current.length, 6);
+});
+
+test('the facilitator also sees comments on the next card', async () => {
+  const { session } = await toReactAndComment();
+  const f = session.view('facilitator').comments;
+  assert.deepEqual(f.current, []);
+  assert.equal(f.next.length, 1);
+});
+
+async function toReactAndComment() {
+  const made = make();
+  const { session } = made;
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  session.react(A, g, [], null, 'for later');
+  session.advance(); // walk, on the overview
+  while (session.currentItem().groupId !== g && session.state.walk.index < session.state.walk.stream.length - 1) {
+    const next = session.state.walk.stream[session.state.walk.index + 1];
+    if (next.groupId === g) break;
+    session.moveCard(1);
+  }
+  return made;
+}
+
+test('the anonymous pause and move on are gone', async () => {
   const { session } = make();
   await toReact(session);
   session.advance();
-  session.acceptPause();
-  session.submitComment(A, 'mean comment');
-  const id = session.state.comments[0].id;
-  session.removeComment(id);
-  assert.equal(JSON.stringify(session.state).includes('mean comment'), false);
+  assert.equal(session.requestPause, undefined);
+  assert.equal(session.acceptPause, undefined);
+  assert.throws(() => session.signal(A, 'moveOn', true), /Unknown signal/);
 });
 
 test('finale gets the reaction sequence, nothing else', async () => {
@@ -349,8 +412,8 @@ test('a phone can go back and change its reactions to a card', async () => {
   // Changing doesn't use up the one pass.
   assert.equal(session.state.clients[A].reacted, 2);
   // A receipt only works for its own card.
-  assert.throws(() => session.react(B, g2.id, [], receipt), /Nothing to change/);
-  assert.throws(() => session.react(B, g1.id, [], 'feedfacefeedface'), /Nothing to change/);
+  assert.throws(() => session.react(B, g2.id, ['🎉'], receipt), /Nothing to change/);
+  assert.throws(() => session.react(B, g1.id, ['🎉'], 'feedfacefeedface'), /Nothing to change/);
   // Receipts carry no phone id.
   assert.equal(JSON.stringify(session.state.receipts).includes(A), false);
 });

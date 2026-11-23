@@ -1,6 +1,6 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
-import { randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES } from './phases.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
@@ -8,10 +8,8 @@ import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 
 export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60 };
-// Anonymous pause: ends once everyone who opened the comment box has
-// submitted (but not before minMs, so one fast typist can't end it for
-// everyone), or at maxMs followed by a grace period for anyone still typing.
-export const PAUSE = { minMs: 15_000, maxMs: 90_000, graceMs: 20_000 };
+// The projector shows this many comments on a card, the rest as "+N more".
+export const COMMENTS_SHOWN = 5;
 const WALK_MS = (PLAN.walk[1] - PLAN.walk[0]) * 60_000;
 const OVERVIEW = 'overview';
 
@@ -25,7 +23,7 @@ const fail = (message) => {
   throw new ActionError(message);
 };
 
-const emptySignals = () => ({ stay: {}, moveOn: {}, back: {} });
+const emptySignals = () => ({ stay: {}, back: {} });
 const count = (obj) => Object.keys(obj ?? {}).length;
 
 export function freshState(now) {
@@ -54,9 +52,8 @@ export function freshState(now) {
     // Receipt -> card, so a phone can change its reactions to that card.
     receipts: {},
     walk: { stream: [], index: 0, cardStartedAt: null, signals: emptySignals() },
-    pauseRequests: {},
-    pauseHeld: false,
-    pause: null,
+    // { id, g, text, r }: no phone id. r is the card's receipt, so sending
+    // again replaces the comment along with the reactions.
     comments: [],
   };
 }
@@ -211,7 +208,6 @@ export class Session {
 
   enter(to, direction) {
     const now = this.now();
-    this.s.pause = null;
     this.s.phase = to;
     this.s.phaseStartedAt = now;
     if (to === 'submit') {
@@ -402,7 +398,8 @@ export class Session {
   // sending again with it replaces those reactions, so a phone can go back and
   // change its mind. The receipt is tied to that one card's reactions, never
   // to the phone, so reactions stay unlinkable across cards.
-  react(cid, groupId, emojis, receipt) {
+  // The optional comment travels with the reactions and is replaced with them.
+  react(cid, groupId, emojis, receipt, comment) {
     if (this.s.phase !== 'react') fail('Reactions are closed');
     const client = this.client(cid);
     const found = this.findGroup(groupId);
@@ -410,9 +407,13 @@ export class Session {
     if (!Array.isArray(emojis) || emojis.length > LIMITS.emojisPerCard) fail('Too many emojis');
     const unique = [...new Set(emojis)];
     if (!unique.every(isSingleEmoji)) fail('Reactions are emojis only');
+    const text = typeof comment === 'string' ? comment.trim() : '';
+    if (text.length > LIMITS.commentMax) fail(`Comments are up to ${LIMITS.commentMax} characters`);
+    if (unique.length === 0 && !text) fail('Pick an emoji or write a comment');
     if (receipt !== undefined && receipt !== null) {
       if (typeof receipt !== 'string' || this.s.receipts[receipt] !== groupId) fail('Nothing to change');
       this.s.reactions = this.s.reactions.filter((r) => r.r !== receipt);
+      this.s.comments = this.s.comments.filter((c) => c.r !== receipt);
     } else {
       if (client.reacted >= this.visibleGroups().length) fail('You have reacted to every card');
       client.reacted += 1;
@@ -420,6 +421,7 @@ export class Session {
       this.s.receipts[receipt] = groupId;
     }
     for (const e of unique) this.s.reactions.push({ g: groupId, e, r: receipt });
+    if (text) this.s.comments.push({ id: this.newId(), g: groupId, text, r: receipt });
     this.changed();
     return { receipt };
   }
@@ -455,86 +457,19 @@ export class Session {
     w.index = index;
     w.cardStartedAt = this.now();
     w.signals = emptySignals();
-    this.s.pause = null;
     this.changed();
   }
 
   signal(cid, kind, on) {
     if (this.s.phase !== 'walk') fail('Not in the walk-through');
-    if (!['stay', 'moveOn', 'back'].includes(kind)) fail('Unknown signal');
+    if (!['stay', 'back'].includes(kind)) fail('Unknown signal');
     this.client(cid);
     if (on) this.s.walk.signals[kind][cid] = 1;
     else delete this.s.walk.signals[kind][cid];
     this.changed();
   }
 
-  // ---- anonymous pauses -------------------------------------------------
-
-  requestPause(cid, on) {
-    if (!['walk', 'lastcall'].includes(this.s.phase)) fail('Pauses happen in the walk-through');
-    this.client(cid);
-    if (on) this.s.pauseRequests[cid] = 1;
-    else delete this.s.pauseRequests[cid];
-    if (!count(this.s.pauseRequests)) this.s.pauseHeld = false;
-    this.changed();
-  }
-
-  acceptPause() {
-    if (!['walk', 'lastcall'].includes(this.s.phase)) fail('Pauses happen in the walk-through');
-    if (this.s.pause) fail('A pause is already running');
-    this.s.pause = {
-      about: this.currentItem()?.groupId ?? null,
-      startedAt: this.now(),
-      graceAt: null,
-      opened: {},
-      submitted: {},
-    };
-    this.s.pauseRequests = {};
-    this.s.pauseHeld = false;
-    this.changed();
-  }
-
-  holdPause() {
-    this.s.pauseHeld = true;
-    this.changed();
-  }
-
-  endPause() {
-    this.s.pause = null;
-    this.changed();
-  }
-
-  openComment(cid) {
-    const p = this.s.pause;
-    if (!p) fail('No pause is running');
-    this.client(cid);
-    if (p.graceAt !== null && !p.opened[cid]) fail('The pause is ending');
-    p.opened[cid] = 1;
-    this.changed();
-  }
-
-  cancelComment(cid) {
-    const p = this.s.pause;
-    if (!p) return;
-    delete p.opened[cid];
-    this.checkPause();
-    this.changed();
-  }
-
-  submitComment(cid, text) {
-    const p = this.s.pause;
-    if (!p) fail('No pause is running');
-    this.client(cid);
-    const clean = typeof text === 'string' ? text.trim() : '';
-    if (!clean || clean.length > LIMITS.commentMax) fail(`Comments are 1 to ${LIMITS.commentMax} characters`);
-    if (p.submitted[cid]) fail('One comment per pause');
-    if (p.graceAt !== null && !p.opened[cid]) fail('The pause is ending');
-    p.opened[cid] = 1;
-    p.submitted[cid] = 1;
-    this.s.comments.push({ id: this.newId(), g: p.about, text: clean });
-    this.checkPause();
-    this.changed();
-  }
+  // ---- comments ---------------------------------------------------------
 
   removeComment(id) {
     const i = this.s.comments.findIndex((c) => c.id === id);
@@ -543,33 +478,8 @@ export class Session {
     this.changed();
   }
 
-  // Returns true when the pause state changed.
-  checkPause() {
-    const p = this.s.pause;
-    if (!p) return false;
-    const now = this.now();
-    const opened = Object.keys(p.opened);
-    const pending = opened.filter((c) => !p.submitted[c]).length;
-    if (p.graceAt === null) {
-      if (opened.length > 0 && pending === 0 && now - p.startedAt >= PAUSE.minMs) {
-        this.s.pause = null;
-        return true;
-      }
-      if (now - p.startedAt >= PAUSE.maxMs) {
-        if (pending > 0) p.graceAt = now;
-        else this.s.pause = null;
-        return true;
-      }
-    } else if (pending === 0 || now - p.graceAt >= PAUSE.graceMs) {
-      this.s.pause = null;
-      return true;
-    }
-    return false;
-  }
-
-  tick() {
-    if (this.checkPause()) this.changed();
-  }
+  // Nothing is timed any more, but the server still calls this every second.
+  tick() {}
 
   // ---- shred ------------------------------------------------------------
 
@@ -615,20 +525,6 @@ export class Session {
     return this.phoneView(cid);
   }
 
-  pauseView(cid) {
-    const p = this.s.pause;
-    if (!p) return null;
-    return {
-      about: p.about,
-      text: p.about ? this.groupText(p.about) : null,
-      startedAt: p.startedAt,
-      endsAt: p.startedAt + PAUSE.maxMs,
-      graceEndsAt: p.graceAt === null ? null : p.graceAt + PAUSE.graceMs,
-      ...(cid !== undefined && { opened: !!p.opened[cid], submitted: !!p.submitted[cid] }),
-      ...(cid === undefined && { openedCount: count(p.opened), submittedCount: count(p.submitted) }),
-    };
-  }
-
   phoneView(cid) {
     const s = this.s;
     const v = { role: 'phone', session: s.sessionId, phase: s.phase, now: this.now() };
@@ -655,18 +551,26 @@ export class Session {
         cardKey: s.phase === 'walk' ? `${s.walk.index}:${this.currentItem()?.groupId ?? ''}` : 'last',
         mine: {
           stay: !!s.walk.signals?.stay?.[cid],
-          moveOn: !!s.walk.signals?.moveOn?.[cid],
           back: !!s.walk.signals?.back?.[cid],
-          pause: !!s.pauseRequests[cid],
         },
-        pause: this.pauseView(cid ?? ''),
       };
     }
     return v;
   }
 
+  // Every comment on a card, in an order that is the same on every screen and
+  // every refresh but says nothing about when each was sent.
+  allCommentsFor(groupId) {
+    const order = (id) => createHash('sha256').update(`${this.s.sessionId}:${id}`).digest('hex');
+    return this.s.comments
+      .filter((c) => c.g === groupId)
+      .map(({ id, text }) => ({ id, text }))
+      .sort((a, b) => (order(a.id) < order(b.id) ? -1 : 1));
+  }
+
   commentsFor(groupId) {
-    return this.s.comments.filter((c) => c.g === groupId).map(({ id, text }) => ({ id, text }));
+    const all = this.allCommentsFor(groupId);
+    return { shown: all.slice(0, COMMENTS_SHOWN), more: Math.max(0, all.length - COMMENTS_SHOWN) };
   }
 
   // The themes, biggest first, with how many cards and reactions each drew.
@@ -726,9 +630,6 @@ export class Session {
         comments: this.commentsFor(s.phase === 'walk' ? (item?.groupId ?? null) : null),
         stay: s.phase === 'walk' ? count(s.walk.signals.stay) : 0,
         back: s.phase === 'walk' ? count(s.walk.signals.back) : 0,
-        pauseRequests: count(s.pauseRequests),
-        pauseHeld: s.pauseHeld,
-        pause: this.pauseView(),
       };
     }
     if (s.phase === 'finale') v.finale = { sequence: s.reactions.map((r) => r.e) };
@@ -803,13 +704,13 @@ export class Session {
       ),
       item: item ? { groupId: item.groupId, ...this.itemView(item) } : null,
       stay: count(s.walk.signals.stay),
-      moveOn: count(s.walk.signals.moveOn),
       back: count(s.walk.signals.back),
     };
-    v.pauseRequests = count(s.pauseRequests);
-    v.pauseHeld = s.pauseHeld;
-    v.pause = this.pauseView();
-    v.comments = this.commentsFor(s.phase === 'walk' ? (item?.groupId ?? null) : s.phase === 'lastcall' ? null : undefined);
+    const upcoming = s.phase === 'walk' ? s.walk.stream[s.walk.index + 1] : null;
+    v.comments = {
+      current: s.phase === 'walk' ? this.allCommentsFor(item?.groupId ?? null) : [],
+      next: upcoming && !upcoming.overview ? this.allCommentsFor(upcoming.groupId) : [],
+    };
     return v;
   }
 }
