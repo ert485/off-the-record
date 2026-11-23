@@ -361,6 +361,13 @@ function joinScreen() {
 
 // ---- walk-through ------------------------------------------------------------
 
+// A crowded walk-through card steps --crowd down from 1 to CROWD_FLOOR by
+// CROWD_STEP (fitWalk in walkScreen). The card text never goes under
+// CARD_FLOOR; the comments' and haiku's floors are in projector.css.
+const CROWD_STEP = 0.05;
+const CROWD_FLOOR = 0.5;
+const CARD_FLOOR = '2.6vw';
+
 function cardFontSize(text) {
   const n = text.length;
   return n < 50 ? '4.6vw' : n < 100 ? '3.8vw' : n < 150 ? '3.2vw' : '2.8vw';
@@ -422,8 +429,10 @@ function mixRow(mix) {
 // QR. The comments column starts at the card's left edge, wherever the centred
 // card lands; offsetLeft is the laid-out position, so the demo's entrance
 // animations (transforms) don't skew it. Re-run when the card or screen
-// resizes, and once the emoji font has loaded.
-function underCard(walk) {
+// resizes, and whenever a font finishes loading (the emoji font loads only once
+// an emoji is drawn, often after document.fonts.ready). With fit, every re-run
+// goes through it (fit calls layout itself, as often as it needs).
+function underCard(walk, fit) {
   const layout = () => {
     const mix = walk.querySelector('.mix');
     if (mix?.offsetParent) {
@@ -441,16 +450,21 @@ function underCard(walk) {
     if (card?.offsetParent === walk) under.style.paddingLeft = `${Math.max(0, card.offsetLeft - under.offsetLeft)}px`;
     walk.querySelectorAll('.haiku').forEach(fitHaiku); // its width follows that padding
   };
-  const observer = new ResizeObserver(layout);
+  const run = () => (fit ? fit(layout) : layout());
+  const observer = new ResizeObserver(run);
   observer.observe(walk);
-  document.fonts?.ready.then(layout);
+  document.fonts?.ready.then(run);
+  document.fonts?.addEventListener('loadingdone', run);
   return {
     layout() {
       const card = walk.querySelector('.card');
       if (card) observer.observe(card);
-      layout();
+      run();
     },
-    disconnect: () => observer.disconnect(),
+    disconnect() {
+      observer.disconnect();
+      document.fonts?.removeEventListener('loadingdone', run);
+    },
   };
 }
 
@@ -493,7 +507,43 @@ function walkScreen() {
     h('div', { class: 'under' }, comments, commentsMore, haiku),
     h('div', { class: 'bottom' }, h('div', { class: 'grow' }, controls), counts),
   );
-  const under = underCard(el);
+  const bottom = el.lastChild;
+  let said = { shown: [], more: 0 }; // this card's comments, oldest first
+
+  // The first n comments; the rest join the server's "+N more".
+  function drawComments(n) {
+    fill(comments, ...said.shown.slice(0, n).map((c) => h('div', { class: 'comment' }, c.text)));
+    const more = said.more + said.shown.length - n;
+    commentsMore.textContent = more > 0 ? `+${more} more` : '';
+  }
+
+  // A crowded card fits the screen: everything from the card to the counts row
+  // ends above the walk's bottom padding (kept for the waiting line). Start at
+  // the normal sizes with every comment; while it overflows, step --crowd down
+  // (the card text, comments, haiku and the gaps all scale by it, each only to
+  // its floor); if it still overflows at CROWD_FLOOR, drop
+  // comments from the newest into "+N more". Bounded: one measure per step.
+  function fitWalk(layout) {
+    el.style.removeProperty('--crowd');
+    let n = said.shown.length;
+    drawComments(n);
+    layout();
+    if (!el.offsetParent) return; // not on screen
+    const fits = () => {
+      const limit = el.getBoundingClientRect().bottom - parseFloat(getComputedStyle(el).paddingBottom);
+      return bottom.getBoundingClientRect().bottom <= limit + 0.5;
+    };
+    for (let step = 1; !fits() && 1 - step * CROWD_STEP >= CROWD_FLOOR - 1e-9; step++) {
+      el.style.setProperty('--crowd', (1 - step * CROWD_STEP).toFixed(2));
+      layout();
+    }
+    while (n > 0 && !fits()) {
+      drawComments(--n);
+      layout();
+    }
+  }
+
+  const under = underCard(el, fitWalk);
   let view = null;
   let barWidth = null; // the last width seen while the card was running
   let barIndex = null; // the card that width belongs to
@@ -551,7 +601,7 @@ function walkScreen() {
         folder.hidden = !!item?.hidden;
         const body = last ? 'Anything else? Out loud.' : item && !item.hidden ? item.text : '';
         text.textContent = body;
-        card.style.fontSize = last ? '6vw' : cardFontSize(body);
+        card.style.fontSize = last ? '6vw' : `max(${CARD_FLOOR}, calc(${cardFontSize(body)} * var(--crowd, 1)))`;
         const theme = !last && item?.theme ? item.theme : '';
         tab.textContent = theme;
         tab.hidden = !theme;
@@ -562,9 +612,8 @@ function walkScreen() {
         fill(mix, ...mixRow(item?.mix));
       }
       // Comments no longer arrive live: the server sends a stable few (none for a hidden card).
-      const said = item?.hidden ? { shown: [], more: 0 } : w.comments;
-      fill(comments, ...said.shown.map((c) => h('div', { class: 'comment' }, c.text)));
-      commentsMore.textContent = said.more > 0 ? `+${said.more} more` : '';
+      // under.layout() below draws as many of them as fit.
+      said = item?.hidden ? { shown: [], more: 0 } : w.comments;
       fill(haiku, !overview && !last && item?.haiku ? haikuParts(item.haiku) : []);
       const chip = (n, label) => h('span', { class: n ? '' : 'zero' }, `${label} ${n}`);
       fill(counts, ...(last || overview ? [] : [chip(w.stay, 'Stay'), chip(w.back, 'Go back')]));
