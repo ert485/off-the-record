@@ -125,7 +125,19 @@ function demoScreen() {
   const main = h('div', { class: 'demo-main' }, h('div', { class: 'demo-phone-wrap' }, phone), h('div', { class: 'demo-side' }, caption));
   const revealTop = h('div', { class: 'top demo-top' });
   const reveal = h('div', { class: 'walk demo-reveal', hidden: true });
-  const under = underCard(reveal);
+  // The reveal fits the screen as a crowded walk-through card does. Fewer
+  // comments hide the rest (rather than redraw them), so the ones on screen
+  // keep their entrance when a font load or resize fits it again.
+  const revealComments = () => [...reveal.querySelectorAll('.comments .comment')];
+  const under = underCard(
+    reveal,
+    crowdFit(reveal, () => revealComments().length, (n) => {
+      const all = revealComments();
+      all.forEach((c, i) => (c.hidden = i >= n));
+      const more = reveal.querySelector('.comments-more');
+      if (more) more.textContent = n < all.length ? `+${all.length - n} more` : '';
+    }),
+  );
   const el = h('div', { class: 'demo' }, main, reveal);
   const title = message('Off the Record').el; // when there is no demo content
 
@@ -255,13 +267,14 @@ function demoScreen() {
     }
   }
 
-  // Step 5: the card full size, as in the walk-through (no bar, no position).
+  // Step 5: the card full size, as in the walk-through (no bar, no position),
+  // fitted to the screen the same way.
   function revealStep(d, animate) {
     const text = sharedText(d);
     const mix = [...(d.reveal.mix ?? [])].sort((a, b) => b[1] - a[1]);
     const comments = (d.reveal.comments ?? []).slice(0, 5);
     const card = h('div', { class: 'card' }, h('div', { class: 'card-text' }, text));
-    card.style.fontSize = cardFontSize(text);
+    card.style.fontSize = crowdedCardSize(text);
     const mixEl = h('div', { class: 'mix' }, ...mixRow(mix));
     [...mixEl.children].forEach((c, i) => c.style.setProperty('--d', `${0.9 + i * 0.25}s`));
     const list = h('div', { class: 'comments' }, comments.map((c, i) => h('div', { class: 'comment', style: `--d:${1.8 + i * 0.5}s` }, c)));
@@ -270,7 +283,13 @@ function demoScreen() {
       revealTop,
       h('div', { class: 'stage-card' }, h('div', { class: 'folder-card' }, h('div', { class: 'tab' }, d.theme.name), card), h('div', { class: 'more' })),
       mixEl,
-      h('div', { class: 'under' }, list, h('div', { class: 'haiku', style: `--d:${2 + comments.length * 0.5}s` }, haikuParts(d.theme.haiku))),
+      h(
+        'div',
+        { class: 'under' },
+        list,
+        h('div', { class: 'comments-more', style: `--d:${1.8 + comments.length * 0.5}s` }),
+        h('div', { class: 'haiku', style: `--d:${2 + comments.length * 0.5}s` }, haikuParts(d.theme.haiku)),
+      ),
       h('div', { class: 'bottom' }),
     );
     under.layout();
@@ -369,7 +388,7 @@ function joinScreen() {
 // ---- walk-through ------------------------------------------------------------
 
 // A crowded walk-through card steps --crowd down from 1 to CROWD_FLOOR by
-// CROWD_STEP (fitWalk in walkScreen). The card text never goes under
+// CROWD_STEP (crowdFit). The card text never goes under
 // CARD_FLOOR; the comments' and haiku's floors are in projector.css.
 const CROWD_STEP = 0.05;
 const CROWD_FLOOR = 0.5;
@@ -378,6 +397,43 @@ const CARD_FLOOR = '2.6vw';
 function cardFontSize(text) {
   const n = text.length;
   return n < 50 ? '4.6vw' : n < 100 ? '3.8vw' : n < 150 ? '3.2vw' : '2.8vw';
+}
+
+// The card text's size on a card that may be crowded: scaled by --crowd, never under CARD_FLOOR.
+function crowdedCardSize(text) {
+  return `max(${CARD_FLOOR}, calc(${cardFontSize(text)} * var(--crowd, 1)))`;
+}
+
+// A crowded card fits the screen (the walk-through's, and the demo's reveal,
+// which uses the same layout): everything from the card to the .bottom row
+// ends above the walk's bottom padding (kept for the waiting line). Start at
+// the normal sizes with every comment; while it overflows, step --crowd down
+// (the card text, comments, haiku and the gaps all scale by it, each only to
+// its floor); if it still overflows at CROWD_FLOOR, show fewer comments,
+// dropping the newest into "+N more" (show(n) draws the first n of count()).
+// The haiku sits under the comments, so it is never what's cut. Bounded: one
+// measure per step. Returns the fit that underCard runs.
+function crowdFit(walk, count, show) {
+  return (layout) => {
+    walk.style.removeProperty('--crowd');
+    let n = count();
+    show(n);
+    layout();
+    const bottom = walk.querySelector('.bottom');
+    if (!walk.offsetParent || !bottom) return; // not on screen
+    const fits = () => {
+      const limit = walk.getBoundingClientRect().bottom - parseFloat(getComputedStyle(walk).paddingBottom);
+      return bottom.getBoundingClientRect().bottom <= limit + 0.5;
+    };
+    for (let step = 1; !fits() && 1 - step * CROWD_STEP >= CROWD_FLOOR - 1e-9; step++) {
+      walk.style.setProperty('--crowd', (1 - step * CROWD_STEP).toFixed(2));
+      layout();
+    }
+    while (n > 0 && !fits()) {
+      show(--n);
+      layout();
+    }
+  };
 }
 
 // A haiku that looks like one: split at " / ", each segment kept whole on one
@@ -514,7 +570,6 @@ function walkScreen() {
     h('div', { class: 'under' }, comments, commentsMore, haiku),
     h('div', { class: 'bottom' }, h('div', { class: 'grow' }, controls), counts),
   );
-  const bottom = el.lastChild;
   let said = { shown: [], more: 0 }; // this card's comments, oldest first
 
   // The first n comments; the rest join the server's "+N more".
@@ -524,33 +579,8 @@ function walkScreen() {
     commentsMore.textContent = more > 0 ? `+${more} more` : '';
   }
 
-  // A crowded card fits the screen: everything from the card to the counts row
-  // ends above the walk's bottom padding (kept for the waiting line). Start at
-  // the normal sizes with every comment; while it overflows, step --crowd down
-  // (the card text, comments, haiku and the gaps all scale by it, each only to
-  // its floor); if it still overflows at CROWD_FLOOR, drop
-  // comments from the newest into "+N more". Bounded: one measure per step.
-  function fitWalk(layout) {
-    el.style.removeProperty('--crowd');
-    let n = said.shown.length;
-    drawComments(n);
-    layout();
-    if (!el.offsetParent) return; // not on screen
-    const fits = () => {
-      const limit = el.getBoundingClientRect().bottom - parseFloat(getComputedStyle(el).paddingBottom);
-      return bottom.getBoundingClientRect().bottom <= limit + 0.5;
-    };
-    for (let step = 1; !fits() && 1 - step * CROWD_STEP >= CROWD_FLOOR - 1e-9; step++) {
-      el.style.setProperty('--crowd', (1 - step * CROWD_STEP).toFixed(2));
-      layout();
-    }
-    while (n > 0 && !fits()) {
-      drawComments(--n);
-      layout();
-    }
-  }
-
-  const under = underCard(el, fitWalk);
+  // A crowded card fits the screen, down to the counts row (crowdFit).
+  const under = underCard(el, crowdFit(el, () => said.shown.length, drawComments));
   let view = null;
   let barWidth = null; // the last width seen while the card was running
   let barIndex = null; // the card that width belongs to
@@ -608,7 +638,7 @@ function walkScreen() {
         folder.hidden = !!item?.hidden;
         const body = last ? 'Anything else? Out loud.' : item && !item.hidden ? item.text : '';
         text.textContent = body;
-        card.style.fontSize = last ? '6vw' : `max(${CARD_FLOOR}, calc(${cardFontSize(body)} * var(--crowd, 1)))`;
+        card.style.fontSize = last ? '6vw' : crowdedCardSize(body);
         const theme = !last && item?.theme ? item.theme : '';
         tab.textContent = theme;
         tab.hidden = !theme;

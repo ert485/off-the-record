@@ -33,8 +33,11 @@ body { background: #000; overflow: hidden; cursor: none; }
    past the screen (a long emoji row shrinks to fit instead). A crowded card
    fits by --crowd (1 down to 0.5, set by projector.js): it scales the card
    text, comments and haiku, each to its floor, and the gaps and paddings
-   (to half). The bottom padding stays: the waiting line needs it. */
-.walk { --crowd: 1; position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr auto auto auto; padding: calc(3vh * var(--crowd)) 6vw 8.5vh; gap: calc(1.4vh * var(--crowd)); }
+   (to half). The bottom padding stays: the waiting line needs it. The rows
+   under the card are max-content, not auto: an auto row squeezes down to its
+   min-height when the card is crowded, and the emojis then ride up over the
+   card while the measured layout still looks as if it fits. */
+.walk { --crowd: 1; position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: max-content 1fr max-content max-content max-content; padding: calc(3vh * var(--crowd)) 6vw 8.5vh; gap: calc(1.4vh * var(--crowd)); }
 .walk .top { display: flex; justify-content: flex-end; font-size: 1.5vw; color: var(--text-faint); min-height: 1.6em; }
 .stage-card { align-self: center; justify-self: center; display: flex; flex-direction: column; align-items: center; max-width: 80vw; }
 
@@ -260,7 +263,7 @@ body { background: #000; overflow: hidden; cursor: none; }
 .demo .animate .dfolder-card { animation: demo-in 0.5s ease both; }
 .demo .animate.demo-reveal .card { animation: demo-grow 0.6s ease both; }
 .demo .animate.demo-reveal .mix > span { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
-.demo .animate.demo-reveal .comment, .demo .animate.demo-reveal .haiku { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
+.demo .animate.demo-reveal .comment, .demo .animate.demo-reveal .comments-more, .demo .animate.demo-reveal .haiku { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
 @keyframes demo-in { from { opacity: 0; transform: translateY(14px); } }
 @keyframes demo-drop { from { opacity: 0; transform: translateY(-14px); } }
 @keyframes demo-grow { from { opacity: 0; transform: scale(0.94); } }
