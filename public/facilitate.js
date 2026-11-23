@@ -17,6 +17,7 @@ const bar = document.getElementById('bar');
 const toasts = document.getElementById('toasts');
 
 const LABELS = {
+  teaser: 'Teaser',
   demo: 'Demo',
   join: 'Join',
   submit: 'Submissions',
@@ -30,6 +31,7 @@ const LABELS = {
 
 // What the move buttons say: a verb for where you're going.
 const FORWARD = {
+  demo: 'Start the demo',
   join: 'Start',
   submit: 'Open submissions',
   cluster: 'Group the cards',
@@ -38,6 +40,7 @@ const FORWARD = {
   finale: 'Show the finale',
 };
 const BACK_TO = {
+  teaser: 'the teaser',
   demo: 'the demo',
   join: 'the join screen',
   submit: 'submissions',
@@ -418,20 +421,30 @@ function themeDrafts(v) {
 // ---- phases ----------------------------------------------------------------
 
 const PHASES = {
+  teaser: (v) => {
+    const t = v.teaser ?? { title: '', lines: [] };
+    const i = info('teaser', 'Phones and the projector show this until you start the demo. Start it when people begin to arrive; it plays on a loop.');
+    return {
+      now: now('Teaser', [' on the projector and phones ', i.button], undefined, '', i.text),
+      content: [h('div', { class: 'label' }, 'As the room sees it'), h('div', { class: 'current' }, h('b', {}, t.title), t.lines.map((l) => h('p', {}, l)))],
+    };
+  },
+
   demo: (v) => {
     const d = v.demo;
     if (!d) return { content: h('p', { class: 'dim' }, 'Talk through the app, then start the session.') };
-    const stepInfo = info('demo', 'The demo is a short scripted tour on the projector; phones show only “Starting soon” until you start the session. Next shows the next step; Back goes to the one before.');
+    const stepInfo = info('demo', 'It loops by itself while people arrive. Back, Next, or starting the talk clock stops the loop and puts you in control; Play on a loop starts it again.');
     return {
       now: now(
         d.name,
-        [` step ${d.step + 1} of ${d.steps} `, stepInfo.button],
+        [d.auto ? ' Playing on a loop ' : ` Paused on step ${d.step + 1} of ${d.steps} `, stepInfo.button],
         undefined,
         '',
         stepInfo.text,
         h('div', { class: 'nav' },
           h('button', { disabled: d.step === 0, onclick: () => act('demoBack', { from: d.step }) }, '◀ Back'),
           h('button', { class: 'primary', disabled: d.step >= d.steps - 1, onclick: () => act('demoNext', { from: d.step }) }, 'Next ▶')),
+        d.auto ? '' : h('button', { class: 'loop-btn', onclick: () => act('demoAuto', { on: true }) }, 'Play on a loop'),
       ),
     };
   },
