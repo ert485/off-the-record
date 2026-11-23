@@ -4,7 +4,7 @@ Nov 22, 2026 (rewritten from the Nov 21 draft) · for the Nov 25 DevTalk run · 
 
 ## Intent
 
-What success sounds like, from someone leaving the room: **"Look at all these people I could be friends with,"** and **"I don't feel so alone, or so scared of what's coming."** The retro is a way to meet each other: people meet the cards alone on their phones first, then together on the projector, and the break afterward is where it turns into conversations. The tool is the open-source part; the talk is the invitation.
+What success sounds like, from someone leaving the room: **"Look at all these people I could be friends with,"** and **"I don't feel so alone, or so scared of what's coming."** The retro is a way to meet each other: people meet the cards alone on their phones first, then together on the projector, and the time after the event is where it turns into conversations. The tool is the open-source part; the talk is the invitation.
 
 What the practice runs and reflection since changed:
 
@@ -124,8 +124,8 @@ What the practice runs and reflection since changed:
 ### Said aloud, not built
 
 - At Join: "Anything from funny to heavy belongs here; both are welcome."
-- At the end of the walk-through or closing: "If a card hit you, the break is next. Go find someone and say 'that was me too.'"
-- The facilitator's closing slides invite new connections, not only show existing ones.
+- At the end of the walk-through or closing: "If a card hit you, find someone after the event and tell them 'that was me too.'"
+- The facilitator's closing slides invite new connections, not only show existing ones: people who want to build community and share how things really feel, in retros like this and beyond, with a way to reach the facilitator after the event.
 
 ## Repo easter eggs
 
