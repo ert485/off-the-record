@@ -121,8 +121,7 @@ function demoScreen() {
   const body = h('div', { class: 'dscreen' });
   const phone = h('div', { class: 'dphone' }, h('div', { class: 'dnotch' }), body);
   const caption = h('div', { class: 'demo-caption' });
-  const dots = h('div', { class: 'demo-dots' });
-  const main = h('div', { class: 'demo-main' }, h('div', { class: 'demo-phone-wrap' }, phone), h('div', { class: 'demo-side' }, caption, dots));
+  const main = h('div', { class: 'demo-main' }, h('div', { class: 'demo-phone-wrap' }, phone), h('div', { class: 'demo-side' }, caption));
   const revealTop = h('div', { class: 'top demo-top' });
   const reveal = h('div', { class: 'walk demo-reveal', hidden: true });
   const under = underCard(reveal);
@@ -304,11 +303,7 @@ function demoScreen() {
       phone.classList.toggle('animate', animate);
       reveal.classList.toggle('animate', animate);
       const text = DEMO_CAPTIONS[d.step] ?? '';
-      if (last) fill(revealTop, h('span', { class: animate ? 'cap enter' : 'cap' }, text));
-      else {
-        fill(caption, h('span', { class: animate ? 'cap enter' : 'cap' }, text));
-        fill(dots, ...DEMO_CAPTIONS.slice(0, -1).map((_, i) => h('span', { class: i === d.step ? 'on' : '' })));
-      }
+      fill(last ? revealTop : caption, h('span', { class: animate ? 'cap enter' : 'cap' }, text));
       STEPS[d.step](d, animate);
     },
     destroy() {
