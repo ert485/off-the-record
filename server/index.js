@@ -36,6 +36,7 @@ const clusterCards = createClusterer();
 const session = new Session({
   state: store.load(),
   clusterCards,
+  talkMinutes: Number(process.env.TALK_MINUTES) || undefined,
   tagCards: createNudgeTagger(),
   onChange: () => {
     store.save(session.state);
@@ -110,11 +111,13 @@ const PHONE_ACTIONS = {
 };
 
 const FACILITATOR_ACTIONS = {
-  advance: (b) => session.advance({ confirm: b.confirm === true }),
+  advance: (b) => session.advance({ confirm: b.confirm === true, from: b.from }),
   back: () => session.back(),
   nextCard: () => session.moveCard(1),
   prevCard: () => session.moveCard(-1),
   extend: () => session.extendSubmit(),
+  extendReact: () => session.extendReact(),
+  startTalk: () => session.startTalk(),
   nudges: (b) => session.setNudges(b.on),
   recluster: () => session.recluster(),
   skipClustering: () => session.skipClustering(),

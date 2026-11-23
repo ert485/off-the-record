@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Session, normalizeClusters, SKIPPED } from '../server/session.js';
-import { paceMinutes, PHASES } from '../server/phases.js';
+import { paceMinutes, PHASES, PLAN } from '../server/phases.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbbbbbbbbbbbbbb';
 
-function make({ cluster } = {}) {
+// Starts at join: the demo before it is covered in flow.test.js.
+function make({ cluster, atDemo = false } = {}) {
   let t = 1_000_000;
   const clock = { now: () => t, tick: (ms) => (t += ms) };
   let changes = 0;
@@ -18,6 +19,7 @@ function make({ cluster } = {}) {
     onShred: () => shreds++,
     shredAnimationMs: 10,
   });
+  if (!atDemo) session.advance();
   return { session, clock, changes: () => changes, shreds: () => shreds };
 }
 
@@ -33,9 +35,11 @@ async function toReact(session) {
 }
 
 test('phases advance in order and back works until the shred', () => {
-  const { session } = make();
-  assert.equal(session.state.phase, 'join');
+  const { session } = make({ atDemo: true });
+  assert.equal(session.state.phase, 'demo');
   assert.throws(() => session.back(), /Nothing to go back/);
+  session.advance();
+  assert.equal(session.state.phase, 'join');
   session.advance();
   assert.equal(session.state.phase, 'submit');
   session.back();
@@ -56,7 +60,6 @@ test('the shred needs a confirm and cannot be undone', async () => {
   const { session, shreds } = make();
   await toReact(session);
   session.advance(); // walk
-  session.advance(); // lastcall
   session.advance(); // finale
   assert.throws(() => session.advance(), /Confirm the shred/);
   session.advance({ confirm: true });
@@ -320,23 +323,24 @@ test('finale gets the reaction sequence, nothing else', async () => {
   session.react(A, g.id, ['🎉', '😢']);
   session.advance();
   session.advance();
-  session.advance();
   const v = session.view('projector');
   assert.deepEqual(v.finale.sequence, ['🎉', '😢']);
 });
 
 test('pace marker: ahead before the plan, behind after it', () => {
-  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 1 }), 1);
-  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 4 }), 0);
-  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 8 }), -2);
-  assert.ok(Math.abs(paceMinutes({ phase: 'walk', elapsedMinutes: 12, walkIndex: 0, walkLength: 10 }) + 1.55) < 1e-9);
-  assert.equal(PHASES.length, 9);
+  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 4 }), 1);
+  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 7 }), 0);
+  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 12 }), -2);
+  // Walk-through: 6 minutes over 10 steps; at 17 minutes we should be on step 2 (16.7 to 17.3).
+  assert.ok(Math.abs(paceMinutes({ phase: 'walk', elapsedMinutes: 18, walkIndex: 0, walkLength: 10 }) + 1.9) < 1e-9);
+  assert.deepEqual(PHASES, ['demo', 'join', 'submit', 'cluster', 'react', 'walk', 'finale', 'shred', 'closing']);
+  assert.deepEqual(PLAN.walk, [15.5, 21.5]);
 });
 
 test('after the shred, the closing screen comes up by itself', async () => {
   const { session } = make();
   await toReact(session);
-  for (let i = 0; i < 3; i++) session.advance();
+  for (let i = 0; i < 2; i++) session.advance();
   session.advance({ confirm: true });
   assert.equal(session.state.phase, 'shred');
   await new Promise((r) => setTimeout(r, 30));
@@ -348,14 +352,15 @@ test('a new session can start only after the shred', async () => {
   const { session } = make();
   await toReact(session);
   assert.throws(() => session.reset(), /Shred first/);
-  for (let i = 0; i < 3; i++) session.advance();
+  for (let i = 0; i < 2; i++) session.advance();
   session.advance({ confirm: true });
   session.advance();
   session.reset();
-  assert.equal(session.state.phase, 'join');
+  assert.equal(session.state.phase, 'demo');
   assert.equal(session.state.cards.length, 0);
   assert.equal(session.shredded, false);
-  session.advance();
+  session.advance(); // join
+  session.advance(); // submit
   session.submitCards(A, ['a fresh card']);
   assert.equal(session.state.cards.length, 1);
 });
@@ -414,7 +419,7 @@ test('each session has its own id, kept through the shred, new after a reset', a
   const first = session.view('phone', { cid: A }).session;
   assert.match(first, /^[0-9a-f]{16}$/);
   await toReact(session);
-  for (let i = 0; i < 3; i++) session.advance();
+  for (let i = 0; i < 2; i++) session.advance();
   session.advance({ confirm: true });
   assert.equal(session.view('phone', { cid: A }).session, first);
   session.advance();
@@ -515,7 +520,7 @@ test('going back to the walk-through does not restart its section timer', async 
   session.advance(); // walk
   const endsAt = session.view('projector').section.endsAt;
   clock.tick(120_000);
-  session.advance(); // lastcall
+  session.advance(); // finale
   clock.tick(30_000);
   session.back(); // walk
   assert.equal(session.view('projector').section.endsAt, endsAt);

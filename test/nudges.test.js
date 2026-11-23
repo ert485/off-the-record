@@ -18,7 +18,7 @@ function make(tagCards) {
 
 test('nudges start off', () => {
   const s = new Session({ clusterCards: async () => ({ themes: [] }) });
-  s.advance();
+  s.advance(); s.advance(); // demo, join: now in submit
   assert.equal(s.view('phone', { cid: cid(1) }).submit.nudge, null);
   assert.equal(s.view('facilitator').submit.nudgesOn, false);
 });
@@ -35,7 +35,7 @@ test('leastCovered picks the first uncovered direction, balancing good and hard'
 test('phones rotate every nudge until there are enough cards', async () => {
   let calls = 0;
   const s = make(async () => (calls++, {}));
-  s.advance();
+  s.advance(); s.advance(); // demo, join: now in submit
   s.submitCards(cid(1), ['one', 'two']);
   await wait(20);
   assert.equal(calls, 0);
@@ -45,7 +45,7 @@ test('phones rotate every nudge until there are enough cards', async () => {
 test('with enough cards, phones show only the least-covered nudge, or none', async () => {
   let counts = { good: 3, change: 2 };
   const s = make(async () => counts);
-  s.advance();
+  s.advance(); s.advance(); // demo, join: now in submit
   s.submitCards(cid(1), ['a', 'b', 'c']);
   s.submitCards(cid(2), ['d', 'e']);
   await wait(20);
@@ -60,7 +60,7 @@ test('with enough cards, phones show only the least-covered nudge, or none', asy
 test('turning nudges off hides them; hidden cards are never tagged', async () => {
   let sent;
   const s = make(async (cards) => ((sent = cards), {}));
-  s.advance();
+  s.advance(); s.advance(); // demo, join: now in submit
   s.submitCards(cid(1), ['a', 'b', 'c']);
   s.submitCards(cid(2), ['d', 'e', 'secret']);
   s.hideCard(s.state.cards.find((c) => c.text === 'secret').id, true);

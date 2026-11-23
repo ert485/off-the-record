@@ -1,5 +1,6 @@
 // The projector. Shows only what the room should see; it has no controls.
 import { subscribe, fill, h, formatClock, serverNow } from './shared/client.js';
+import { START_DELAY_MS, REPLAY_MS, STEP_MS, MAX_PARTICLES, POOL_DELAY_MS, POOL_MS } from './shared/finale-timing.js';
 import { cardSheets, shredTimeline, PRELUDE_MS, FIRST_SHEET_MS, PULL_MS, SHEET_GAP_MS, FADE_MS } from './shared/shred-timing.js';
 
 const app = document.getElementById('app');
@@ -222,8 +223,6 @@ function walkScreen(first) {
 // as its pool, so pooling reads as the particles merging, not a jump in scale.
 // No numbers, no words.
 
-const REPLAY_MS = 10_000;
-const MAX_PARTICLES = 700;
 const MIN_POOL_PX = 28;
 
 // Pool size in px per emoji: all pools together fill about a third of the
@@ -246,7 +245,7 @@ function finaleScreen(v) {
   const timers = [];
   const later = (fn, ms) => timers.push(setTimeout(fn, ms));
   const sequence = v.finale?.sequence ?? [];
-  if (sequence.length) later(() => replay(sequence, stage, later), 1200);
+  if (sequence.length) later(() => replay(sequence, stage, later), START_DELAY_MS);
   return {
     el: stage,
     destroy() {
@@ -262,7 +261,7 @@ function replay(sequence, stage, later) {
   const sample = sequence.filter((_, i) => i % every === 0);
   const sizes = poolSizes(countOf(sequence), W, H);
   const sampled = countOf(sample);
-  const step = Math.min(400, REPLAY_MS / sample.length);
+  const step = Math.min(STEP_MS, REPLAY_MS / sample.length);
   const particles = [];
   sample.forEach((e, i) =>
     later(() => {
@@ -277,7 +276,7 @@ function replay(sequence, stage, later) {
       requestAnimationFrame(() => requestAnimationFrame(() => (p.style.transform = `translate(${x}px, ${y}px) scale(1)`)));
     }, i * step),
   );
-  later(() => pool(particles, sizes, stage), sample.length * step + 2000);
+  later(() => pool(particles, sizes, stage), sample.length * step + POOL_DELAY_MS);
 }
 
 function pool(particles, sizes, stage) {
@@ -303,7 +302,7 @@ function pool(particles, sizes, stage) {
     setTimeout(() => {
       for (const el of byEmoji.values()) el.style.opacity = '1';
       for (const { p } of particles) p.style.opacity = '0';
-    }, 1300);
+    }, POOL_MS);
   });
 }
 

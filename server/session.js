@@ -1,7 +1,8 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
 import { createHash, randomBytes, randomInt } from 'node:crypto';
-import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES } from './phases.js';
+import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES } from './phases.js';
+import { pendingMove } from './flow.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
 import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
@@ -26,15 +27,20 @@ const fail = (message) => {
 const emptySignals = () => ({ stay: {}, back: {} });
 const count = (obj) => Object.keys(obj ?? {}).length;
 
-export function freshState(now) {
+export function freshState(now, talkMinutes = TALK_MINUTES) {
   return {
     // Random per session. Phones compare it with the one their notes were
     // written in, and wipe notes left over from a session they missed the end of.
     sessionId: randomBytes(8).toString('hex'),
-    phase: 'join',
+    phase: 'demo',
     phaseStartedAt: now,
-    clockStart: null,
+    // The talk clock: starts with one tap, or backdated when the room moves
+    // on without it, and never restarts.
+    talk: { startedAt: null, minutes: talkMinutes },
     submitEndsAt: null,
+    reactEndsAt: null,
+    // When the room moved on from reacting, for the 10-second grace.
+    reactClosedAt: null,
     // Off until the facilitator turns them on.
     nudgesOn: false,
     // Which nudges phones show: all in turn, one label, or none (mix is varied).
@@ -93,6 +99,7 @@ export class Session {
     clusterCards,
     tagCards = null,
     nudgeQuietMs = 10_000,
+    talkMinutes = TALK_MINUTES,
     onChange = () => {},
     onShred = () => {},
     shredAnimationMs = null, // tests only: overrides the animation's length
@@ -102,6 +109,7 @@ export class Session {
     this.tagCards = tagCards;
     this.nudgeQuietMs = nudgeQuietMs;
     this.nudgeTimer = null;
+    this.talkMinutes = talkMinutes;
     this.clusterCards = clusterCards;
     this.onChange = onChange;
     this.onShred = onShred;
@@ -110,9 +118,14 @@ export class Session {
     this.closingTimer = null;
     this.clusterRun = 0;
     this.shredPayload = null;
-    this.state = state ?? freshState(now());
+    this.state = state ?? freshState(now(), talkMinutes);
     this.state.nudge ??= { mode: 'all', label: null };
     this.state.receipts ??= {};
+    if (!state?.shredded) {
+      this.state.talk ??= { startedAt: null, minutes: talkMinutes };
+      this.state.reactEndsAt ??= null;
+      this.state.reactClosedAt ??= null;
+    }
     if (!this.state.shredded) this.state.removedComments ??= {};
     this.state.sessionId ??= randomBytes(8).toString('hex');
     this.shredded = !!this.state.shredded;
@@ -190,7 +203,10 @@ export class Session {
 
   // ---- phases -----------------------------------------------------------
 
-  advance({ confirm = false } = {}) {
+  // `from` is the phase the facilitator's screen showed when they tapped. If
+  // the room has already moved on, the tap is ignored rather than skipping a part.
+  advance({ confirm = false, from } = {}) {
+    if (from !== undefined && from !== null && from !== this.s.phase) fail('Already moved on');
     const to = nextPhase(this.s.phase);
     if (!to) fail('This is the last phase');
     if (this.s.phase === 'cluster' && this.s.clustering.status === 'running') fail('Clustering is still running');
@@ -211,17 +227,22 @@ export class Session {
 
   enter(to, direction) {
     const now = this.now();
+    const from = this.s.phase;
+    if (direction === 'forward' && to !== 'demo' && this.s.talk && this.s.talk.startedAt === null) this.s.talk.startedAt = now - PLAN[to][0] * 60_000;
+    if (from === 'react' && direction === 'forward') this.s.reactClosedAt = now;
     this.s.phase = to;
     this.s.phaseStartedAt = now;
+    if (to === 'react') {
+      this.s.reactEndsAt =
+        direction === 'forward' ? now + REACT_MINUTES * 60_000 : Math.max(this.s.reactEndsAt ?? 0, now + 60_000);
+    }
     if (to === 'submit') {
-      this.s.clockStart ??= now - PLAN.submit[0] * 60_000;
       this.s.submitEndsAt =
         direction === 'forward' ? now + SUBMIT_MINUTES * 60_000 : Math.max(this.s.submitEndsAt ?? 0, now + 60_000);
     }
-    // The room's section timer starts when a part is entered going forward,
-    // so going back (from last call to the walk-through, say) doesn't
-    // restart it.
-    if ((to === 'react' || to === 'walk') && direction === 'forward') this.s.sectionStartedAt = { ...this.s.sectionStartedAt, [to]: now };
+    // The walk-through's section timer starts when it is entered going
+    // forward, so going back to it doesn't restart it.
+    if (to === 'walk' && direction === 'forward') this.s.sectionStartedAt = { ...this.s.sectionStartedAt, walk: now };
     if (to === 'cluster') this.startClustering(false);
     if (to === 'walk' && direction === 'forward') this.buildWalk();
     if (to === 'walk' && direction === 'back') this.s.walk.cardStartedAt = now;
@@ -230,6 +251,19 @@ export class Session {
   extendSubmit() {
     if (this.s.phase !== 'submit') fail('Submissions are not open');
     this.s.submitEndsAt = Math.max(this.s.submitEndsAt ?? 0, this.now()) + 60_000;
+    this.changed();
+  }
+
+  extendReact() {
+    if (this.s.phase !== 'react') fail('Reactions are not open');
+    this.s.reactEndsAt = Math.max(this.s.reactEndsAt ?? 0, this.now()) + 60_000;
+    this.changed();
+  }
+
+  // The facilitator's one tap at the start of the talk. A second is a no-op.
+  startTalk() {
+    if (this.s.talk.startedAt !== null) return;
+    this.s.talk.startedAt = this.now();
     this.changed();
   }
 
@@ -403,7 +437,8 @@ export class Session {
   // to the phone, so reactions stay unlinkable across cards.
   // The optional comment travels with the reactions and is replaced with them.
   react(cid, groupId, emojis, receipt, comment) {
-    if (this.s.phase !== 'react') fail('Reactions are closed');
+    const graceLeft = this.s.phase === 'walk' && this.s.reactClosedAt !== null && this.now() - this.s.reactClosedAt <= REACT_GRACE_MS;
+    if (this.s.phase !== 'react' && !graceLeft) fail('Reactions are closed');
     const client = this.client(cid);
     const found = this.findGroup(groupId);
     if (!found || this.visibleCardIds(found.group).length === 0) fail('No such card');
@@ -485,7 +520,8 @@ export class Session {
     this.changed();
   }
 
-  // Nothing is timed any more, but the server still calls this every second.
+  // Called every second by the server. Nothing is timed by it yet; later
+  // steps (the walk-through, early grouping) use it.
   tick() {}
 
   // ---- shred ------------------------------------------------------------
@@ -519,7 +555,7 @@ export class Session {
     clearTimeout(this.closingTimer);
     this.shredPayload = null;
     this.shredded = false;
-    this.state = freshState(this.now());
+    this.state = freshState(this.now(), this.talkMinutes);
     this.onReset();
     this.changed();
   }
@@ -551,11 +587,12 @@ export class Session {
       v.react = {
         groups: this.visibleGroups().map((g) => ({ id: g.id, texts: this.visibleCardIds(g).map((id) => this.card(id).text) })),
         done: !!c?.reactDone,
+        endsAt: s.reactEndsAt,
       };
     }
-    if (s.phase === 'walk' || s.phase === 'lastcall') {
+    if (s.phase === 'walk') {
       v.walk = {
-        cardKey: s.phase === 'walk' ? `${s.walk.index}:${this.currentItem()?.groupId ?? ''}` : 'last',
+        cardKey: `${s.walk.index}:${this.currentItem()?.groupId ?? ''}`,
         mine: {
           stay: !!s.walk.signals?.stay?.[cid],
           back: !!s.walk.signals?.back?.[cid],
@@ -623,20 +660,27 @@ export class Session {
     const sectionEnd =
       s.phase === 'submit'
         ? s.submitEndsAt
-        : ['react', 'walk'].includes(s.phase)
-          ? (s.sectionStartedAt?.[s.phase] ?? s.phaseStartedAt) + (PLAN[s.phase][1] - PLAN[s.phase][0]) * 60_000
-          : null;
+        : s.phase === 'react'
+          ? s.reactEndsAt
+          : s.phase === 'walk'
+            ? (s.sectionStartedAt?.walk ?? s.phaseStartedAt) + WALK_MS
+            : null;
     if (sectionEnd) v.section = { endsAt: sectionEnd };
-    if (s.phase === 'walk' || s.phase === 'lastcall') {
+    // The room is told the app is waiting on the facilitator, never why or
+    // how far over anything is.
+    v.waiting =
+      pendingMove(s, this.now(), { phoneCount }) !== null ||
+      (s.phase === 'cluster' && ['done', 'failed'].includes(s.clustering.status) && s.themes.some((t) => !t.approved));
+    if (s.phase === 'walk') {
       const item = this.currentItem();
       v.walk = {
         index: s.walk.index,
         total: s.walk.stream.length,
         cardStartedAt: s.walk.cardStartedAt,
         item: this.itemView(item),
-        comments: this.commentsFor(s.phase === 'walk' ? (item?.groupId ?? null) : null),
-        stay: s.phase === 'walk' ? count(s.walk.signals.stay) : 0,
-        back: s.phase === 'walk' ? count(s.walk.signals.back) : 0,
+        comments: this.commentsFor(item?.groupId ?? null),
+        stay: count(s.walk.signals.stay),
+        back: count(s.walk.signals.back),
       };
     }
     if (s.phase === 'finale') v.finale = { sequence: s.reactions.map((r) => r.e) };
@@ -658,20 +702,19 @@ export class Session {
       phones: phoneCount,
     };
     if (this.shredded) return v;
-    const elapsedMs = s.clockStart === null ? 0 : now - s.clockStart;
-    v.clock = {
-      startedAt: s.clockStart,
-      elapsedMs,
-      pace:
-        s.clockStart === null
-          ? 0
-          : paceMinutes({
-              phase: s.phase,
-              elapsedMinutes: elapsedMs / 60_000,
-              walkIndex: s.walk.index,
-              walkLength: s.walk.stream.length,
-            }),
-    };
+    const { startedAt, minutes } = s.talk;
+    v.talk = { startedAt, minutes, leftMs: startedAt === null ? minutes * 60_000 : startedAt + minutes * 60_000 - now };
+    v.pace =
+      startedAt === null
+        ? 0
+        : paceMinutes({
+            phase: s.phase,
+            elapsedMinutes: (now - startedAt) / 60_000,
+            walkIndex: s.walk.index,
+            walkLength: s.walk.stream.length,
+          });
+    // Set when a part is over and the facilitator is asked to confirm the move.
+    v.move = pendingMove(s, now, { phoneCount: phoneCount });
     v.submit = {
       endsAt: s.submitEndsAt,
       nudgesOn: s.nudgesOn,
@@ -696,6 +739,7 @@ export class Session {
     v.react = {
       done: Object.values(s.clients).filter((c) => c.reactDone).length,
       reactions: s.reactions.length,
+      endsAt: s.reactEndsAt,
     };
     const item = this.currentItem();
     v.walk = {
