@@ -83,3 +83,7 @@ ul.plain { padding-left: 18px; margin: 0; display: grid; gap: 6px; }
 .add-own { flex: 1; border-style: dashed; color: var(--text-dim); }
 .note.sent { background: transparent; border-style: dashed; color: var(--text-dim); }
 .note .tick { color: var(--ok); font-weight: 700; }
+
+.teaser { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 14px; min-height: 60vh; }
+.teaser h1 { font-size: 36px; line-height: 1.15; margin: 0; overflow-wrap: anywhere; }
+.teaser p { margin: 0; font-size: 18px; line-height: 1.4; color: var(--text-dim); overflow-wrap: anywhere; }

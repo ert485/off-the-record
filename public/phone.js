@@ -11,6 +11,7 @@ const PROMPT = 'Write down something you experienced, felt, or were surprised by
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
 // Every keyboard puts its emojis somewhere slightly different.
+const MAX_EMOJIS = 14; // the server's cap per card: 8 presets + 6 of your own
 const MAX_OWN = 6; // own-emoji chips shown on a card
 
 const EMOJI_KEYBOARD_HOWTO =
@@ -102,6 +103,14 @@ function identifierHint(text) {
 // ---- screens ----------------------------------------------------------------
 
 const SCREENS = {
+  teaser: (view) => ({
+    el: h(
+      'div',
+      { class: 'teaser' },
+      h('h1', {}, view.teaser.title),
+      view.teaser.lines.map((line) => h('p', {}, line)),
+    ),
+  }),
   demo: () => lookUp('Starting soon', 'Look up: the facilitator is showing how this works.'),
   join: () => ({
     el: h(
@@ -457,9 +466,10 @@ function reactScreen() {
         const b = h('button', { class: selected.has(e) ? 'on' : '', 'aria-pressed': String(selected.has(e)) }, h('span', { class: 'e' }, e), h('span', { class: 'l' }, label));
         b.addEventListener('click', () => {
           if (selected.has(e)) selected.delete(e);
-          else selected.add(e);
+          else if (selected.size < MAX_EMOJIS) selected.add(e);
           b.classList.toggle('on', selected.has(e));
           b.setAttribute('aria-pressed', String(selected.has(e)));
+          refreshLimit();
         });
         return b;
       }),
@@ -471,8 +481,9 @@ function reactScreen() {
       const chip = h('button', { class: `chip${selected.has(e) ? ' on' : ''}` }, e);
       chip.addEventListener('click', () => {
         if (selected.has(e)) selected.delete(e);
-        else selected.add(e);
+        else if (selected.size < MAX_EMOJIS) selected.add(e);
         chip.classList.toggle('on', selected.has(e));
+        refreshLimit();
       });
       if (first) chips.prepend(chip);
       else chips.append(chip);
@@ -482,6 +493,15 @@ function reactScreen() {
     const emojiHint = h('div', { class: 'emoji-hint', hidden: true }, 'Emojis only: switch to the emoji keyboard.');
     const howTo = h('div', { class: 'small dim', hidden: true }, EMOJI_KEYBOARD_HOWTO);
     const addOwn = h('button', { class: 'add-own' }, '＋ Add your own emoji');
+    const limitHint = h('div', { class: 'emoji-hint', hidden: true }, `Up to ${MAX_EMOJIS} on a card. Tap one to remove it, then add another.`);
+    // At the cap, whatever isn't picked can't be picked; unpicking re-enables.
+    function refreshLimit() {
+      const full = selected.size >= MAX_EMOJIS;
+      for (const b of [...grid.children, ...chips.children]) b.disabled = full && !b.classList.contains('on');
+      addOwn.disabled = full;
+      input.disabled = full;
+      limitHint.hidden = !full;
+    }
     addOwn.addEventListener('click', () => {
       addOwn.hidden = true;
       input.hidden = false;
@@ -498,6 +518,7 @@ function reactScreen() {
         return;
       }
       input.value = '';
+      if (selected.size >= MAX_EMOJIS && !selected.has(e)) return;
       const preset = PRESETS.findIndex((p) => p.e === e);
       if (preset >= 0) {
         if (!selected.has(e)) grid.children[preset].click();
@@ -521,6 +542,7 @@ function reactScreen() {
       custom.unshift(e);
       selected.add(e);
       addChip(e, true);
+      refreshLimit();
     });
 
     const comment = h('textarea', { rows: 2, maxLength: HARD_MAX, placeholder: 'Add a comment (optional)', 'aria-label': 'Add a comment' });
@@ -600,10 +622,12 @@ function reactScreen() {
       h('div', { class: 'row wrap custom-row' }, addOwn, input, chips),
       howTo,
       emojiHint,
+      limitHint,
       comment,
       commentHint,
       h('div', { class: 'row' }, back, next),
     );
+    refreshLimit();
   }
 
   return {
