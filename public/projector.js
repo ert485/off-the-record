@@ -1,6 +1,7 @@
 // The projector. Shows only what the room should see; it has no controls.
 import { subscribe, fill, h, formatClock, serverNow } from './shared/client.js';
 import { START_DELAY_MS, REPLAY_MS, STEP_MS, MAX_PARTICLES, POOL_DELAY_MS, POOL_MS } from './shared/finale-timing.js';
+import { PRESETS } from './shared/emoji.js';
 import { cardSheets, shredTimeline, PRELUDE_MS, FIRST_SHEET_MS, PULL_MS, SHEET_GAP_MS, FADE_MS } from './shared/shred-timing.js';
 
 const app = document.getElementById('app');
@@ -37,11 +38,11 @@ subscribe(
     }
     screen.update?.(view);
     latest = view;
-    waiting.hidden = !view.waiting || ['finale', 'shred', 'closing'].includes(view.phase);
+    waiting.hidden = !view.waiting || ['demo', 'finale', 'shred', 'closing'].includes(view.phase);
     tickSection();
     // The join QR stays small in a corner for latecomers, and is hidden for
-    // the finale, the shred and the closing.
-    cornerQr.classList.toggle('hidden', ['join', 'finale', 'shred', 'closing'].includes(view.phase));
+    // the demo, the finale, the shred and the closing.
+    cornerQr.classList.toggle('hidden', ['demo', 'join', 'finale', 'shred', 'closing'].includes(view.phase));
   },
   (online) => status.classList.toggle('offline', !online),
 );
@@ -51,8 +52,7 @@ const host = () => config.publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '
 const message = (title, sub) => ({ el: h('div', { class: 'center' }, h('div', {}, h('div', { class: 'huge' }, title), sub && h('div', { class: 'sub' }, sub))) });
 
 const SCREENS = {
-  // Task 11 draws the demo; until then, a plain title.
-  demo: () => message('Off the Record'),
+  demo: demoScreen,
   join: joinScreen,
   submit: () => message('On your phone'),
   cluster: () => message('Grouping the cards…'),
@@ -73,6 +73,182 @@ const SCREENS = {
     ),
   }),
 };
+
+// ---- demo: a phone drawn on the projector -------------------------------------
+// One step per "Next" on the facilitator view. Steps 1-4 happen on a drawn
+// phone (the real phone's look, scaled up so it reads from the back row);
+// step 5 is the walk-through's own card layout. Entering a step animates;
+// going Back (or reloading) shows it settled. Every timeout is cleared when
+// the step changes and when the screen is destroyed.
+
+const DEMO_CAPTIONS = [
+  'Write private notes. They never leave your phone.',
+  'Pick up to 3 to share.',
+  'The cards are grouped into themes.',
+  'React, and add a comment if you like.',
+  'Then we look at them together.',
+];
+const DEMO_PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
+const PHONE_W = 420; // the drawn phone's size in its own pixels, scaled to fit
+const PHONE_H = 780;
+
+function demoScreen() {
+  const timers = [];
+  const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+  const clearTimers = () => timers.splice(0).forEach(clearTimeout);
+
+  const body = h('div', { class: 'dscreen' });
+  const phone = h('div', { class: 'dphone' }, h('div', { class: 'dnotch' }), body);
+  const caption = h('div', { class: 'demo-caption' });
+  const dots = h('div', { class: 'demo-dots' });
+  const main = h('div', { class: 'demo-main' }, h('div', { class: 'demo-phone-wrap' }, phone), h('div', { class: 'demo-side' }, caption, dots));
+  const revealTop = h('div', { class: 'top demo-top' });
+  const reveal = h('div', { class: 'walk demo-reveal', hidden: true });
+  const el = h('div', { class: 'demo' }, main, reveal);
+  const title = message('Off the Record').el; // when there is no demo content
+
+  const fit = () => phone.style.setProperty('--s', Math.min((innerWidth * 0.4) / PHONE_W, (innerHeight * 0.94) / PHONE_H));
+  fit();
+  addEventListener('resize', fit);
+
+  const sharedText = (d) => d.notes.find((n) => n.share).text;
+  const cardText = (text) => h('div', { class: 'react-card' }, text);
+
+  // Step 1: the notepad with its private notes.
+  function notesStep(d) {
+    fill(
+      body,
+      h('h2', { class: 'pop' }, DEMO_PROMPT),
+      h('p', { class: 'small faint pop', style: '--d:0.15s' }, 'Private notes (only on this phone)'),
+      d.notes.map((n, i) => h('div', { class: 'note pop', style: `--d:${0.3 + i * 0.45}s` }, h('div', { class: 'text' }, n.text))),
+    );
+  }
+
+  // Step 2: the shared note is highlighted, then shown as a card.
+  function pickStep(d, animate) {
+    const asCard = () => fill(body, h('div', { class: 'card-wrap pop' }, cardText(sharedText(d))));
+    if (!animate) return asCard();
+    const share = h('button', { class: 'primary', disabled: true }, 'Share 1 card');
+    const rows = d.notes.map((n, i) => h('div', { class: 'note pickable pop', style: `--d:${i * 0.15}s` }, h('span', { class: 'check' }), h('span', { class: 'text' }, n.text)));
+    fill(body, rows, share);
+    later(() => {
+      rows[d.notes.findIndex((n) => n.share)].classList.add('picked');
+      share.disabled = false;
+    }, 1000);
+    later(asCard, 2600);
+  }
+
+  // Step 3: the card under its folder tab, with the theme name and haiku.
+  function groupStep(d) {
+    const tab = h('div', { class: 'dtab' }, d.theme.name);
+    const haiku = d.theme.haiku ? h('div', { class: 'dhaiku' }, d.theme.haiku.split(' / ').join('\n')) : null;
+    fill(body, h('div', { class: 'dfolder' }, tab, h('div', { class: 'dfolder-card' }, sharedText(d))), haiku);
+  }
+
+  // Step 4: presets tapped one by one, the keyboard emoji added, the comment typed.
+  function reactStep(d, animate) {
+    const r = d.react;
+    const buttons = PRESETS.map(({ e, label }) => h('button', {}, h('span', { class: 'e' }, e), h('span', { class: 'l' }, label)));
+    const taps = r.presets.map((e) => buttons[PRESETS.findIndex((p) => p.e === e)]).filter(Boolean);
+    const chips = h('div', { class: 'row wrap' });
+    const own = h('button', { class: 'chip on' }, r.own);
+    const typed = h('div', { class: 'dtextarea' });
+    const draw = (text) => {
+      typed.textContent = text || 'Add a comment (optional)';
+      typed.classList.toggle('empty', !text);
+    };
+    fill(
+      body,
+      cardText(sharedText(d)),
+      h('div', { class: 'emoji-grid' }, buttons),
+      h('div', { class: 'row wrap custom-row' }, h('button', { class: 'add-own' }, '＋ Add your own emoji'), chips),
+      typed,
+      h('div', { class: 'row' }, h('button', { class: 'grow' }, '◀ Previous'), h('button', { class: 'primary grow' }, 'Next')),
+    );
+    if (!animate) {
+      taps.forEach((b) => b.classList.add('on'));
+      chips.append(own);
+      draw(r.comment);
+      return;
+    }
+    draw('');
+    let at = 700;
+    for (const b of taps) {
+      later(() => b.classList.add('on', 'tap'), at);
+      at += 650;
+    }
+    later(() => {
+      own.classList.add('pop');
+      chips.append(own);
+    }, at);
+    at += 900;
+    // The comment appears a few characters at a time, in about 1.7 seconds.
+    const chars = Array.from(r.comment);
+    const tick = 60;
+    const per = Math.max(1, Math.ceil(chars.length / (1700 / tick)));
+    for (let n = 1; n * per - per < chars.length; n++) {
+      const upto = Math.min(n * per, chars.length);
+      later(() => draw(chars.slice(0, upto).join('')), at + n * tick);
+    }
+  }
+
+  // Step 5: the card full size, as in the walk-through (no bar, no position).
+  function revealStep(d, animate) {
+    const text = sharedText(d);
+    const mix = [...(d.reveal.mix ?? [])].sort((a, b) => b[1] - a[1]);
+    const comments = (d.reveal.comments ?? []).slice(0, 5);
+    const card = h('div', { class: 'card' }, h('div', { class: 'card-text' }, text));
+    card.style.fontSize = cardFontSize(text);
+    const mixEl = h('div', { class: 'mix' }, ...mixRow(mix));
+    [...mixEl.children].forEach((c, i) => c.style.setProperty('--d', `${0.9 + i * 0.25}s`));
+    const list = h('div', { class: 'comments' }, comments.map((c, i) => h('div', { class: 'comment', style: `--d:${1.8 + i * 0.5}s` }, c)));
+    fill(
+      reveal,
+      revealTop,
+      h('div', { class: 'stage-card' }, h('div', { class: 'folder-card' }, h('div', { class: 'tab' }, d.theme.name), card), h('div', { class: 'more' })),
+      mixEl,
+      h('div', { class: 'under' }, list, h('div', { class: 'haiku', style: `--d:${2 + comments.length * 0.5}s` }, d.theme.haiku || '')),
+      h('div', { class: 'bottom' }),
+    );
+  }
+
+  const STEPS = [notesStep, pickStep, groupStep, reactStep, revealStep];
+  let shown = null; // the step on screen, or 'none' when there is no demo content
+
+  return {
+    el,
+    update(v) {
+      const d = v.demo;
+      if (!d) {
+        if (shown !== 'none') fill(el, title);
+        shown = 'none';
+        return;
+      }
+      if (shown === d.step) return;
+      // Only a forward step animates; Back and a reload show the step settled.
+      const animate = typeof shown === 'number' && d.step === shown + 1;
+      if (shown === 'none') fill(el, main, reveal);
+      shown = d.step;
+      clearTimers();
+      const last = d.step === STEPS.length - 1;
+      main.hidden = last;
+      reveal.hidden = !last;
+      phone.classList.toggle('animate', animate);
+      reveal.classList.toggle('animate', animate);
+      const text = DEMO_CAPTIONS[d.step] ?? '';
+      if (last) fill(revealTop, h('span', { class: animate ? 'cap enter' : 'cap' }, text));
+      else {
+        fill(caption, h('span', { class: animate ? 'cap enter' : 'cap' }, text));
+        fill(dots, ...DEMO_CAPTIONS.slice(0, -1).map((_, i) => h('span', { class: i === d.step ? 'on' : '' })));
+      }
+      STEPS[d.step](d, animate);
+    },
+    destroy() {
+      clearTimers();
+      removeEventListener('resize', fit);
+    },
+  };
+}
 
 // ---- join ------------------------------------------------------------------
 

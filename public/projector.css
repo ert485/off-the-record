@@ -154,3 +154,69 @@ body { background: #000; overflow: hidden; cursor: none; }
 .del-cancel { color: var(--text-dim); }
 .del { background: var(--danger); color: white; font-weight: 600; }
 .cursor { position: absolute; left: 0; top: 0; width: 2.2vw; height: 2.2vw; pointer-events: none; }
+
+/* Demo: a phone drawn on the left, the caption on the right. The phone is laid
+   out in its own pixels (420 x 780) and scaled to fit by projector.js, so the
+   real phone's styles can be imitated here. Everything is scoped under .demo
+   so it can't touch another screen. */
+.demo { position: absolute; inset: 0; }
+.demo-main { position: absolute; inset: 0; display: grid; grid-template-columns: 44vw 1fr; align-items: center; }
+.demo-phone-wrap { position: relative; height: 100%; }
+.demo-side { padding: 0 6vw 0 1vw; }
+.demo-caption { font-size: 4.6vw; font-weight: 700; line-height: 1.15; letter-spacing: -0.01em; }
+.demo-dots { display: flex; gap: 1vw; margin-top: 5vh; }
+.demo-dots span { width: 1.2vw; height: 1.2vw; border-radius: 50%; background: var(--line); }
+.demo-dots span.on { background: var(--accent); }
+.demo .cap { display: block; }
+.demo .cap.enter { animation: demo-in 0.6s ease both; }
+.demo .walk .top.demo-top { justify-content: center; font-size: 3vw; font-weight: 700; color: var(--text); }
+
+.demo .dphone {
+  position: absolute; left: 50%; top: 50%; width: 420px; height: 780px;
+  transform: translate(-50%, -50%) scale(var(--s, 0.8));
+  background: var(--bg); border: 12px solid #2a2c33; border-radius: 60px;
+  box-shadow: 0 0 0 2px #3b3e47, 0 30px 80px rgba(0, 0, 0, 0.7); overflow: hidden;
+  font-size: 22px; line-height: 1.35;
+}
+.demo .dnotch { position: absolute; top: 12px; left: 50%; width: 110px; height: 26px; margin-left: -55px; border-radius: 14px; background: #000; z-index: 2; }
+.demo .dscreen { position: absolute; inset: 0; padding: 52px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+.demo .dscreen h2 { font-size: 25px; margin: 0; line-height: 1.3; }
+.demo .dscreen p { margin: 0; }
+.demo .dscreen button { font-size: 22px; min-height: 52px; pointer-events: none; }
+.demo .dscreen .small { font-size: 18px; }
+.demo .note { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%; color: var(--text); }
+.demo .note .text { flex: 1; }
+.demo .note .check { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); flex: none; margin-top: 2px; transition: background 0.3s, border-color 0.3s; }
+.demo .note.pickable { transition: border-color 0.3s, box-shadow 0.3s; }
+.demo .note.picked { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.demo .note.picked .check { background: var(--accent); border-color: var(--accent); }
+.demo .card-wrap { flex: 1; display: grid; align-items: center; }
+.demo .react-card { background: var(--text); color: #15161a; border-radius: 18px; padding: 22px 20px; font-size: 24px; line-height: 1.35; display: grid; place-items: center; text-align: center; overflow-wrap: anywhere; }
+.demo .card-wrap .react-card { min-height: 230px; font-size: 28px; }
+.demo .emoji-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.demo .emoji-grid button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; min-height: 84px; transition: background 0.25s, color 0.25s, transform 0.25s; }
+.demo .emoji-grid .e { font-size: 38px; line-height: 1.1; font-family: var(--emoji); }
+.demo .emoji-grid .l { font-size: 14px; color: var(--text-dim); white-space: nowrap; }
+.demo .emoji-grid button.on .l { color: var(--bg); }
+.demo .emoji-grid button.tap { animation: demo-tap 0.4s ease; }
+.demo .add-own { flex: 1; border-style: dashed; color: var(--text-dim); font-size: 19px; }
+.demo .chip { font-family: var(--emoji); font-size: 32px; padding: 4px 12px; min-height: 52px; }
+.demo .dtextarea { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-height: 100px; font-size: 22px; overflow-wrap: anywhere; }
+.demo .dtextarea.empty { color: var(--text-faint); }
+.demo .dfolder { display: flex; flex-direction: column; align-items: flex-start; margin-top: 120px; }
+.demo .dtab { background: var(--manila); color: #2b2209; font-size: 25px; font-weight: 700; padding: 6px 20px 7px; margin-left: 14px; border-radius: 12px 12px 0 0; border: 2px solid var(--manila-edge); border-bottom: 0; margin-bottom: -2px; position: relative; z-index: 1; overflow-wrap: anywhere; max-width: 330px; }
+.demo .dfolder-card { align-self: stretch; background: #1c1d22; border: 2px solid var(--manila-edge); border-radius: 0 12px 12px 12px; padding: 36px 24px; text-align: center; font-size: 28px; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere; }
+.demo .dhaiku { margin-top: 26px; font-size: 22px; font-style: italic; color: var(--text-dim); white-space: pre-line; text-align: center; }
+
+/* Entrances: only on a forward step (.animate); Back shows everything settled. */
+.demo .animate .pop { animation: demo-in 0.55s ease both; animation-delay: var(--d, 0s); }
+.demo .animate .dtab { animation: demo-drop 0.6s ease both 0.5s; }
+.demo .animate .dhaiku { animation: demo-in 0.8s ease both 1.6s; }
+.demo .animate .dfolder-card { animation: demo-in 0.5s ease both; }
+.demo .animate.demo-reveal .card { animation: demo-grow 0.6s ease both; }
+.demo .animate.demo-reveal .mix > span { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
+.demo .animate.demo-reveal .comment, .demo .animate.demo-reveal .haiku { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
+@keyframes demo-in { from { opacity: 0; transform: translateY(14px); } }
+@keyframes demo-drop { from { opacity: 0; transform: translateY(-14px); } }
+@keyframes demo-grow { from { opacity: 0; transform: scale(0.94); } }
+@keyframes demo-tap { 50% { transform: scale(1.12); } }
