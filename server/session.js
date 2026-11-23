@@ -1,8 +1,8 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
 import { createHash, randomBytes, randomInt } from 'node:crypto';
-import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES } from './phases.js';
-import { pendingMove } from './flow.js';
+import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
+import { pendingMove, walkEndsAt, cardMs, cardsLeft } from './flow.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
 import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
@@ -11,8 +11,8 @@ import { shredTimeline } from '../public/shared/shred-timing.js';
 export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60 };
 // The projector shows this many comments on a card, the rest as "+N more".
 export const COMMENTS_SHOWN = 5;
-const WALK_MS = (PLAN.walk[1] - PLAN.walk[0]) * 60_000;
 const OVERVIEW = 'overview';
+const LAST = 'last';
 
 export class ActionError extends Error {
   constructor(message) {
@@ -57,7 +57,7 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     reactions: [],
     // Receipt -> card, so a phone can change its reactions to that card.
     receipts: {},
-    walk: { stream: [], index: 0, cardStartedAt: null, signals: emptySignals() },
+    walk: { stream: [], index: 0, cardStartedAt: null, cardEndsAt: null, endsAt: null, paused: false, done: false, signals: emptySignals() },
     // { id, g, text, r }: no phone id. r is the card's receipt, so sending
     // again replaces the comment along with the reactions.
     comments: [],
@@ -240,12 +240,12 @@ export class Session {
       this.s.submitEndsAt =
         direction === 'forward' ? now + SUBMIT_MINUTES * 60_000 : Math.max(this.s.submitEndsAt ?? 0, now + 60_000);
     }
-    // The walk-through's section timer starts when it is entered going
-    // forward, so going back to it doesn't restart it.
-    if (to === 'walk' && direction === 'forward') this.s.sectionStartedAt = { ...this.s.sectionStartedAt, walk: now };
     if (to === 'cluster') this.startClustering(false);
     if (to === 'walk' && direction === 'forward') this.buildWalk();
-    if (to === 'walk' && direction === 'back') this.s.walk.cardStartedAt = now;
+    // Coming back to the walk-through holds the card until the facilitator resumes.
+    if (to === 'walk' && direction === 'back') {
+      Object.assign(this.s.walk, { paused: true, done: false, cardStartedAt: now, cardEndsAt: null });
+    }
   }
 
   extendSubmit() {
@@ -479,24 +479,68 @@ export class Session {
       id: t.id,
       groups: t.groups.map((g) => ({ id: g.id, cardCount: this.visibleCardIds(g).length })).filter((g) => g.cardCount > 0),
     }));
+    const now = this.now();
     this.s.walk = {
       // The walk-through opens on an overview of what came up, so the room
-      // can take it in before the first card.
-      stream: [{ groupId: OVERVIEW, overview: true }, ...buildStream(themes, this.reactionCounts())],
+      // can take in the whole before the first card, and closes on a last
+      // slide that invites the room to speak out loud.
+      stream: [{ groupId: OVERVIEW, overview: true }, ...buildStream(themes, this.reactionCounts()), { groupId: LAST, last: true }],
       index: 0,
-      cardStartedAt: this.now(),
+      cardStartedAt: now,
+      cardEndsAt: null,
+      endsAt: walkEndsAt(this.s.talk, now),
+      paused: false,
+      done: false,
       signals: emptySignals(),
     };
+    this.s.walk.cardEndsAt = now + cardMs(this.s.walk, now);
   }
 
-  moveCard(delta) {
+  // Shows another card and starts its clock. A paused walk holds the new card too.
+  showCard(index) {
+    const w = this.s.walk;
+    const now = this.now();
+    w.index = index;
+    w.cardStartedAt = now;
+    w.cardEndsAt = w.paused ? null : now + (w.stream[index].last ? LAST_SLIDE_MS : cardMs(w, now));
+    w.signals = emptySignals();
+  }
+
+  // `from` is the card the facilitator's screen showed when they tapped; if
+  // the walk-through has moved on, the tap is ignored (a double-tapped Next).
+  moveCard(delta, { from } = {}) {
     if (this.s.phase !== 'walk') fail('Cards move in the walk-through');
     const w = this.s.walk;
-    const index = w.index + delta;
-    if (index < 0 || index >= w.stream.length) fail(delta > 0 ? 'That was the last card' : 'This is the first card');
-    w.index = index;
-    w.cardStartedAt = this.now();
-    w.signals = emptySignals();
+    if (from !== undefined && from !== null && from !== w.index) fail('Already moved on');
+    const last = w.stream.length - 1;
+    if (delta > 0 && w.index === last) {
+      if (w.done) fail('That was the last card');
+      w.done = true;
+      w.cardEndsAt = null;
+    } else if (delta < 0 && w.done) {
+      w.done = false;
+      this.showCard(w.index);
+    } else {
+      const index = w.index + delta;
+      if (index < 0) fail('This is the first card');
+      this.showCard(index);
+    }
+    this.changed();
+  }
+
+  // Pausing holds the card; resuming gives it a fresh share. The finish time never moves.
+  pauseWalk(paused) {
+    if (this.s.phase !== 'walk') fail('Not in the walk-through');
+    const w = this.s.walk;
+    if (typeof paused !== 'boolean') fail('Pause or resume');
+    if (paused === w.paused) return;
+    w.paused = paused;
+    if (paused) w.cardEndsAt = null;
+    else if (!w.done) {
+      const now = this.now();
+      w.cardEndsAt = now + (w.stream[w.index].last ? LAST_SLIDE_MS : cardMs(w, now));
+      w.cardStartedAt = now;
+    }
     this.changed();
   }
 
@@ -520,9 +564,26 @@ export class Session {
     this.changed();
   }
 
-  // Called every second by the server. Nothing is timed by it yet; later
-  // steps (the walk-through, early grouping) use it.
-  tick() {}
+  // Called every second by the server. Each timed part has its own check;
+  // anything that isn't running does nothing.
+  tick() {
+    if (this.shredded) return;
+    if (this.s.phase === 'walk') this.tickWalk();
+  }
+
+  tickWalk() {
+    const w = this.s.walk;
+    if (w.paused || w.done) return;
+    const now = this.now();
+    const last = w.stream.length - 1;
+    if (w.index < last && now >= w.endsAt - LAST_SLIDE_MS) this.moveTo(last);
+    else if (w.cardEndsAt !== null && now >= w.cardEndsAt) this.moveCard(1);
+  }
+
+  moveTo(index) {
+    this.showCard(index);
+    this.changed();
+  }
 
   // ---- shred ------------------------------------------------------------
 
@@ -633,8 +694,14 @@ export class Session {
       .sort((a, b) => b.reactions - a.reactions || b.cards - a.cards);
   }
 
+  // Only real cards carry comments; the overview and the last slide have none.
+  commentKey(item) {
+    return item && !item.last ? item.groupId : null;
+  }
+
   itemView(item) {
     if (!item) return null;
+    if (item.last) return { last: true };
     if (item.overview) return { overview: this.overviewView() };
     const found = this.findGroup(item.groupId);
     const text = this.groupText(item.groupId);
@@ -663,7 +730,7 @@ export class Session {
         : s.phase === 'react'
           ? s.reactEndsAt
           : s.phase === 'walk'
-            ? (s.sectionStartedAt?.walk ?? s.phaseStartedAt) + WALK_MS
+            ? s.walk.endsAt
             : null;
     if (sectionEnd) v.section = { endsAt: sectionEnd };
     // The room is told the app is waiting on the facilitator, never why or
@@ -677,8 +744,10 @@ export class Session {
         index: s.walk.index,
         total: s.walk.stream.length,
         cardStartedAt: s.walk.cardStartedAt,
+        cardEndsAt: s.walk.cardEndsAt,
+        paused: s.walk.paused,
         item: this.itemView(item),
-        comments: this.commentsFor(item?.groupId ?? null),
+        comments: this.commentsFor(this.commentKey(item)),
         stay: count(s.walk.signals.stay),
         back: count(s.walk.signals.back),
       };
@@ -742,16 +811,24 @@ export class Session {
       endsAt: s.reactEndsAt,
     };
     const item = this.currentItem();
+    const inWalk = s.phase === 'walk';
     v.walk = {
       index: s.walk.index,
       total: s.walk.stream.length,
+      // Facilitator only: how many cards are left and each one's share of the time left.
+      cardsLeft: inWalk ? cardsLeft(s.walk) : null,
+      cardMs: inWalk ? cardMs(s.walk, now) : null,
       cardStartedAt: s.walk.cardStartedAt,
-      // Facilitator only: a rough per-card share of the walk-through's time.
-      budgetMs: Math.min(180_000, Math.max(20_000, WALK_MS / Math.max(1, s.walk.stream.length))),
+      cardEndsAt: s.walk.cardEndsAt,
+      endsAt: s.walk.endsAt,
+      paused: s.walk.paused,
+      done: s.walk.done,
       stream: s.walk.stream.map((it) =>
         it.overview
           ? { groupId: it.groupId, text: 'Overview: what came up', reactions: s.reactions.length }
-          : { groupId: it.groupId, text: this.groupText(it.groupId), reactions: counts.get(it.groupId) ?? 0 },
+          : it.last
+            ? { groupId: it.groupId, text: 'Last slide: Anything else? Out loud.', reactions: 0 }
+            : { groupId: it.groupId, text: this.groupText(it.groupId), reactions: counts.get(it.groupId) ?? 0 },
       ),
       item: item ? { groupId: item.groupId, ...this.itemView(item) } : null,
       stay: count(s.walk.signals.stay),
@@ -759,8 +836,8 @@ export class Session {
     };
     const upcoming = s.phase === 'walk' ? s.walk.stream[s.walk.index + 1] : null;
     v.comments = {
-      current: s.phase === 'walk' ? this.allCommentsFor(item?.groupId ?? null) : [],
-      next: upcoming && !upcoming.overview ? this.allCommentsFor(upcoming.groupId) : [],
+      current: s.phase === 'walk' ? this.allCommentsFor(this.commentKey(item)) : [],
+      next: upcoming && !upcoming.overview && !upcoming.last ? this.allCommentsFor(upcoming.groupId) : [],
     };
     return v;
   }

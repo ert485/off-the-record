@@ -22,6 +22,15 @@ export const REACT_MINUTES = 5;
 // Reactions still count this long after the room moves on.
 export const REACT_GRACE_MS = 10_000;
 
+// The walk-through runs itself. The last slide ("Anything else? Out loud.")
+// gets a fixed share, no card gets less than the floor, and the walk ends at
+// minute talk.minutes - 3.5 on the talk clock (21.5 of 25), never shorter
+// than the minimum.
+export const LAST_SLIDE_MS = 20_000;
+export const MIN_CARD_MS = 15_000;
+export const MIN_WALK_MS = 180_000;
+export const WALK_END_BEFORE_MINUTES = 3.5;
+
 export function nextPhase(phase) {
   const i = PHASES.indexOf(phase);
   return i >= 0 && i < PHASES.length - 1 ? PHASES[i + 1] : null;

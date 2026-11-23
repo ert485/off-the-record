@@ -176,7 +176,7 @@ test('hidden cards leave the stream and the reaction stack', async () => {
   const texts = session.view('phone', { cid: A }).react.groups.flatMap((g) => g.texts);
   assert.equal(texts.includes(card.text), false);
   session.advance();
-  assert.equal(session.state.walk.stream.length, 3); // the overview, then 2 cards
+  assert.equal(session.state.walk.stream.length, 4); // the overview, 2 cards, the last slide
   assert.equal(session.state.walk.stream[0].overview, true);
   assert.equal(JSON.stringify(session.view('projector')).includes(card.text), false);
 });

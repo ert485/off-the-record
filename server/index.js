@@ -113,8 +113,9 @@ const PHONE_ACTIONS = {
 const FACILITATOR_ACTIONS = {
   advance: (b) => session.advance({ confirm: b.confirm === true, from: b.from }),
   back: () => session.back(),
-  nextCard: () => session.moveCard(1),
-  prevCard: () => session.moveCard(-1),
+  nextCard: (b) => session.moveCard(1, { from: b.from }),
+  prevCard: (b) => session.moveCard(-1, { from: b.from }),
+  pauseWalk: (b) => session.pauseWalk(b.paused),
   extend: () => session.extendSubmit(),
   extendReact: () => session.extendReact(),
   startTalk: () => session.startTalk(),
