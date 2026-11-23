@@ -283,6 +283,27 @@ test('confirming before the early run finishes waits for it, then places the lat
   assert.equal(session.state.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds)).length, 5);
 });
 
+test('after a failed early run, late cards join the fallback theme without a quick call', async () => {
+  const made = make();
+  const { session, clock, cluster, place } = made;
+  await toEarlyRun(made);
+  cluster.calls[0].reject(new Error('Connection error.'));
+  await flush();
+  assert.equal(session.state.clustering.status, 'failed');
+  session.submitCards(C, ['four', 'five']);
+  clock.tick(MIN);
+  session.advance(); // cluster
+  await flush();
+  assert.equal(place.calls.length, 0);
+  assert.equal(session.state.themes.length, 1);
+  const groups = session.state.themes[0].groups;
+  assert.equal(groups.length, 5);
+  assert.ok(groups.every((g) => g.cardIds.length === 1));
+  assert.equal(session.view('projector').waiting, true); // the fallback theme still needs a name
+  session.advance(); // react: no flag to choose on
+  assert.equal(session.state.phase, 'react');
+});
+
 test('a restart during placement runs it again', async () => {
   const made = make();
   await toPlacement(made);

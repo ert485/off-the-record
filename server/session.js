@@ -460,6 +460,15 @@ export class Session {
     if (!this.s.themes.length) return this.startClustering();
     const late = this.ungroupedCards();
     if (!late.length) return;
+    // The grouping fell back to one card per group (failed, skipped, or no
+    // AI): the late cards join that theme the same way, at once, with no
+    // quick call. Retry is the way back to the AI.
+    if (c.status === 'failed' || c.local) {
+      const placements = late.map((card) => ({ cardId: card.id, themeId: this.s.themes[0].id, groupId: null }));
+      c.late = { status: 'done', placements, flags: [] };
+      this.placeLate(c.late);
+      return;
+    }
     // Flagged with nothing new since: the facilitator is choosing.
     if (c.late?.status === 'flagged') {
       const waiting = new Set(this.lateIds(c.late));
