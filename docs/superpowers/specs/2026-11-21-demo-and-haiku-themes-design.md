@@ -121,8 +121,13 @@ What the practice runs and reflection since changed:
   | high | ~38 s | Best haiku ("Strangers at the door / a folding chair, a warm plate / we become a room") |
   | max | (none) | Ran past 64,000 output tokens without finishing; not usable |
 
-- **Start grouping before submissions close** (Claude's call, from Erik's idea): at the 1-minute warning, the server starts a full grouping run at **high** effort on the cards so far. The facilitator can read and approve theme names and haiku while people finish submitting. When the facilitator confirms "Ready for grouping?", a fast **placement** call (low effort, existing themes and groups plus the new cards) puts each late card into an existing group as a near-duplicate, or into an existing theme as a new group; names and haiku stay as approved. If late cards are more than about a third of all cards, a full run at medium runs instead and the facilitator approves again. "Skip the AI" stays available throughout.
-- **Why not two full runs:** most cards arrive in the last minute or two (the warnings tell people to pick then), and a second full run would reshuffle themes the facilitator has already read, and take another 25–40 seconds while the room waits. Placement keeps the early work and is quick.
+- **Start grouping before submissions close** (Erik's design): at the 1-minute warning, the server starts a full grouping run at **high** effort on the cards so far. The facilitator can read and approve theme names and haiku while people finish submitting.
+- **Late arrivals, placed and assessed in one quick call.** When the facilitator confirms "Ready for grouping?", one **low-effort** call (aim: under 10 seconds) gets the existing themes and groups plus the cards that arrived after the run started. For each late card it returns where it goes (an existing group as a near-duplicate, or an existing theme as a new group) and whether it might change the picture: it doesn't fit any theme well, or several late cards together suggest a theme that isn't there.
+  - Nothing flagged: the late cards are placed, names and haiku stay as approved, and the facilitator approves as usual.
+  - Something flagged: the facilitator view lists just the flagged late cards, with the model's one-line reason, and two choices: **"Keep the themes and add the late arrivals"** (placed as suggested) or **"Regroup everything (~40 seconds)"** (a full high-effort run; names and haiku are approved again). The projector shows "Waiting for the facilitator to confirm" meanwhile.
+  - How many cards came late doesn't decide it; whether they'd change the themes does.
+- **Why not always regroup:** most cards arrive in the last minute or two (the warnings tell people to pick then), and a full run would reshuffle themes the facilitator has already read, and take about 40 seconds while the room waits. The quick call keeps the early work unless the facilitator decides the picture really changed.
+- **Before building, test the quick call** with the spike: split the seed cards into early and late, including a late cluster that deserves its own theme, and check it flags that and stays under 10 seconds.
 
 ### Folder tabs
 
