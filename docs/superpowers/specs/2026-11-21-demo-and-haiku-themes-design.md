@@ -1,16 +1,16 @@
-# Talk flow for Nov 25: demo stage, comments while reacting, auto-advance, haiku themes
+# Talk flow for Nov 25: demo stage, comments while reacting, a self-running flow, haiku themes
 
 Nov 22, 2026 (rewritten from the Nov 21 draft) · for the Nov 25 DevTalk run · `Off the Record DevTalk Retro Spec.md` stays the source of truth and is updated in the same commits as the build.
 
 ## Intent
 
-What success sounds like, from someone leaving the room: **"Look at all these people I could be friends with,"** and **"I don't feel so alone, or so scared of what's coming."** The retro is a way to meet each other: people meet the cards alone on their phones first, then together on the projector, and the time after the event is where it turns into conversations. The tool is the open-source part; the talk is the invitation.
+What success sounds like, from someone leaving the room: **"I didn't think a retro could get a whole room to open up that fast. Every conversation afterward went straight to the real stuff."** The retro is a way to meet each other: people meet the cards alone on their phones first, then together on the projector, and the time after the event is where it turns into conversations. The tool is the open-source part; the talk is the invitation.
 
 What the practice runs and reflection since changed:
 
 1. **The audience couldn't tell what the app wanted them to do.** Fix: a scripted demo stage, before anyone joins, that walks through the whole flow with one prepared card.
 2. **The walk-through was slow and the anonymous pauses broke its rhythm.** Fix: comments move into the reaction phase, written privately alongside the emojis. The walk-through becomes a quick reveal (closer to a party game's results screen than a discussion) where the laughs land together, with a pause button for when someone starts talking.
-3. **The facilitator had too much to run.** Fix: the app advances by itself on a talk clock, and the projector says when it's waiting on the facilitator.
+3. **The facilitator had too much to run.** Fix: the app runs each part by itself on a talk clock and asks the facilitator one question between parts ("Ready for reactions?"), while the projector says it's waiting for the facilitator.
 4. **Grouping is where the room sees itself from a distance.** Each theme gets a haiku from Claude Haiku, and theme names look like tabs on paper file folders, matching the office-records world the shredder already lives in.
 
 ## Goals
@@ -19,7 +19,7 @@ What the practice runs and reflection since changed:
 - The demo runs without fumbling: prepared content, stepped through on the projector.
 - Submissions and reactions get generous time (5 minutes each); everything else is quick.
 - Comments written while reacting, shown with their card in the walk-through.
-- The app moves itself forward; the facilitator steps in only to approve, hide, pause, go back, or confirm the shred.
+- The app runs each part by itself and prompts the facilitator when it's time to move on; the facilitator confirms each move with one tap, and otherwise steps in only to approve, hide, pause or go back.
 - The app reads as a reusable tool: "the facilitator", never "Erik", in the app and spec (talk logistics excepted).
 
 ## Non-goals (this round)
@@ -43,7 +43,7 @@ What the practice runs and reflection since changed:
 
 ## Approaches considered
 
-- **A. Demo stage, comments while reacting, auto-advance (chosen).** The demo is its own scripted step before Join, so it never touches the live session's timers or groups. Comments join the reaction step, so the walk-through needs no pauses and can run itself.
+- **A. Demo stage, comments while reacting, a self-running flow with one-tap moves (chosen).** The demo is its own scripted step before Join, so it never touches the live session's timers or groups. Comments join the reaction step, so the walk-through needs no pauses and can run itself.
 - **B. Demo through the back button, plus timing and regroup fixes** (the Nov 21 draft). Live and flexible, but four separate fixes (submission timer, pace clock, regroup, "finished reacting") and more ways to fumble on stage. Dropped once the demo stage came up.
 - **C. Keep today's flow and only add haiku and tabs.** Least work, but leaves the two problems the practice run found: a confused start and a slow walk-through.
 
@@ -51,17 +51,17 @@ What the practice runs and reflection since changed:
 
 ### Talk plan (25 minutes, on the talk clock)
 
-| Part | Where | Minutes | Advances |
+| Part | Where | Minutes | Moving on |
 | --- | --- | --- | --- |
 | Intro: who's talking, "show of hands: who's done a retro?", a throwback | Facilitator's slides | 0–1.5 | Facilitator switches to the projector tab |
 | Demo | App: demo stage | 1.5–3.5 | Facilitator steps through; then "Start ▶" to Join |
 | Join + trust disclosure | App | 3.5–5 | Facilitator |
-| Submit | App | 5–10 | Automatically at time; "+1 minute" as today |
-| Group + approve themes | App | 10–10.5 | Automatically once grouping is done and every theme is approved |
-| React + comment | App | 10.5–15.5 | Automatically at time; "+1 minute" |
-| Walk-through (reveal) | App | 15.5–21.5 | Cards advance by themselves; pause, back, next |
-| Finale | App | 21.5–22.5 | Automatically to the shred confirm |
-| Shred | App | 22.5–23.5 | Facilitator confirms (never automatic) |
+| Submit | App | 5–10 | Prompt at time: "Ready for grouping?"; "+1 minute" as today |
+| Group + approve themes | App | 10–10.5 | One tap: "Approve all and start reactions ▶" |
+| React + comment | App | 10.5–15.5 | Prompt at time, or as soon as everyone has finished: "Ready for the walk-through?"; "+1 minute" |
+| Walk-through (reveal) | App | 15.5–21.5 | Cards advance by themselves (pause, back, next); prompt at the end: "Ready for the finale?" |
+| Finale | App | 21.5–22.5 | Prompt when it's done: "Ready to shred?" (with the confirm, as today) |
+| Shred | App | 22.5–23.5 | Closing fades in by itself, as today |
 | Closing + feedback QR, then the facilitator's own closing slides | App, then slides | 23.5–24.5 | Facilitator |
 | Buffer | | 24.5–25 | |
 
@@ -89,20 +89,21 @@ What the practice runs and reflection since changed:
 - **Facilitator review:** the facilitator view shows the comments on the current card and the next one, each with Remove, so a comment can be removed before it's ever projected. The trust disclosure says the facilitator can remove any card or comment.
 - **Removed:** the anonymous pause (request, hold, the pause comment box on phones, the projector's pause view, the facilitator's pause controls) and the server code behind it.
 
-### Auto-advance and "waiting on the facilitator"
+### The app runs each part; the facilitator confirms each move
 
-- Parts advance on their own as in the table. The facilitator can always go back a part, skip ahead, or add a minute to submit or react; participants can still suggest going back (counted on the projector).
+- **Between parts, the facilitator confirms.** When a part's time is up (or earlier, when the app knows the part is done: everyone finished reacting, the walk-through reached its end, the finale finished), the facilitator view shows one prominent prompt ("Ready for the walk-through? ▶") and the projector shows "Waiting for the facilitator to confirm". Until the facilitator taps it, the part stays open: phones can still submit or react, so the prompt is never a deadline for the room. The facilitator can also move on before the prompt, go back a part, or add a minute to submit or react; participants can still suggest going back (counted on the projector).
+- **Inside a part, the app runs itself:** the walk-through's cards advance on their own (below); the submit and react timers count down with warnings.
 - **Walk-through** (Claude's calls, from "a quick run-through with a back/pause button"):
   - The finish time is fixed (minute 21.5 on the talk clock); the talk clock is the guarantee. A pause doesn't push it back: it eats into later cards' time.
   - Each card's time is the walk-through's time left (minus 20 seconds kept for the last slide) divided by the cards left, recomputed whenever a card changes, never less than 15 seconds.
-  - When the time runs out with cards left, it goes to the last slide ("Anything else? Out loud.", 20 seconds), then the finale starts by itself. The skipped cards' reactions still count in the finale. The facilitator view shows "N cards left · ~M:SS each" throughout, so skipping is never a surprise, and Back still works.
+  - When the time runs out with cards left, it goes to the last slide ("Anything else? Out loud.", 20 seconds), then prompts the facilitator: "Ready for the finale?". The skipped cards' reactions still count in the finale. The facilitator view shows "N cards left · ~M:SS each" throughout, so skipping is never a surprise, and Back still works.
   - The projector shows a thin bar on each card that drains as its time runs (no numbers), so someone speaking can see it coming and the facilitator can pause. This is the one place the room sees per-card time: Erik's call that "time is a hint, never pressure" covers submissions and reactions only.
   - The facilitator view has **Pause** (hold this card until resumed), **Back** and **Next**. Phones keep "Stay" and "Go back"; their counts show on the projector so the facilitator can decide to pause. "Move on" goes away (cards move on by themselves).
 - **Submit and react at their time** (Claude's calls):
-  - The part ends when its timer reaches zero (the facilitator can add a minute before then). Phones warn ahead, as submissions do today: submit at 2 minutes and 1 minute (unchanged); react at 1 minute ("finish the card you're on") and 15 seconds.
+  - Phones warn ahead, as submissions do today: submit at 2 minutes and 1 minute (unchanged); react at 1 minute ("finish the card you're on") and 15 seconds. At zero, the part stays open until the facilitator confirms.
   - Nothing typed is lost: notes not picked stay private on the phone, as today. When reactions close, a phone sends the card it's on if it has an emoji or comment text, and the server accepts reaction and comment sends for 10 seconds after reactions close.
-  - Reactions end early once every phone that has joined has tapped "finished reacting", handing the time to the walk-through. Submissions don't end early.
-- **Waiting on the facilitator:** whenever the app can't proceed without the facilitator (themes not yet approved, the shred confirm), the projector says so in plain words ("Waiting on the facilitator to approve the themes") and the facilitator view highlights the one action needed.
+  - Once every phone that has joined has tapped "finished reacting", the facilitator is prompted early, so the spare time goes to the walk-through.
+- **Waiting for the facilitator:** whenever the app is waiting on the facilitator (a move to confirm, themes to approve, the shred), the projector says so in plain words ("Waiting for the facilitator to confirm") and the facilitator view highlights the one action needed.
 
 ### Haiku per theme
 
@@ -111,7 +112,17 @@ What the practice runs and reflection since changed:
 - The projector shows an approved theme's haiku on each card of that theme, small, as one line, below the emoji mix and comments. Not on the overview slide; never on phones.
 - **Theme count:** about one theme per 12 cards, at least 2 and at most 5 (5 themes for 60 cards, 2 for 15). Tested on synthetic seed cards (`spike/` in this branch): forcing exactly 4 themes on 60 cards made a 25-card catch-all, and 4 themes on 15 cards gave themes of 1–2 thoughts.
 - **The grouping prompt** is the one tested in `spike/haiku-themes.mjs` (Nov 22): group by the shared experience or feeling rather than the surface topic, no catch-all, no theme above about a third of the cards, a stricter near-duplicate rule, and a haiku that captures the shared feeling with one everyday image and a turn in the last line, without borrowing a single card's details.
-- **Effort: medium** (was low). On 60 cards, low took about 20 seconds and over-merged distinct cards as near-duplicates (a sick parent, a grandparent's death and aging parents pooled into one, so most phones would see only one of them); medium took about 25 seconds, kept them apart, and wrote better haiku. Grouping time comes out of the walk-through, which absorbs slack; "Skip the AI" stays available.
+- **Effort and timing** (tested on 60 synthetic cards, Nov 22):
+
+  | Effort | Time | Result |
+  | --- | --- | --- |
+  | low | ~20 s | Over-merged distinct cards as near-duplicates (a sick parent, a grandparent's death and aging parents pooled into one, so most phones would see only one) |
+  | medium | ~25 s | Kept them apart; good haiku |
+  | high | ~38 s | Best haiku ("Strangers at the door / a folding chair, a warm plate / we become a room") |
+  | max | (none) | Ran past 64,000 output tokens without finishing; not usable |
+
+- **Start grouping before submissions close** (Claude's call, from Erik's idea): at the 1-minute warning, the server starts a full grouping run at **high** effort on the cards so far. The facilitator can read and approve theme names and haiku while people finish submitting. When the facilitator confirms "Ready for grouping?", a fast **placement** call (low effort, existing themes and groups plus the new cards) puts each late card into an existing group as a near-duplicate, or into an existing theme as a new group; names and haiku stay as approved. If late cards are more than about a third of all cards, a full run at medium runs instead and the facilitator approves again. "Skip the AI" stays available throughout.
+- **Why not two full runs:** most cards arrive in the last minute or two (the warnings tell people to pick then), and a second full run would reshuffle themes the facilitator has already read, and take another 25–40 seconds while the room waits. Placement keeps the early work and is quick.
 
 ### Folder tabs
 
@@ -129,9 +140,6 @@ What the practice runs and reflection since changed:
 - At the end of the walk-through or closing: "If a card hit you, find someone after the event and tell them 'that was me too.'"
 - The facilitator's closing slides invite new connections, not only show existing ones: people who want to build community and share how things really feel, in retros like this and beyond, with a way to reach the facilitator after the event.
 
-## Repo easter eggs
-
-On a long-lived branch with a cheeky name (`nobody-did-it`), kept up to date with `main`, so they never get in the way of real work. Small nods (code comments, test fixture text, constant names) to motifs from the talk's thinking: Homer, Saskatoon's bridges, and a few others. They change no behaviour: the full test suite passes on the branch. Erik left the motifs to Claude's interpretation of the conversation; Claude places them after the main work passes its tests, and they're the first thing dropped if time runs short before Nov 25. Erik reviews them.
 
 ## Left to the builder
 
