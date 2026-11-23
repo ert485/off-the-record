@@ -482,16 +482,31 @@ test('going back to grouping after hiding a card keeps the groups, names and rea
   assert.deepEqual(session.emojiMix(g1.id), [['🙋', 1]]);
 });
 
-test('going back to grouping regroups when new cards came in', async () => {
-  const { session } = make();
+test('going back to grouping places new cards; existing groups, names and reactions stay', async () => {
+  let groupings = 0;
+  const { session } = make({
+    cluster: async (cards) => {
+      groupings += 1;
+      return { themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] };
+    },
+  });
   await toReact(session);
+  session.approveAll({});
+  const [g1] = session.view('phone', { cid: A }).react.groups;
+  session.react(A, g1.id, ['🙋']);
+  const before = session.state.themes.flatMap((t) => t.groups.map((g) => g.id));
   session.back(); // cluster
   session.back(); // submit
   session.submitCards(B, ['four']);
   session.advance(); // cluster
   await flush();
-  const grouped = session.state.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds));
-  assert.equal(grouped.length, 4);
+  assert.equal(groupings, 1);
+  assert.equal(session.state.clustering.late.status, 'done');
+  const groups = session.state.themes.flatMap((t) => t.groups);
+  assert.equal(groups.flatMap((g) => g.cardIds).length, 4);
+  assert.deepEqual(groups.map((g) => g.id).slice(0, before.length), before);
+  assert.equal(session.state.themes[0].approved, true);
+  assert.deepEqual(session.emojiMix(g1.id), [['🙋', 1]]);
 });
 
 test('the facilitator can skip a slow grouping; its late result is ignored', async () => {

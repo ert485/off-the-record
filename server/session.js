@@ -2,7 +2,8 @@
 // server persists `session.state` after each change and wires up the shred.
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
-import { pendingMove, walkEndsAt, cardMs, cardsLeft } from './flow.js';
+import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue } from './flow.js';
+import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
 import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
@@ -51,7 +52,9 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     // Per anonymous phone id: counts only, never which cards or reactions.
     clients: {},
     nextId: 1,
-    clustering: { status: 'idle', error: null, key: null, local: false },
+    // early: the grouping started at the 1-minute warning (once per session).
+    // late: the quick call placing cards that came in after the grouping ran.
+    clustering: { status: 'idle', error: null, key: null, local: false, early: false, late: null },
     themes: [],
     // Pooled per group, in the order they happened (the finale replays it).
     reactions: [],
@@ -94,6 +97,45 @@ export function normalizeClusters(rawThemes, cardIds) {
   return themes;
 }
 
+// Makes the quick call's placements safe to use. Each late card is placed at
+// most once, in a theme that exists; a group from another theme becomes a new
+// group. Each card is in at most one flag (the first). A late card with no
+// valid placement is flagged, and keeping it puts it in "Other".
+export const NOT_PLACED = 'Not placed';
+export function normalizePlacements(raw, { themeIds, groupIds, lateIds }) {
+  const themes = new Set(themeIds);
+  const groupTheme = new Map(groupIds);
+  const late = new Set(lateIds);
+  const placed = new Set();
+  const placements = [];
+  for (const p of Array.isArray(raw?.placements) ? raw.placements : []) {
+    if (!late.has(p?.cardId) || placed.has(p.cardId) || !themes.has(p.themeId)) continue;
+    placed.add(p.cardId);
+    placements.push({ cardId: p.cardId, themeId: p.themeId, groupId: groupTheme.get(p.groupId) === p.themeId ? p.groupId : null });
+  }
+  const flagged = new Set();
+  const flags = [];
+  for (const f of Array.isArray(raw?.flags) ? raw.flags : []) {
+    const cardIds = [];
+    for (const id of Array.isArray(f?.cardIds) ? f.cardIds : []) {
+      if (!late.has(id) || flagged.has(id)) continue;
+      flagged.add(id);
+      cardIds.push(id);
+    }
+    if (!cardIds.length) continue;
+    const reason = typeof f.reason === 'string' && f.reason.trim() ? f.reason.trim().slice(0, 200) : 'Might not fit the themes';
+    flags.push({ cardIds, reason });
+  }
+  for (const id of lateIds) if (!placed.has(id) && !flagged.has(id)) flags.push({ cardIds: [id], reason: NOT_PLACED });
+  return { placements, flags };
+}
+export const QUICK_CHECK_FAILED = "The quick check didn't finish: ";
+// A failed (or skipped) quick call flags every late card, with why. The
+// message is a fixed label or the API's error, never card text.
+function failedPlacement(lateIds, message) {
+  return { placements: [], flags: lateIds.length ? [{ cardIds: lateIds, reason: QUICK_CHECK_FAILED + message }] : [] };
+}
+
 // Without the AI (it failed, or the facilitator skipped it): one theme, every
 // card its own group, no name until the facilitator gives it one.
 export const SKIPPED = 'Skipped';
@@ -106,6 +148,7 @@ export class Session {
     state,
     now = Date.now,
     clusterCards,
+    placeLateCards = localPlacer,
     tagCards = null,
     nudgeQuietMs = 10_000,
     talkMinutes = TALK_MINUTES,
@@ -120,6 +163,7 @@ export class Session {
     this.nudgeTimer = null;
     this.talkMinutes = talkMinutes;
     this.clusterCards = clusterCards;
+    this.placeLateCards = placeLateCards;
     this.onChange = onChange;
     this.onShred = onShred;
     this.shredAnimationMs = shredAnimationMs;
@@ -138,10 +182,21 @@ export class Session {
     if (!this.state.shredded) this.state.removedComments ??= {};
     this.state.sessionId ??= randomBytes(8).toString('hex');
     this.shredded = !!this.state.shredded;
-    // A restart mid-clustering: run it again.
-    if (this.state.clustering?.status === 'running') {
-      this.state.clustering.status = 'idle';
-      if (this.state.phase === 'cluster') this.startClustering(true);
+    const c = this.state.clustering;
+    if (c) {
+      c.early ??= false;
+      c.late ??= null;
+      // A restart mid-grouping: run it again. The early run reruns in submit;
+      // anywhere else, entering grouping starts what's needed.
+      if (c.status === 'running') {
+        c.status = 'idle';
+        if (this.state.phase === 'submit' || this.state.phase === 'cluster') this.startClustering();
+      }
+      // A restart mid-placement: place the cards that still have no group again.
+      if (c.late?.status === 'running') {
+        c.late = null;
+        if (this.state.phase === 'cluster') this.continueGrouping();
+      }
     }
   }
 
@@ -218,7 +273,11 @@ export class Session {
     if (from !== undefined && from !== null && from !== this.s.phase) fail('Already moved on');
     const to = nextPhase(this.s.phase);
     if (!to) fail('This is the last phase');
-    if (this.s.phase === 'cluster' && this.s.clustering.status === 'running') fail('Clustering is still running');
+    if (this.s.phase === 'cluster') {
+      const c = this.s.clustering;
+      if (c.status === 'running' || c.late?.status === 'running') fail('Grouping is still running');
+      if (c.late?.status === 'flagged') fail('Choose: keep the themes or regroup');
+    }
     if (to === 'shred') {
       if (!confirm) fail('Confirm the shred: it cannot be undone');
       return this.shred();
@@ -249,7 +308,7 @@ export class Session {
       this.s.submitEndsAt =
         direction === 'forward' ? now + SUBMIT_MINUTES * 60_000 : Math.max(this.s.submitEndsAt ?? 0, now + 60_000);
     }
-    if (to === 'cluster') this.startClustering(false);
+    if (to === 'cluster') this.continueGrouping();
     if (to === 'walk' && direction === 'forward') this.buildWalk();
     // Coming back to the walk-through holds the card until the facilitator resumes.
     if (to === 'walk' && direction === 'back') {
@@ -309,11 +368,10 @@ export class Session {
     if (!card) fail('No such card');
     card.hidden = !!hidden;
     // A card hidden before clustering was never grouped (or sent to the AI).
-    // If it is shown again later, give it a group of its own.
-    if (!card.hidden && this.s.themes.length && !this.s.themes.some((t) => t.groups.some((g) => g.cardIds.includes(id)))) {
-      let other = this.s.themes.find((t) => t.name === 'Other');
-      if (!other) this.s.themes.push((other = { id: this.newId(), name: 'Other', haiku: '', approved: false, groups: [] }));
-      other.groups.push({ id: this.newId(), cardIds: [id] });
+    // If it is shown again later, give it a group of its own. While people are
+    // still submitting, it waits to be placed with the other late cards instead.
+    if (!card.hidden && this.s.phase !== 'submit' && this.s.themes.length && !this.grouped().has(id)) {
+      this.otherTheme().groups.push({ id: this.newId(), cardIds: [id] });
     }
     this.changed();
     if (this.s.phase === 'submit') this.scheduleNudge();
@@ -353,27 +411,77 @@ export class Session {
   }
 
   // ---- clustering -------------------------------------------------------
+  //
+  // The full grouping starts at the 1-minute warning on the cards so far, so
+  // the facilitator can read and approve themes while people finish (or on
+  // entering grouping, if it never ran). Cards that come in after it are
+  // placed by one quick call on entering grouping, keeping the themes already
+  // read; if the call flags them, the facilitator keeps the themes or
+  // regroups. Each call carries a run number: a result from a run that has
+  // since been replaced (skipped, regrouped, shredded) is ignored.
 
-  startClustering(force) {
-    const cards = this.s.cards.filter((c) => !c.hidden);
-    const key = cards.map((c) => c.id).sort((a, b) => a - b).join(',');
+  // Visible cards, as sent to the AI: id and text only. Hidden cards never are.
+  visibleCards() {
+    return this.s.cards
+      .filter((c) => !c.hidden)
+      .map(({ id, text }) => ({ id, text }))
+      .sort((a, b) => a.id - b.id);
+  }
+
+  grouped() {
+    return new Set(this.s.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds)));
+  }
+
+  // Visible cards without a group: the late arrivals the quick call places.
+  ungroupedCards() {
+    const grouped = this.grouped();
+    return this.visibleCards().filter((c) => !grouped.has(c.id));
+  }
+
+  otherTheme() {
+    let other = this.s.themes.find((t) => t.name === 'Other');
+    if (!other) this.s.themes.push((other = { id: this.newId(), name: 'Other', haiku: '', approved: false, groups: [] }));
+    return other;
+  }
+
+  // Every card a placement covers: placed, flagged, or both.
+  lateIds(late) {
+    return [...new Set([...late.placements.map((p) => p.cardId), ...late.flags.flatMap((f) => f.cardIds)])];
+  }
+
+  // On entering grouping, and whenever a call lands there: wait for a call
+  // still running; group everything if there are no themes; place the cards
+  // without a group; otherwise keep everything as it is. Coming back to
+  // grouping never regroups: that would give every group a new id, cutting
+  // reactions off from their cards and losing approved names.
+  continueGrouping() {
     const c = this.s.clustering;
-    // Coming back to grouping only regroups when there are cards without a
-    // group (new submissions). A card hidden since doesn't regroup: that
-    // would give every group a new id, cutting reactions off from their
-    // cards and losing approved names.
-    const grouped = new Set(this.s.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds)));
-    const settled = c.key === key || (this.s.themes.length > 0 && cards.every((card) => grouped.has(card.id)));
-    if (!force && settled && (c.status === 'done' || c.status === 'failed')) return;
+    if (c.status === 'running' || c.late?.status === 'running') return;
+    if (!this.s.themes.length) return this.startClustering();
+    const late = this.ungroupedCards();
+    if (!late.length) return;
+    // Flagged with nothing new since: the facilitator is choosing.
+    if (c.late?.status === 'flagged') {
+      const waiting = new Set(this.lateIds(c.late));
+      if (late.every((card) => waiting.has(card.id))) return;
+    }
+    this.startPlacement(late);
+  }
+
+  // The full grouping, at high effort, of every visible card. Names, haiku
+  // and approvals start over.
+  startClustering() {
+    const input = this.visibleCards();
+    const ids = input.map((x) => x.id);
+    const key = ids.join(',');
     const run = ++this.clusterRun;
-    if (cards.length === 0) {
+    const { early } = this.s.clustering;
+    if (input.length === 0) {
       this.s.themes = [];
-      this.s.clustering = { status: 'done', error: null, key, local: false, empty: true };
+      this.s.clustering = { status: 'done', error: null, key, local: false, early, late: null, empty: true };
       return;
     }
-    this.s.clustering = { status: 'running', error: null, key, local: false };
-    const input = cards.map(({ id, text }) => ({ id, text })).sort((a, b) => a.id - b.id);
-    const ids = input.map((x) => x.id);
+    this.s.clustering = { status: 'running', error: null, key, local: false, early, late: null };
     Promise.resolve()
       .then(() => this.clusterCards(input, { effort: 'high' }))
       .then(
@@ -392,23 +500,95 @@ export class Session {
       approved: false,
       groups: t.groups.map((cardIds) => ({ id: this.newId(), cardIds })),
     }));
-    this.s.clustering = { status, error, key, local };
+    this.s.clustering = { status, error, key, local, early: this.s.clustering.early, late: null };
+    // Cards that came in while it ran (after the warning) are placed now.
+    if (this.s.phase === 'cluster') this.continueGrouping();
+    this.changed();
+  }
+
+  // The quick call: the themes and their groups as they stand (visible cards
+  // only), and the late cards.
+  startPlacement(late) {
+    const themes = this.s.themes
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        haiku: t.haiku,
+        groups: t.groups
+          .map((g) => ({ id: g.id, texts: this.visibleCardIds(g).map((id) => this.card(id).text) }))
+          .filter((g) => g.texts.length > 0),
+      }))
+      .filter((t) => t.groups.length > 0);
+    // Nothing left to place them next to: group everything instead.
+    if (!themes.length) return this.startClustering();
+    const run = ++this.clusterRun;
+    this.s.clustering.late = { status: 'running', placements: [], flags: [] };
+    const lateIds = late.map((c) => c.id);
+    const scope = { themeIds: themes.map((t) => t.id), groupIds: themes.flatMap((t) => t.groups.map((g) => [g.id, t.id])), lateIds };
+    Promise.resolve()
+      .then(() => this.placeLateCards({ themes, late }))
+      .then((raw) => normalizePlacements(raw, scope))
+      .catch((err) => failedPlacement(lateIds, String(err?.message ?? err).slice(0, 200)))
+      .then((result) => this.applyPlacement(run, result));
+  }
+
+  // Nothing flagged: placed at once, names, haiku and approvals kept.
+  // Anything flagged: held until the facilitator keeps or regroups.
+  applyPlacement(run, { placements, flags }) {
+    if (run !== this.clusterRun || this.shredded) return;
+    const late = { status: flags.length ? 'flagged' : 'done', placements, flags };
+    if (!flags.length) this.placeLate(late);
+    this.s.clustering.late = late;
+    if (this.s.phase === 'cluster') this.continueGrouping();
+    this.changed();
+  }
+
+  // Each late card where the call suggested (flagged ones too: the model
+  // still placed them); one with no valid placement goes to "Other".
+  placeLate(late) {
+    const grouped = this.grouped();
+    const where = new Map(late.placements.map((p) => [p.cardId, p]));
+    for (const id of this.lateIds(late)) {
+      if (grouped.has(id) || !this.card(id)) continue;
+      const p = where.get(id);
+      const theme = p && this.s.themes.find((t) => t.id === p.themeId);
+      const group = theme && p.groupId !== null ? theme.groups.find((g) => g.id === p.groupId) : null;
+      if (group) group.cardIds.push(id);
+      else (theme ?? this.otherTheme()).groups.push({ id: this.newId(), cardIds: [id] });
+      grouped.add(id);
+    }
+  }
+
+  keepLate() {
+    const late = this.s.clustering.late;
+    if (late?.status !== 'flagged') fail('No late arrivals are waiting');
+    this.placeLate(late);
+    late.status = 'done';
+    if (this.s.phase === 'cluster') this.continueGrouping();
+    this.changed();
+  }
+
+  regroupAll() {
+    if (this.s.clustering.late?.status !== 'flagged') fail('No late arrivals are waiting');
+    this.startClustering();
     this.changed();
   }
 
   // While the AI is grouping, the facilitator can stop waiting: every card
   // becomes its own group in one theme, exactly as when grouping fails, and
-  // Retry runs the AI again.
+  // Retry runs the AI again. Skipping the quick call flags the late cards,
+  // as if it had failed.
   skipClustering() {
-    if (this.s.phase !== 'cluster' || this.s.clustering.status !== 'running') fail('Grouping is not running');
-    const ids = this.s.cards.filter((c) => !c.hidden).map((c) => c.id).sort((a, b) => a - b);
+    const c = this.s.clustering;
+    if (this.s.phase !== 'cluster' || (c.status !== 'running' && c.late?.status !== 'running')) fail('Grouping is not running');
     const run = ++this.clusterRun;
-    this.applyClusters(run, this.s.clustering.key, fallbackClusters(ids, SKIPPED));
+    if (c.status === 'running') return this.applyClusters(run, c.key, fallbackClusters(this.visibleCards().map((x) => x.id), SKIPPED));
+    this.applyPlacement(run, failedPlacement(this.ungroupedCards().map((x) => x.id), SKIPPED));
   }
 
   recluster() {
     if (this.s.phase !== 'cluster') fail('Clustering runs in the cluster phase');
-    this.startClustering(true);
+    this.startClustering();
     this.changed();
   }
 
@@ -607,7 +787,16 @@ export class Session {
   // anything that isn't running does nothing.
   tick() {
     if (this.shredded) return;
+    if (this.s.phase === 'submit') this.tickSubmit();
     if (this.s.phase === 'walk') this.tickWalk();
+  }
+
+  // At the 1-minute warning, group the cards so far, once per session.
+  tickSubmit() {
+    if (!earlyGroupingDue(this.s, this.now())) return;
+    this.s.clustering.early = true;
+    this.startClustering();
+    this.changed();
   }
 
   tickWalk() {
@@ -778,7 +967,8 @@ export class Session {
     // how far over anything is.
     v.waiting =
       pendingMove(s, this.now(), { phoneCount }) !== null ||
-      (s.phase === 'cluster' && ['done', 'failed'].includes(s.clustering.status) && s.themes.some((t) => !t.approved));
+      (s.phase === 'cluster' && ['done', 'failed'].includes(s.clustering.status) && s.themes.some((t) => !t.approved)) ||
+      (s.phase === 'cluster' && s.clustering.late?.status === 'flagged');
     if (s.phase === 'walk') {
       const item = this.currentItem();
       v.walk = {
@@ -834,7 +1024,19 @@ export class Session {
       people: Object.values(s.clients).filter((c) => c.cards > 0).length,
     };
     v.cards = [...s.cards].sort((a, b) => a.id - b.id).map(({ id, text, hidden }) => ({ id, text, hidden }));
-    v.clustering = s.clustering;
+    // The late cards' flags with their text, for the keep-or-regroup choice
+    // (not the suggested placements: those are applied on keep).
+    const { late, ...clustering } = s.clustering;
+    v.clustering = {
+      ...clustering,
+      late: late && {
+        status: late.status,
+        flags: late.flags.map((f) => ({
+          cards: f.cardIds.map((id) => this.card(id)).filter(Boolean).map(({ id, text }) => ({ id, text })),
+          reason: f.reason,
+        })),
+      },
+    };
     const counts = this.reactionCounts();
     v.themes = s.themes.map((t) => ({
       id: t.id,

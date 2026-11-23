@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { Session, ActionError } from './session.js';
 import { openStore } from './db.js';
-import { createClusterer } from './cluster.js';
+import { createClusterer, createPlacer } from './cluster.js';
 import { createNudgeTagger } from './nudges.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -36,6 +36,7 @@ const clusterCards = createClusterer();
 const session = new Session({
   state: store.load(),
   clusterCards,
+  placeLateCards: createPlacer(),
   talkMinutes: Number(process.env.TALK_MINUTES) || undefined,
   tagCards: createNudgeTagger(),
   onChange: () => {
@@ -122,6 +123,8 @@ const FACILITATOR_ACTIONS = {
   nudges: (b) => session.setNudges(b.on),
   recluster: () => session.recluster(),
   skipClustering: () => session.skipClustering(),
+  keepLate: () => session.keepLate(),
+  regroupAll: () => session.regroupAll(),
   approveTheme: (b) => session.approveTheme(b.id, b.name, b.haiku),
   approveAll: (b) => session.approveAll(b.names, b.haikus),
   reset: (b) => {

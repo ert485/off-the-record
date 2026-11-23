@@ -1,5 +1,6 @@
-// What the room is waiting on. The app runs each part; when a part is over,
-// the facilitator is asked to confirm the move. Nothing here changes state.
+// What the room is waiting on, and what is due when. The app runs each part;
+// when a part is over, the facilitator is asked to confirm the move. Nothing
+// here changes state.
 import { LAST_SLIDE_MS, MIN_CARD_MS, MIN_WALK_MS, WALK_END_BEFORE_MINUTES } from './phases.js';
 import { finaleTimeline } from '../public/shared/finale-timing.js';
 
@@ -24,6 +25,25 @@ export function pendingMove(state, now, { phoneCount = 0 } = {}) {
     default:
       return null;
   }
+}
+
+// The phones' last warning comes a minute before submissions close; the
+// grouping starts then on the cards so far, so the facilitator can read and
+// approve themes while people finish.
+export const EARLY_GROUPING_MS = 60_000;
+
+// Whether to start that early grouping now: once per session, in submit, with
+// cards to group and no themes yet (a round that already grouped keeps its themes).
+export function earlyGroupingDue(state, now) {
+  return (
+    state.phase === 'submit' &&
+    !state.clustering.early &&
+    state.clustering.status !== 'running' &&
+    state.themes.length === 0 &&
+    state.submitEndsAt !== null &&
+    now >= state.submitEndsAt - EARLY_GROUPING_MS &&
+    state.cards.some((c) => !c.hidden)
+  );
 }
 
 // When the walk-through must be over: fixed on the talk clock, so a pause or a
