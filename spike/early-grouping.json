@@ -1,0 +1,304 @@
+{
+  "themes": [
+    {
+      "theme": 101,
+      "name": "Machines at the desk",
+      "haiku": "The cursor blinks first / the tool finishes my hard hour / I type thanks and sigh",
+      "groups": [
+        {
+          "group": 1001,
+          "cards": [
+            5
+          ]
+        },
+        {
+          "group": 1002,
+          "cards": [
+            16,
+            39
+          ]
+        },
+        {
+          "group": 1003,
+          "cards": [
+            53
+          ]
+        },
+        {
+          "group": 1004,
+          "cards": [
+            9
+          ]
+        },
+        {
+          "group": 1005,
+          "cards": [
+            60
+          ]
+        },
+        {
+          "group": 1006,
+          "cards": [
+            4
+          ]
+        },
+        {
+          "group": 1007,
+          "cards": [
+            25
+          ]
+        },
+        {
+          "group": 1008,
+          "cards": [
+            45
+          ]
+        },
+        {
+          "group": 1009,
+          "cards": [
+            22
+          ]
+        },
+        {
+          "group": 1010,
+          "cards": [
+            27,
+            44
+          ]
+        }
+      ]
+    },
+    {
+      "theme": 102,
+      "name": "Jobs in flux",
+      "haiku": "The invite says sync / the chairs slide out of the room / we keep driving in",
+      "groups": [
+        {
+          "group": 1011,
+          "cards": [
+            6,
+            29,
+            56
+          ]
+        },
+        {
+          "group": 1012,
+          "cards": [
+            21
+          ]
+        },
+        {
+          "group": 1013,
+          "cards": [
+            31
+          ]
+        },
+        {
+          "group": 1014,
+          "cards": [
+            38
+          ]
+        },
+        {
+          "group": 1015,
+          "cards": [
+            48
+          ]
+        },
+        {
+          "group": 1016,
+          "cards": [
+            18
+          ]
+        },
+        {
+          "group": 1017,
+          "cards": [
+            20
+          ]
+        },
+        {
+          "group": 1018,
+          "cards": [
+            35
+          ]
+        },
+        {
+          "group": 1019,
+          "cards": [
+            11,
+            49
+          ]
+        }
+      ]
+    },
+    {
+      "theme": 103,
+      "name": "Running on empty",
+      "haiku": "Prairie wind at dusk / the baby monitor hums / rest arrives in shifts",
+      "groups": [
+        {
+          "group": 1020,
+          "cards": [
+            13
+          ]
+        },
+        {
+          "group": 1021,
+          "cards": [
+            19
+          ]
+        },
+        {
+          "group": 1022,
+          "cards": [
+            14,
+            46
+          ]
+        },
+        {
+          "group": 1023,
+          "cards": [
+            17
+          ]
+        },
+        {
+          "group": 1024,
+          "cards": [
+            30
+          ]
+        },
+        {
+          "group": 1025,
+          "cards": [
+            37
+          ]
+        },
+        {
+          "group": 1026,
+          "cards": [
+            23
+          ]
+        },
+        {
+          "group": 1027,
+          "cards": [
+            32
+          ]
+        },
+        {
+          "group": 1028,
+          "cards": [
+            24,
+            52
+          ]
+        },
+        {
+          "group": 1029,
+          "cards": [
+            59
+          ]
+        }
+      ]
+    },
+    {
+      "theme": 104,
+      "name": "Finding each other",
+      "haiku": "Thin coffee, warm room / someone asks, and waits for me / still, I stay a while",
+      "groups": [
+        {
+          "group": 1030,
+          "cards": [
+            8
+          ]
+        },
+        {
+          "group": 1031,
+          "cards": [
+            10
+          ]
+        },
+        {
+          "group": 1032,
+          "cards": [
+            12
+          ]
+        },
+        {
+          "group": 1033,
+          "cards": [
+            15
+          ]
+        },
+        {
+          "group": 1034,
+          "cards": [
+            26
+          ]
+        },
+        {
+          "group": 1035,
+          "cards": [
+            28
+          ]
+        },
+        {
+          "group": 1036,
+          "cards": [
+            33,
+            51
+          ]
+        },
+        {
+          "group": 1037,
+          "cards": [
+            34
+          ]
+        },
+        {
+          "group": 1038,
+          "cards": [
+            36
+          ]
+        },
+        {
+          "group": 1039,
+          "cards": [
+            41
+          ]
+        },
+        {
+          "group": 1040,
+          "cards": [
+            43
+          ]
+        },
+        {
+          "group": 1041,
+          "cards": [
+            47
+          ]
+        },
+        {
+          "group": 1042,
+          "cards": [
+            50
+          ]
+        },
+        {
+          "group": 1043,
+          "cards": [
+            54
+          ]
+        },
+        {
+          "group": 1044,
+          "cards": [
+            55
+          ]
+        }
+      ]
+    }
+  ]
+}

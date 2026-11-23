@@ -129,6 +129,19 @@ What the practice runs and reflection since changed:
 - **Why not always regroup:** most cards arrive in the last minute or two (the warnings tell people to pick then), and a full run would reshuffle themes the facilitator has already read, and take about 40 seconds while the room waits. The quick call keeps the early work unless the facilitator decides the picture really changed.
 - **Before building, test the quick call** with the spike: split the seed cards into early and late, including a late cluster that deserves its own theme, and check it flags that and stays under 10 seconds.
 
+**Spike result (`spike/late-arrivals.mjs`, Claude Haiku 5.5, effort `low`, `max_tokens` 4000, non-streaming).** The early 52 seed cards were grouped once at effort `high` into 4 themes (`spike/early-grouping.json`). Scenario A is 5 late cards that each have a close sibling among the early cards; scenario B is those 5 plus 3 cards about trucks hitting bridges, a topic no early theme covers. The first prompt worked, so there were no revisions. Two batches of three runs each:
+
+| Run | A seconds (output tokens) | A flags | B seconds (output tokens) | B flags |
+|---|---|---|---|---|
+| Batch 1, run 1 | 2.6 (176) | none | 7.7 (1224) | missing theme: all 3 truck cards |
+| Batch 1, run 2 | 4.3 (802) | none | 5.9 (1220) | missing theme: all 3 truck cards |
+| Batch 1, run 3 | 1.2 (174) | none | 6.8 (1165) | missing theme: all 3 truck cards |
+| Batch 2, run 1 | 4.6 (858) | none | 6.3 (1080) | missing theme: all 3 truck cards |
+| Batch 2, run 2 | 3.9 (764) | none | 5.3 (1104) | missing theme: all 3 truck cards |
+| Batch 2, run 3 | 1.2 (175) | none | 7.4 (1415) | missing theme: all 3 truck cards |
+
+B was flagged in 6 of 6 runs, A had 0 false flags in 6 runs, and the slowest call was 7.7 seconds, so the 10-second aim holds with some margin (it grows with the number of flagged cards, since each flag writes a reason). The prompt's key rules: a card that shares a theme's underlying experience fits well even loosely or from a different angle, and only a card no theme covers is flagged; two or more late cards sharing an experience no theme covers are reported as one missing theme even if each could be squeezed into some theme, and one card alone never makes a missing theme.
+
 ### Folder tabs
 
 - On the projector, each card's theme name is drawn as a manila folder tab on top of the card.
