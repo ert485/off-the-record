@@ -37,6 +37,11 @@ Open `http://localhost:3000/` (phone), `/projector`, and `/facilitate?t=dev`. Wi
 | `PUBLIC_URL` | What the QR code points to. |
 | `DATA_DIR` | Where the one SQLite file lives (default `./data`). |
 | `REPO_URL` | Shown on the projector. |
+| `TALK_MINUTES` | Length of the talk clock in minutes (default 25). The walk-through finishes on it. |
+
+## The demo
+
+The demo before Join shows the content in `demo/example.json`. To use your own, copy it to `demo/local.json` and edit it: that file is gitignored, so it stays out of the repo, but `deploy/deploy.sh` still copies it to the server. If it is invalid, the server prints `demo: local file invalid, using the example` and uses the example.
 
 ## Deploy
 

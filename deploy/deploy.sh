@@ -7,7 +7,7 @@ SSH="ssh -i ${SSH_KEY:-$HOME/.ssh/otr.pem} -o StrictHostKeyChecking=accept-new"
 cd "$(dirname "$0")/.."
 
 rsync -az --delete -e "$SSH" \
-  --exclude .git --exclude node_modules --exclude data --exclude test --exclude '*.md' \
+  --exclude .git --exclude node_modules --exclude data --exclude test --exclude spike --exclude '*.md' \
   ./ "ec2-user@$HOST:/opt/otr/"
 
 $SSH "ec2-user@$HOST" bash -s <<'EOF'

@@ -8,6 +8,7 @@ import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
 import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
+import { DEMO_STEPS } from './demo.js';
 
 export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60, haiku: 120 };
 // The projector shows this many comments on a card, the rest as "+N more".
@@ -35,6 +36,8 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     sessionId: randomBytes(8).toString('hex'),
     phase: 'demo',
     phaseStartedAt: now,
+    // Which step of the demo the projector shows, and the card the demo added.
+    demo: { step: 0, cardId: null },
     // The talk clock: starts with one tap, or backdated when the room moves
     // on without it, and never restarts.
     talk: { startedAt: null, minutes: talkMinutes },
@@ -150,6 +153,7 @@ export class Session {
     clusterCards,
     placeLateCards = localPlacer,
     tagCards = null,
+    demo = null,
     nudgeQuietMs = 10_000,
     talkMinutes = TALK_MINUTES,
     onChange = () => {},
@@ -159,6 +163,8 @@ export class Session {
   }) {
     this.now = now;
     this.tagCards = tagCards;
+    // The prepared demo content (never stored in the state, never sent to phones).
+    this.demo = demo;
     this.nudgeQuietMs = nudgeQuietMs;
     this.nudgeTimer = null;
     this.talkMinutes = talkMinutes;
@@ -180,6 +186,7 @@ export class Session {
       this.state.reactClosedAt ??= null;
     }
     if (!this.state.shredded) this.state.removedComments ??= {};
+    if (!this.state.shredded) this.state.demo ??= { step: 0, cardId: null };
     this.state.sessionId ??= randomBytes(8).toString('hex');
     this.shredded = !!this.state.shredded;
     const c = this.state.clustering;
@@ -296,6 +303,11 @@ export class Session {
   enter(to, direction) {
     const now = this.now();
     const from = this.s.phase;
+    // The demo's shared note joins the session as an ordinary card, once: no
+    // author, and not counted against any phone.
+    if (from === 'demo' && direction === 'forward' && this.demo && this.s.demo && this.s.demo.cardId === null) {
+      this.s.demo.cardId = this.addCard(this.demo.notes.find((n) => n.share).text);
+    }
     if (direction === 'forward' && to !== 'demo' && this.s.talk && this.s.talk.startedAt === null) this.s.talk.startedAt = now - PLAN[to][0] * 60_000;
     if (from === 'react' && direction === 'forward') this.s.reactClosedAt = now;
     this.s.phase = to;
@@ -314,6 +326,16 @@ export class Session {
     if (to === 'walk' && direction === 'back') {
       Object.assign(this.s.walk, { paused: true, done: false, cardStartedAt: now, cardEndsAt: null });
     }
+  }
+
+  // The facilitator's taps through the demo's steps. Only while in the demo.
+  demoStep(delta) {
+    if (this.s.phase !== 'demo') fail('The demo is over');
+    const step = this.s.demo.step + delta;
+    if (step < 0) fail('This is the first step');
+    if (step >= DEMO_STEPS.length) fail('That was the last step');
+    this.s.demo.step = step;
+    this.changed();
   }
 
   extendSubmit() {
@@ -350,17 +372,23 @@ export class Session {
     if (clean.some((t) => t.length === 0 || t.length > LIMITS.cardMax)) fail(`Cards are 1 to ${LIMITS.cardMax} characters`);
     if (client.cards + clean.length > LIMITS.cardsPerPerson) fail(`Up to ${LIMITS.cardsPerPerson} cards each`);
     for (const text of clean) {
-      let id;
-      do id = randomInt(1, 2 ** 31);
-      while (this.card(id));
-      this.s.cards.push({ id, text, hidden: false });
+      this.addCard(text);
     }
-    // Kept in id order, not the order they arrived, so neither the database
-    // nor the shredder's sheets show which cards one phone sent together.
-    this.s.cards.sort((a, b) => a.id - b.id);
     client.cards += clean.length;
     this.changed();
     this.scheduleNudge();
+  }
+
+  // A card with a random id, kept in id order rather than arrival order, so
+  // neither the database nor the shredder's sheets show which cards one phone
+  // sent together.
+  addCard(text) {
+    let id;
+    do id = randomInt(1, 2 ** 31);
+    while (this.card(id));
+    this.s.cards.push({ id, text, hidden: false });
+    this.s.cards.sort((a, b) => a.id - b.id);
+    return id;
   }
 
   hideCard(id, hidden) {
@@ -959,6 +987,7 @@ export class Session {
     const v = { role: 'projector', phase: s.phase, now: this.now(), phaseStartedAt: s.phaseStartedAt };
     if (s.phase === 'shred') v.shred = this.shredPayload;
     if (this.shredded) return v;
+    if (s.phase === 'demo' && this.demo) v.demo = { step: s.demo.step, ...this.demo };
     if (s.phase === 'join') v.phones = phoneCount;
     // How long this part of the session is planned to take, as a hint the
     // room can see. Only while there's time left: a visible "over" would
@@ -1012,6 +1041,7 @@ export class Session {
     };
     if (this.shredded) return v;
     const { startedAt, minutes } = s.talk;
+    if (s.phase === 'demo' && this.demo) v.demo = { step: s.demo.step, steps: DEMO_STEPS.length, name: DEMO_STEPS[s.demo.step] };
     v.talk = { startedAt, minutes, leftMs: startedAt === null ? minutes * 60_000 : startedAt + minutes * 60_000 - now };
     v.pace =
       startedAt === null

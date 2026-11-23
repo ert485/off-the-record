@@ -13,6 +13,7 @@ import { Session, ActionError } from './session.js';
 import { openStore } from './db.js';
 import { createClusterer, createPlacer } from './cluster.js';
 import { createNudgeTagger } from './nudges.js';
+import { loadDemo } from './demo.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PUBLIC = join(ROOT, 'public');
@@ -39,6 +40,7 @@ const session = new Session({
   placeLateCards: createPlacer(),
   talkMinutes: Number(process.env.TALK_MINUTES) || undefined,
   tagCards: createNudgeTagger(),
+  demo: loadDemo(join(ROOT, 'demo')),
   onChange: () => {
     store.save(session.state);
     scheduleBroadcast();
@@ -114,6 +116,8 @@ const PHONE_ACTIONS = {
 const FACILITATOR_ACTIONS = {
   advance: (b) => session.advance({ confirm: b.confirm === true, from: b.from }),
   back: () => session.back(),
+  demoNext: () => session.demoStep(1),
+  demoBack: () => session.demoStep(-1),
   nextCard: (b) => session.moveCard(1, { from: b.from }),
   prevCard: (b) => session.moveCard(-1, { from: b.from }),
   pauseWalk: (b) => session.pauseWalk(b.paused),

@@ -1,0 +1,23 @@
+{
+  "notes": [
+    { "text": "The new build pipeline cut our wait from twenty minutes to five.", "share": true },
+    { "text": "I wasn't sure my idea was worth raising, so I kept it to myself." },
+    { "text": "Our weekly check-in finally stopped feeling like a status report." }
+  ],
+  "theme": {
+    "name": "Small wins at work",
+    "haiku": "Pipelines run so fast / the coffee is still too hot / we smile at the clock"
+  },
+  "react": {
+    "presets": ["🙋", "😂", "🎉"],
+    "own": "🌈",
+    "comment": "Same here. Waiting on builds used to eat my afternoons."
+  },
+  "reveal": {
+    "mix": [["🎉", 12], ["🙋", 9], ["😂", 5], ["🌈", 3]],
+    "comments": [
+      "Faster builds changed how we work.",
+      "I remember when this took a whole coffee break."
+    ]
+  }
+}
