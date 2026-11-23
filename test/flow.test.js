@@ -195,3 +195,37 @@ test('phones never get the talk clock or the pending move', async () => {
   const text = JSON.stringify(session.view('phone', { cid: A }));
   assert.equal(/talk|move|waiting|pace/.test(text), false);
 });
+
+test('a deadline passing is broadcast even when nothing else happens', async () => {
+  let changes = 0;
+  let t = 1_000_000;
+  const session = new Session({
+    now: () => t,
+    clusterCards: async (cards) => ({ themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }),
+    onChange: () => changes++,
+  });
+  const expectPrompt = (label, to) => {
+    t = to;
+    const before = changes;
+    session.tick();
+    assert.equal(changes, before + 1);
+    assert.equal(facilitator(session).move.label, label);
+    session.tick();
+    assert.equal(changes, before + 1);
+  };
+  session.advance();
+  session.advance(); // submit
+  session.submitCards(A, ['one', 'two']);
+  expectPrompt('Ready for grouping?', session.state.submitEndsAt);
+  session.extendSubmit();
+  const afterExtend = changes;
+  session.tick();
+  assert.equal(changes, afterExtend);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  expectPrompt('Ready for the walk-through?', session.state.reactEndsAt);
+  session.advance(); // walk
+  session.advance(); // finale
+  expectPrompt('Ready to shred?', session.state.phaseStartedAt + finaleTimeline(session.state.reactions.length).doneAt);
+});

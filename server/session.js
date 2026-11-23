@@ -212,7 +212,17 @@ export class Session {
   }
 
   changed() {
+    // Whatever this broadcast carries already includes the prompt, so tick()
+    // need not announce it again.
+    this.promptKey = this.timedPromptKey();
     this.onChange();
+  }
+
+  // The prompt that appears by time alone (phoneCount 0 leaves out the
+  // "everyone finished reacting" path, which broadcasts by itself).
+  timedPromptKey() {
+    const move = pendingMove(this.s, this.now(), { phoneCount: 0 });
+    return move ? `${move.to}:${move.label}` : '';
   }
 
   // ---- lookups ----------------------------------------------------------
@@ -829,6 +839,8 @@ export class Session {
     if (this.shredded) return;
     if (this.s.phase === 'submit') this.tickSubmit();
     if (this.s.phase === 'walk') this.tickWalk();
+    // A deadline simply passing changes the prompt with no event to broadcast it.
+    if (this.timedPromptKey() !== this.promptKey) this.changed();
   }
 
   // At the 1-minute warning, group the cards so far, once per session.
