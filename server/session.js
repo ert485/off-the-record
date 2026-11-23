@@ -524,6 +524,16 @@ export class Session {
       const index = w.index + delta;
       if (index < 0) fail('This is the first card');
       this.showCard(index);
+      // After the walk-through's time is up, a Back or Next onto a real card
+      // holds it until the facilitator resumes; otherwise the next tick would
+      // snap straight back to the last slide. The last slide runs normally.
+      if (!w.stream[index].last && this.now() >= w.endsAt - LAST_SLIDE_MS) {
+        w.paused = true;
+        w.cardEndsAt = null;
+      } else if (w.stream[index].last && w.paused) {
+        w.paused = false;
+        this.showCard(index);
+      }
     }
     this.changed();
   }

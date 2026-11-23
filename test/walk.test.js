@@ -197,3 +197,27 @@ test('a restart mid-walk keeps its timers', async () => {
   assert.equal(copy.state.walk.index, 2);
   assert.equal(copy.state.walk.endsAt, old.walk.endsAt);
 });
+
+test('a Back near the end holds the card instead of snapping forward', async () => {
+  const { session, clock } = await toWalk({ cards: 4 });
+  const w = session.state.walk;
+  const last = w.stream.length - 1;
+  clock.set(w.endsAt - 20_000);
+  session.tick();
+  assert.equal(w.index, last);
+  session.moveCard(-1);
+  assert.equal(w.index, last - 1);
+  assert.equal(w.paused, true);
+  assert.equal(w.cardEndsAt, null);
+  for (let i = 0; i < 5; i++) {
+    clock.tick(5_000);
+    session.tick();
+  }
+  assert.equal(w.index, last - 1);
+  session.moveCard(1);
+  assert.equal(w.index, last);
+  assert.equal(w.done, false);
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.done, true);
+});
