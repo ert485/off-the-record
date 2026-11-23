@@ -5,7 +5,7 @@
 // look:
 //   1. Move    (yellow)  back / next phase, and in the walk-through, cards
 //   2. Now     (white)   the one number that matters right now, and its time
-//   3. Room    (blue)    what the room is asking for: pauses, stay, move on, back
+//   3. Room    (blue)    what the room is asking for: pause, stay, go back
 //   4. Content (grey)    what's on screen or needs a decision
 //   5. Lists   (folded)  every card, the stream
 // Hide and Remove are always red-outlined, on the right of the thing they act on.
@@ -17,12 +17,12 @@ const bar = document.getElementById('bar');
 const toasts = document.getElementById('toasts');
 
 const LABELS = {
+  demo: 'Demo',
   join: 'Join',
   submit: 'Submissions',
   cluster: 'Cluster',
   react: 'React',
   walk: 'Walk-through',
-  lastcall: 'Last call',
   finale: 'Finale',
   shred: 'Shred',
   closing: 'Closing',
@@ -30,26 +30,27 @@ const LABELS = {
 
 // What the move buttons say: a verb for where you're going.
 const FORWARD = {
+  join: 'Start',
   submit: 'Open submissions',
   cluster: 'Group the cards',
   react: 'Start reactions',
   walk: 'Start the walk-through',
-  lastcall: 'Go to last call',
   finale: 'Show the finale',
 };
 const BACK_TO = {
+  demo: 'the demo',
   join: 'the join screen',
   submit: 'submissions',
   cluster: 'grouping',
   react: 'reactions',
   walk: 'the walk-through',
-  lastcall: 'last call',
 };
 
 let view = null;
 let online = false;
 let pending = false;
 const drafts = new Map(); // theme id -> name being typed
+const haikuDrafts = new Map(); // theme id -> haiku being typed
 const folded = new Map(); // list name -> open or not, as the facilitator left it
 const explained = new Set(); // which ⓘ explanations are open
 
@@ -74,6 +75,7 @@ function paceText(pace) {
   return pace < 0 ? `~${min} min behind` : `~${min} min ahead`;
 }
 
+
 subscribe(
   `role=facilitator&t=${encodeURIComponent(token)}`,
   (v) => {
@@ -86,8 +88,22 @@ subscribe(
   },
 );
 
-// Typing a theme name must not be interrupted by live updates.
+// Live updates must not swap a button out between a finger going down and
+// coming up (the tap would be lost), nor interrupt typing. Both wait: the view
+// re-renders when the finger lifts or the field loses focus.
+let pointerDownAt = 0;
+const fingerDown = () => Date.now() - pointerDownAt < 1500;
+const typing = () => app.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
+document.addEventListener('pointerdown', () => (pointerDownAt = Date.now()));
+const released = () => {
+  pointerDownAt = 0;
+  // After the click has been delivered.
+  setTimeout(() => pending && render(), 300);
+};
+document.addEventListener('pointerup', released);
+document.addEventListener('pointercancel', released);
 app.addEventListener('focusout', () => setTimeout(() => pending && render(), 0));
+
 // Clocks tick in place, so buttons are never swapped out under a finger.
 const live = new Set();
 const liveClock = (fn) => {
@@ -95,52 +111,78 @@ const liveClock = (fn) => {
   live.add({ el, fn });
   return el;
 };
+const barLive = new Set();
 setInterval(() => {
-  renderBar();
-  for (const { el, fn } of live) el.textContent = fn();
+  for (const { el, fn } of [...barLive, ...live]) el.textContent = fn();
 }, 1000);
 
+// Returns true when the action went through. "Already moved on" means another
+// device (or an earlier tap) got there first: a no-op, not an error.
 async function act(action, body = {}) {
   try {
     await post(action, body, { 'x-facilitator-token': token });
+    return true;
   } catch (err) {
+    if (err.message === 'Already moved on') return false;
     const t = h('div', {}, err.message);
     toasts.append(t);
     setTimeout(() => t.remove(), 4000);
+    return false;
   }
 }
 
+const clockText = (ms) => `${ms < 0 ? '-' : ''}${formatClock(Math.abs(ms))}`;
+
 function renderBar() {
   if (!view) return;
-  const c = view.clock;
-  const pace = c?.pace ?? 0;
+  barLive.clear();
+  const talk = view.talk;
+  const started = talk?.startedAt != null;
+  const pace = view.pace ?? 0;
   const clamped = Math.max(-5, Math.min(5, pace));
   const color = Math.abs(pace) < 0.5 ? 'var(--ok)' : pace < 0 ? 'var(--warn)' : '#6aa9ff';
-  const explain = info(
-    'pace',
-    'Pace: where the session is against the 25-minute plan. The dot sits on the centre line when you’re on time, slides left when you’re behind and right when you’re ahead. Only you see it.',
+  const talkInfo = info(
+    'talk',
+    `Time left in the talk (${talk?.minutes ?? 25} minutes in all), counted from when you tapped “Start talk clock”. Only you see it.`,
   );
+  const paceInfo = info(
+    'pace',
+    'Pace: where the session is against the plan for finishing on time. The dot sits on the centre line when you’re on time, slides left when you’re behind and right when you’re ahead. Only you see it.',
+  );
+  const phonesInfo = info('phones', 'Phones with this session open right now, including any that wandered off and will come back.');
+  let left = '';
+  if (talk && !started) left = h('button', { class: 'small-btn primary', onclick: () => act('startTalk') }, 'Start talk clock');
+  else if (started) {
+    const el = h('span', { class: 'clock' }, '');
+    const fn = () => `${clockText(talk.startedAt + talk.minutes * 60_000 - serverNow())} left`;
+    el.textContent = fn();
+    barLive.add({ el, fn });
+    left = [el, talkInfo.button];
+  }
   fill(
     bar,
     h('span', { class: 'phase' }, LABELS[view.phase]),
-    c?.startedAt ? h('span', { class: 'clock' }, formatClock(serverNow() - c.startedAt)) : '',
+    left,
     // Ahead/behind marker: left of centre is behind, right is ahead.
-    c?.startedAt
+    started
       ? [
-          h('span', { class: 'pace', title: 'Pace against the 25-minute plan' }, h('span', { class: 'dot', style: { left: `${50 + clamped * 10}%`, background: color } })),
+          h('span', { class: 'pace', title: 'Pace against the plan' }, h('span', { class: 'dot', style: { left: `${50 + clamped * 10}%`, background: color } })),
           h('span', { class: 'pace-text', style: { color } }, paceText(pace)),
-          explain.button,
+          paceInfo.button,
         ]
       : '',
     h('span', { class: 'dim' }, `${view.phones} phones`),
+    phonesInfo.button,
     online ? '' : h('span', { class: 'offline' }, 'Reconnecting…'),
-    explain.text,
+    started ? talkInfo.text : '',
+    started ? paceInfo.text : '',
+    phonesInfo.text,
   );
 }
 
 function render() {
   if (!view) return;
-  if (app.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
+  if (typing() || fingerDown()) {
     pending = true;
     return;
   }
@@ -159,17 +201,42 @@ function zone(kind, ...children) {
 
 // ---- building blocks -------------------------------------------------------
 
+// Typed names and haiku, for approveAll. Only haiku that were edited are sent
+// (a missing one keeps the stored haiku; an empty one clears it).
+function typedDrafts(v) {
+  return {
+    names: Object.fromEntries(v.themes.map((t) => [t.id, drafts.get(t.id) ?? t.name])),
+    haikus: Object.fromEntries(v.themes.filter((t) => haikuDrafts.has(t.id)).map((t) => [t.id, haikuDrafts.get(t.id)])),
+  };
+}
+
+async function approveAll(v) {
+  const ok = await act('approveAll', typedDrafts(v));
+  if (ok) {
+    drafts.clear();
+    haikuDrafts.clear();
+  }
+  return ok;
+}
+
+// The move zone: back, and one forward button. When a part is over the
+// forward button is the server's prompt ("Ready for grouping?"); otherwise it
+// says where it goes. `from` makes a double tap, on this or another device, move once.
 function nav(v) {
   const back = h('button', { disabled: !v.canBack, onclick: () => act('back') }, v.prev ? `◀ Back to ${BACK_TO[v.prev]}` : '◀ Back');
   let next;
-  if (v.next === 'shred') {
-    next = h('button', { class: 'danger' }, 'Shred…');
+  if (v.phase === 'cluster') {
+    next = h('button', { class: 'primary prompt', onclick: async () => (await approveAll(v)) && act('advance', { from: 'cluster' }) }, 'Approve all and start reactions ▶');
+  } else if (v.next === 'shred') {
+    next = h('button', { class: 'danger prompt' }, v.move ? `${v.move.label} ▶` : 'Shred…');
     next.addEventListener('click', () => {
       if (confirm('Shred everything? This deletes every card, reaction and comment from the server, and Back cannot undo it.')) {
-        act('advance', { confirm: true });
+        act('advance', { from: v.phase, confirm: true });
       }
     });
-  } else next = h('button', { class: 'primary', onclick: () => act('advance') }, `${FORWARD[v.next] ?? LABELS[v.next]} ▶`);
+  } else {
+    next = h('button', { class: `primary${v.move ? ' prompt' : ''}`, onclick: () => act('advance', { from: v.phase }) }, `${v.move ? v.move.label : (FORWARD[v.next] ?? LABELS[v.next])} ▶`);
+  }
   return h('div', { class: 'nav' }, back, next);
 }
 
@@ -184,6 +251,7 @@ function now(main, label, time, timeLabel, ...extra) {
 }
 
 const since = (t) => liveClock(() => formatClock(serverNow() - t));
+const until = (t) => liveClock(() => clockText(t - serverNow()));
 
 function modButton(label, onclick) {
   return h('button', { class: 'small-btn mod', onclick }, label);
@@ -215,42 +283,13 @@ function mixLine(mix) {
   return h('div', { class: 'mixline' }, (mix ?? []).map(([e, n]) => `${e}${n > 1 ? `×${n}` : ''}`).join('  ') || ' ');
 }
 
-function pauseControls(v) {
-  if (v.pause) {
-    const p = v.pause;
-    const end = p.graceEndsAt ?? p.endsAt;
-    return h(
-      'div',
-      { class: 'room-row active' },
-      h('strong', {}, p.graceEndsAt ? 'Pause: grace period' : 'Pause running'),
-      liveClock(() => formatClock(end - serverNow())),
-      h('span', { class: 'dim grow' }, `${p.submittedCount} sent · ${p.openedCount - p.submittedCount} typing`),
-      h('button', { class: 'small-btn', onclick: () => act('endPause') }, 'End pause'),
-    );
-  }
-  return h(
-    'div',
-    { class: `room-row${v.pauseRequests ? ' active' : ''}` },
-    h('strong', { class: 'grow' },
-      !v.pauseRequests ? 'No pause requests' : v.pauseHeld ? `${v.pauseRequests} waiting for a pause (held)` : `${v.pauseRequests} asking for a pause`),
-    h('button', { class: 'small-btn room-btn', onclick: () => act('acceptPause') }, v.pauseRequests ? 'Start pause now' : 'Start a pause'),
-    v.pauseRequests && !v.pauseHeld ? h('button', { class: 'small-btn', onclick: () => act('holdPause') }, 'Later') : '',
-    v.pauseRequests
-      ? h('div', { class: 'small dim', style: { flexBasis: '100%' } },
-          v.pauseHeld
-            ? 'The room sees “Pause: coming up”. Start it when the person speaking is done.'
-            : '“Later” keeps the request waiting, and the room sees “Pause: coming up”, so you can let someone finish speaking first.')
-      : '',
-  );
-}
-
-function commentList(v) {
-  if (!v.comments?.length) return '';
+function commentList(label, comments) {
+  if (!comments?.length) return '';
   return h(
     'div',
     { class: 'stack' },
-    h('div', { class: 'label' }, 'Comments, live on the projector'),
-    v.comments.map((c) => h('div', { class: 'cardrow' }, h('div', { class: 'text' }, c.text), modButton('Remove', () => act('removeComment', { id: c.id })))),
+    h('div', { class: 'label' }, label),
+    comments.map((c) => h('div', { class: 'cardrow' }, h('div', { class: 'text' }, c.text), modButton('Remove', () => act('removeComment', { id: c.id })))),
   );
 }
 
@@ -274,91 +313,173 @@ const PROMPTS = [
 ];
 const OVERVIEW_PROMPTS = ['First reactions: anything surprise you?', 'Which of these feels most like your year?'];
 
+// Matches the projector's fine print word for word.
 const DISCLOSURE =
-  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. I see cards before they’re shown and can remove any card or comment to prevent abuse. Everything on our server is shredded tonight.';
+  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. I see cards and comments before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
+
+// ---- grouping --------------------------------------------------------------
+
+// The late cards the quick call couldn't place: keep the themes, or regroup.
+function latePanel(late) {
+  if (late?.status !== 'flagged') return '';
+  return h(
+    'div',
+    { class: 'alert late' },
+    h('strong', {}, 'Late cards need your call'),
+    h('div', { class: 'small dim' }, 'These arrived after the themes were made and don’t fit them cleanly.'),
+    late.flags.map((f) =>
+      h('div', { class: 'group dupes' }, f.cards.map((c) => h('div', { class: 'text' }, c.text)), h('div', { class: 'small dim' }, f.reason))),
+    h('div', { class: 'row wrap' },
+      h('button', { class: 'primary', onclick: () => act('keepLate') }, 'Keep the themes and add the late arrivals'),
+      h('button', { onclick: () => act('regroupAll') }, 'Regroup everything (~40 seconds)')),
+  );
+}
+
+// One theme: name and haiku as typed drafts (they survive live updates),
+// approve, and its cards.
+function themeBox(t) {
+  const name = h('input', { type: 'text', maxLength: 60, placeholder: 'Theme name' });
+  name.value = drafts.get(t.id) ?? t.name;
+  const haiku = h('input', { type: 'text', placeholder: 'Haiku (optional)', 'aria-label': 'Haiku' });
+  haiku.value = haikuDrafts.get(t.id) ?? t.haiku ?? '';
+  const button = h('button', { class: 'small-btn' });
+  const changed = () => name.value.trim() !== t.name || haiku.value !== (t.haiku ?? '');
+  const refresh = () => {
+    button.textContent = !t.approved ? 'Approve' : changed() ? 'Approve changes' : 'Approved ✓';
+    button.classList.toggle('primary', !t.approved || changed());
+  };
+  const approve = async () => {
+    const body = { id: t.id, name: name.value };
+    if (haikuDrafts.has(t.id) || haiku.value !== (t.haiku ?? '')) body.haiku = haiku.value;
+    if (await act('approveTheme', body)) {
+      drafts.delete(t.id);
+      haikuDrafts.delete(t.id);
+    }
+  };
+  name.addEventListener('input', () => {
+    drafts.set(t.id, name.value);
+    refresh();
+  });
+  haiku.addEventListener('input', () => {
+    haikuDrafts.set(t.id, haiku.value);
+    refresh();
+  });
+  for (const input of [name, haiku]) input.addEventListener('keydown', (e) => e.key === 'Enter' && (input.blur(), approve()));
+  button.addEventListener('click', approve);
+  refresh();
+  return h(
+    'div',
+    { class: `theme${t.approved ? ' approved' : ''}` },
+    h('div', { class: 'row' }, name, button),
+    h('div', { class: 'row' }, haiku),
+    t.groups.map((g) => h('div', { class: `group${g.cards.length > 1 ? ' dupes' : ''}` }, g.cards.map(cardRow))),
+  );
+}
+
+function themeDrafts(v) {
+  const unapproved = v.themes.filter((t) => !t.approved).length;
+  return [
+    latePanel(v.clustering.late),
+    v.themes.length && unapproved
+      ? h('div', { class: 'row' },
+          h('span', { class: 'grow dim small' }, `${unapproved} of ${v.themes.length} not approved. Unapproved themes show no name on the projector.`),
+          h('button', { class: 'small-btn primary', onclick: () => approveAll(v) }, 'Approve all'))
+      : '',
+    v.themes.map(themeBox),
+  ];
+}
 
 // ---- phases ----------------------------------------------------------------
 
 const PHASES = {
-  join: (v) => ({
-    now: now(v.phones, ' phones connected'),
-    content: [h('div', { class: 'label' }, 'Trust disclosure (fine print on the projector)'), h('p', { class: 'disclosure' }, DISCLOSURE)],
-  }),
+  demo: (v) => {
+    const d = v.demo;
+    if (!d) return { content: h('p', { class: 'dim' }, 'Talk through the app, then start the session.') };
+    const stepInfo = info('demo', 'The demo is a short scripted tour on the projector and the phones. Next shows the next step; Back goes to the one before.');
+    return {
+      now: now(
+        d.name,
+        [` step ${d.step + 1} of ${d.steps} `, stepInfo.button],
+        undefined,
+        '',
+        stepInfo.text,
+        h('div', { class: 'nav' },
+          h('button', { disabled: d.step === 0, onclick: () => act('demoBack') }, '◀ Back'),
+          h('button', { class: 'primary', disabled: d.step >= d.steps - 1, onclick: () => act('demoNext') }, 'Next ▶')),
+      ),
+    };
+  },
 
-  submit: (v) => ({
-    now: now(
-      v.cards.length,
-      (() => {
-        const phones = Math.max(v.phones, v.submit.people);
-        const pct = phones ? Math.round((v.submit.people / phones) * 100) : 0;
-        return ` ${v.cards.length === 1 ? 'card' : 'cards'} · ${v.submit.people} of ${phones} phones have shared (${pct}%)`;
-      })(),
-      liveClock(() => {
-        const left = v.submit.endsAt - serverNow();
-        return `${left < 0 ? '-' : ''}${formatClock(Math.abs(left))}`;
-      }),
-      ' left',
-      h('div', { class: 'row wrap' },
-        h('button', { class: 'small-btn', onclick: () => act('extend') }, '+1 minute'),
-        h('button', { class: `small-btn${v.submit.nudgesOn ? ' on' : ''}`, onclick: () => act('nudges', { on: !v.submit.nudgesOn }) }, `Nudges ${v.submit.nudgesOn ? 'on' : 'off'}`),
-        h('span', { class: 'small dim grow' }, nudgeStatus(v.submit))),
-    ),
-    content: h('p', { class: 'dim small' }, 'Cards arrive below. Hide any card that shouldn’t be shown.'),
-    lists: allCards(v, true),
-  }),
+  join: (v) => {
+    const i = info('phones', 'Phones with this session open right now.');
+    return {
+      now: now(v.phones, [' phones connected ', i.button], undefined, '', i.text),
+      content: [h('div', { class: 'label' }, 'Trust disclosure (fine print on the projector)'), h('p', { class: 'disclosure' }, DISCLOSURE)],
+    };
+  },
+
+  submit: (v) => {
+    const phones = Math.max(v.phones, v.submit.people);
+    const pct = phones ? Math.round((v.submit.people / phones) * 100) : 0;
+    const countInfo = info('submit-count', 'Cards submitted so far, and how many phones have sent at least one (the percentage is of connected phones).');
+    const timeInfo = info('submit-time', 'Time left for submissions. The room sees the same countdown. “+1 minute” adds a minute; nothing closes by itself, you move on.');
+    const c = v.clustering;
+    return {
+      now: now(
+        v.cards.length,
+        [` ${v.cards.length === 1 ? 'card' : 'cards'} · ${v.submit.people} of ${phones} phones have shared (${pct}%) `, countInfo.button],
+        v.submit.endsAt !== null ? until(v.submit.endsAt) : undefined,
+        [' left ', timeInfo.button],
+        countInfo.text,
+        timeInfo.text,
+        h('div', { class: 'row wrap' },
+          h('button', { class: 'small-btn', onclick: () => act('extend') }, '+1 minute'),
+          h('button', { class: `small-btn${v.submit.nudgesOn ? ' on' : ''}`, onclick: () => act('nudges', { on: !v.submit.nudgesOn }) }, `Nudges ${v.submit.nudgesOn ? 'on' : 'off'}`),
+          h('span', { class: 'small dim grow' }, nudgeStatus(v.submit))),
+        c.status === 'running' ? h('div', { class: 'small dim' }, 'Grouping started (about 40 seconds)…') : '',
+      ),
+      content: [h('p', { class: 'dim small' }, 'Cards arrive below. Hide any card that shouldn’t be shown.'), v.themes.length ? themeDrafts(v) : ''],
+      lists: allCards(v, true),
+    };
+  },
 
   cluster: (v) => {
     const c = v.clustering;
     const unapproved = v.themes.filter((t) => !t.approved).length;
-    const status =
-      c.status === 'running'
+    const lateRunning = c.late?.status === 'running';
+    const status = lateRunning
+      ? 'Checking the late cards…'
+      : c.status === 'running'
         ? 'Grouping with Claude Haiku…'
-        : c.empty
-          ? 'No cards were submitted, so there’s nothing to group.'
-          : c.status === 'failed'
-            ? c.error === 'Skipped'
-              ? 'Skipped the AI: one card per group. Name the theme, or Retry.'
-              : `Grouping failed: ${c.error}. Showing one card per group.`
-            : c.local
-              ? 'Grouped without AI (no API key on the server): one card per group.'
-              : unapproved
-                ? `${unapproved} of ${v.themes.length} names not approved. Unapproved themes show no name on the projector.`
-                : 'All names approved.';
-    const approveAll = () => {
-      const names = Object.fromEntries(v.themes.map((t) => [t.id, drafts.get(t.id) ?? t.name]));
-      drafts.clear();
-      act('approveAll', { names });
-    };
+        : c.late?.status === 'flagged'
+          ? 'Some late cards don’t fit the themes: choose below.'
+          : c.empty
+            ? 'No cards were submitted, so there’s nothing to group.'
+            : c.status === 'failed'
+              ? c.error === 'Skipped'
+                ? 'Skipped the AI: one card per group. Name the theme, or Retry.'
+                : `Grouping failed: ${c.error}. Showing one card per group.`
+              : c.local
+                ? 'Grouped without AI (no API key on the server): one card per group.'
+                : unapproved
+                  ? `${unapproved} of ${v.themes.length} names not approved. Unapproved themes show no name on the projector.`
+                  : 'All names approved.';
+    const themesInfo = info('themes', 'How many themes the cards fell into. A theme shows on the projector only once you approve its name.');
     return {
       now: now(
         v.themes.length,
-        v.themes.length === 1 ? ' theme' : ' themes',
+        [v.themes.length === 1 ? ' theme ' : ' themes ', themesInfo.button],
         undefined,
         '',
+        themesInfo.text,
         h('div', { class: 'row' },
           h('span', { class: 'grow dim small' }, status),
           // Don't wait on a slow or stuck API: every card becomes its own group.
-          c.status === 'running' ? h('button', { class: 'small-btn', onclick: () => act('skipClustering') }, 'Skip the AI') : '',
-          c.status === 'failed' ? h('button', { class: 'small-btn', onclick: () => act('recluster') }, 'Retry') : '',
-          v.themes.length && unapproved && c.status !== 'running' ? h('button', { class: 'small-btn primary', onclick: approveAll }, 'Approve all') : ''),
+          c.status === 'running' || lateRunning ? h('button', { class: 'small-btn', onclick: () => act('skipClustering') }, 'Skip the AI') : '',
+          c.status === 'failed' ? h('button', { class: 'small-btn', onclick: () => act('recluster') }, 'Retry') : ''),
       ),
       content: [
-        v.themes.map((t) => {
-          const input = h('input', { type: 'text', maxLength: 60, placeholder: 'Theme name' });
-          input.value = drafts.get(t.id) ?? t.name;
-          input.addEventListener('input', () => drafts.set(t.id, input.value));
-          const approve = () => {
-            drafts.delete(t.id);
-            act('approveTheme', { id: t.id, name: input.value });
-          };
-          input.addEventListener('keydown', (e) => e.key === 'Enter' && (input.blur(), approve()));
-          return h(
-            'div',
-            { class: `theme${t.approved ? ' approved' : ''}` },
-            h('div', { class: 'row' }, input, h('button', { class: `small-btn${t.approved ? '' : ' primary'}`, onclick: approve }, t.approved ? 'Approved ✓' : 'Approve')),
-            t.groups.map((g) => h('div', { class: `group${g.cards.length > 1 ? ' dupes' : ''}` }, g.cards.map(cardRow))),
-          );
-        }),
+        themeDrafts(v),
         c.status !== 'running' && c.status !== 'idle' && !c.empty ? h('button', { class: 'quiet', onclick: () => act('recluster') }, 'Re-run grouping') : '',
       ],
     };
@@ -367,9 +488,20 @@ const PHASES = {
   react: (v) => {
     const total = Math.max(v.phones, v.react.done);
     const pct = total ? Math.round((v.react.done / total) * 100) : 0;
+    const pctInfo = info('react-pct', 'Share of connected phones that have finished reacting to every card. “Done” is the phone’s own button.');
+    const timeInfo = info('react-time', 'Time left for reactions. The room sees the same countdown. “+1 minute” adds a minute; when time is up or every phone is done, you’ll be asked to move on.');
+    const countInfo = info('react-count', 'Every emoji tap from every phone so far, counted once per emoji per card.');
     return {
-      now: now(`${pct}%`, ` of phones finished (${v.react.done} of ${total})`, since(v.phaseStartedAt), ' in this phase'),
-      content: h('p', { class: 'dim small' }, `${v.react.reactions} reactions so far. Move on when it feels right: there’s no fixed cutoff.`),
+      now: now(
+        `${pct}%`,
+        [` of phones finished (${v.react.done} of ${total}) `, pctInfo.button],
+        v.react.endsAt !== null ? until(v.react.endsAt) : undefined,
+        [' left ', timeInfo.button],
+        pctInfo.text,
+        timeInfo.text,
+        h('div', { class: 'row wrap' }, h('button', { class: 'small-btn', onclick: () => act('extendReact') }, '+1 minute')),
+      ),
+      content: h('div', {}, h('span', { class: 'dim small' }, `${v.react.reactions} reactions so far `), countInfo.button, countInfo.text),
       lists: allCards(v),
     };
   },
@@ -378,66 +510,72 @@ const PHASES = {
     const w = v.walk;
     const item = w.item;
     const overview = !!item?.overview;
-    const group = overview || !item ? null : v.themes.flatMap((t) => t.groups).find((g) => g.id === item.groupId);
+    const lastSlide = !!item?.last;
+    const group = overview || lastSlide || !item ? null : v.themes.flatMap((t) => t.groups).find((g) => g.id === item.groupId);
     const shown = group?.cards.find((c) => !c.hidden);
-    const cards = Math.max(0, w.total - 1);
-    const budgetInfo = info(
-      'budget',
-      `The walk-through’s planned 9½ minutes divided by the ${cards} cards: a rough average per card, not a limit. Spend longer where the room wants to.`,
-    );
+    const cards = Math.max(0, w.total - 2); // not the overview or the last slide
     const prompts = overview ? OVERVIEW_PROMPTS : [PROMPTS[w.index % PROMPTS.length], PROMPTS[(w.index + 1) % PROMPTS.length]];
+    const posInfo = info('walk-pos', 'Where you are: the themes overview first, then the cards in order of reactions, then a last slide that invites the room to speak.');
+    const timeInfo = info('walk-time', 'How long this card has been on screen. The projector shows the time left in the whole walk-through instead.');
+    const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (20 seconds are kept for the last slide). It’s a rough average, not a limit: spend longer where the room wants to.');
+    const signalInfo = info('signals', 'Phones asking to stay on this card or to go back. They reset on every card, and the room can’t see these counts.');
+    const showLeft = !lastSlide && !w.done && w.cardsLeft !== null;
     return {
       move: [
         nav(v),
         h('div', { class: 'walk-nav' },
-          h('button', { disabled: w.index === 0, onclick: () => act('prevCard') }, w.index === 1 ? '◀ Back to themes' : '◀ Back one card'),
-          h('button', { class: 'primary', disabled: w.index >= w.total - 1, onclick: () => act('nextCard') }, w.index === 0 ? 'First card ▶' : 'Next card ▶')),
+          h('button', { disabled: w.index === 0, onclick: () => act('prevCard', { from: w.index }) }, w.index === 1 ? '◀ Back to the themes overview' : '◀ Back one card'),
+          h('button', { class: 'primary', disabled: w.done, onclick: () => act('nextCard', { from: w.index }) }, w.index === 0 ? 'First card ▶' : lastSlide ? 'Finish the walk-through ▶' : 'Next card ▶')),
       ],
       now: now(
-        overview ? 'Themes' : `Card ${w.index} of ${cards}`,
-        '',
+        overview ? 'Themes' : lastSlide ? 'Last slide' : `Card ${w.index} of ${cards}`,
+        [' ', posInfo.button],
         since(w.cardStartedAt),
-        overview ? ' on the themes' : [` on this card · ~${formatClock(w.budgetMs)} average `, budgetInfo.button],
-        budgetInfo.text,
+        [w.paused ? ' on this card (paused) ' : ' on this card ', timeInfo.button],
+        posInfo.text,
+        timeInfo.text,
+        showLeft ? h('div', { class: 'small dim' }, `${w.cardsLeft} ${w.cardsLeft === 1 ? 'card' : 'cards'} left · ~${formatClock(w.cardMs)} each `, leftInfo.button) : '',
+        showLeft ? leftInfo.text : '',
       ),
       room: [
-        pauseControls(v),
+        h('div', { class: `room-row${w.paused ? ' active' : ''}` },
+          h('strong', { class: 'grow' }, w.paused ? 'Paused: the card stays until you resume' : 'Running'),
+          h('button', { class: 'small-btn room-btn', onclick: () => act('pauseWalk', { paused: !w.paused }) }, w.paused ? 'Resume' : 'Pause')),
         h('div', { class: 'signals' },
           h('div', {}, h('b', {}, w.stay), 'stay'),
-          h('div', { class: 'private' }, h('b', {}, w.moveOn), 'move on (only you)'),
           h('div', {}, h('b', {}, w.back), 'go back')),
+        h('div', {}, signalInfo.button),
+        signalInfo.text,
       ],
       content: [
         overview
-          ? h('div', { class: 'current' }, 'The themes are on the projector. Say aloud: you set the pace, timers are hints, and anyone can ask to stay, move on or go back.')
-          : [
-              item?.theme ? h('div', { class: 'dim' }, item.theme) : '',
-              h('div', { class: 'row', style: { alignItems: 'flex-start' } },
-                h('div', { class: 'current grow' }, item?.hidden ? '(hidden)' : (item?.text ?? 'No cards')),
-                shown ? modButton('Hide', () => act('hideCard', { id: shown.id, hidden: true })) : ''),
-              item?.similar || item?.moreInTheme
-                ? h('div', { class: 'dim small' }, [item.similar && `+${item.similar} similar`, item.moreInTheme && `+${item.moreInTheme} more like this`].filter(Boolean).join(' · '))
-                : '',
-              mixLine(item?.mix),
-            ],
-        h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
-        commentList(v),
+          ? h('div', { class: 'current' }, 'The themes are on the projector. Say aloud: you set the pace, timers are hints, and anyone can ask to stay or go back.')
+          : lastSlide
+            ? h('div', { class: 'current' }, 'Anything else? Out loud.')
+            : [
+                item?.theme ? h('div', { class: 'dim' }, item.theme) : '',
+                item?.haiku ? h('div', { class: 'dim small' }, item.haiku) : '',
+                h('div', { class: 'row', style: { alignItems: 'flex-start' } },
+                  h('div', { class: 'current grow' }, item?.hidden ? '(hidden)' : (item?.text ?? 'No cards')),
+                  shown ? modButton('Hide', () => act('hideCard', { id: shown.id, hidden: true })) : ''),
+                item?.similar || item?.moreInTheme
+                  ? h('div', { class: 'dim small' }, [item.similar && `+${item.similar} similar`, item.moreInTheme && `+${item.moreInTheme} more like this`].filter(Boolean).join(' · '))
+                  : '',
+                mixLine(item?.mix),
+              ],
+        lastSlide ? '' : h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
+        commentList('Comments on this card, live on the projector', v.comments?.current),
+        commentList('Comments on the next card, not shown yet', v.comments?.next),
       ],
       lists: foldable(
         'stream',
         'Stream',
         false,
         h('p', { class: 'small dim' }, 'Themes in order of total reactions, then cards in order of reactions inside each theme.'),
-        h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, i === 0 ? s.text : `${i}. ${s.text ?? '(hidden)'} · ${s.reactions} reactions`))),
+        h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, i === 0 || i === w.stream.length - 1 ? s.text : `${i}. ${s.text ?? '(hidden)'} · ${s.reactions} reactions`))),
       ),
     };
   },
-
-  lastcall: (v) => ({
-    now: now(v.comments?.length ?? 0, ' anonymous comments', since(v.phaseStartedAt), ' in this phase'),
-    room: pauseControls(v),
-    content: [h('p', { class: 'dim small' }, 'In person first: anything else to say out loud? The anonymous pause is there if someone prefers it.'), commentList(v)],
-  }),
 
   finale: () => ({
     content: h('p', { class: 'dim' }, 'The fingerprint is on the projector. Let it sit. Next is the shred, which needs a confirm.'),

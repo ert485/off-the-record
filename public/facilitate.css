@@ -15,7 +15,7 @@ body { font-size: 16px; }
 .pace .dot { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; transform: translate(-50%, -50%); transition: left 1s ease, background 1s ease; }
 #app { max-width: 920px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
 .nav { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
-.nav button { min-height: 56px; font-size: 17px; }
+.nav button { min-height: 64px; font-size: 18px; }
 section.panel { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 section.panel h3 { margin: 0; font-size: 15px; color: var(--text-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .stat { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -69,3 +69,8 @@ details summary { cursor: pointer; color: var(--text-dim); }
 .info { min-height: 0; padding: 0 6px; border: none; background: none; color: var(--text-faint); font-size: 16px; line-height: 1; }
 .info.info-open { color: var(--text); }
 .info-text { flex-basis: 100%; font-size: 13px; color: var(--text-dim); }
+.nav button.prompt { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+.nav button.danger.prompt { box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 35%, transparent); }
+.alert.late { flex-direction: column; align-items: stretch; }
+.theme .row input[type='text'] { flex: 1; min-width: 0; }
+.zone-now .nav { margin-top: 4px; }
