@@ -123,6 +123,8 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   const facilitatorView = () => view(`role=facilitator&t=${encodeURIComponent(TOKEN)}`);
 
   // A whole session.
+  await run('advance'); // demo
+  await run('advance'); // join
   await run('advance'); // submit
   for (const [i, cid] of PHONES.entries()) {
     await post('submit', { cid, texts: [`card ${i} ${MARKER}`, `another ${i} ${MARKER}`] });
@@ -135,19 +137,12 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   await run('advance'); // react
   const groups = (await view(`role=phone&cid=${PHONES[0]}`)).react.groups;
   for (const cid of PHONES) {
-    for (const g of groups) await post('react', { cid, groupId: g.id, emojis: ['🙋', '🦆'] });
+    for (const g of groups) await post('react', { cid, groupId: g.id, emojis: ['🙋', '🦆'], comment: `comment ${MARKER}` });
     await post('reactDone', { cid });
   }
   await run('advance'); // walk
   await post('signal', { cid: PHONES[0], kind: 'stay', on: true });
-  await post('requestPause', { cid: PHONES[1], on: true });
-  await run('acceptPause');
-  await post('comment', { cid: PHONES[1], text: `comment ${MARKER}` });
-  await run('endPause');
   await run('nextCard');
-  await run('advance'); // lastcall
-  await run('acceptPause');
-  await post('comment', { cid: PHONES[2], text: `last ${MARKER}` });
   await run('advance'); // finale
   assert.ok(JSON.stringify(await view('role=projector')).includes('🦆'));
 
@@ -189,6 +184,6 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   const unconfirmed = await fetch(`${base}/api/reset`, { method: 'POST', headers: { 'x-facilitator-token': TOKEN }, body: '{}' });
   assert.equal(unconfirmed.status, 400);
   await run('reset', { confirm: true });
-  assert.equal((await view('role=projector')).phase, 'join');
+  assert.equal((await view('role=projector')).phase, 'teaser');
   assert.deepEqual(filesContaining(scanned(), MARKER), [], 'still nothing after starting a new session');
 });

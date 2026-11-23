@@ -11,6 +11,7 @@ const PROMPT = 'Write down something you experienced, felt, or were surprised by
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
 // Every keyboard puts its emojis somewhere slightly different.
+const MAX_EMOJIS = 14; // the server's cap per card: 8 presets + 6 of your own
 const MAX_OWN = 6; // own-emoji chips shown on a card
 
 const EMOJI_KEYBOARD_HOWTO =
@@ -102,6 +103,15 @@ function identifierHint(text) {
 // ---- screens ----------------------------------------------------------------
 
 const SCREENS = {
+  teaser: (view) => ({
+    el: h(
+      'div',
+      { class: 'teaser' },
+      h('h1', {}, view.teaser.title),
+      view.teaser.lines.map((line) => h('p', {}, line)),
+    ),
+  }),
+  demo: () => lookUp('Starting soon', 'Look up: the facilitator is showing how this works.'),
   join: () => ({
     el: h(
       'div',
@@ -126,7 +136,6 @@ const SCREENS = {
   cluster: () => lookUp('Look up', 'Grouping the cards.'),
   react: reactScreen,
   walk: walkScreen,
-  lastcall: walkScreen,
   finale: () => lookUp(),
   shred: () => {
     local.clear();
@@ -225,7 +234,7 @@ function submitScreen() {
     }
     writeArea.hidden = left <= 0;
     doneText.hidden = left > 0;
-    doneText.textContent = `You've shared ${view?.submit.max ?? 3} cards. Thank you. Look up when Erik moves on.`;
+    doneText.textContent = `You've shared ${view?.submit.max ?? 3} cards. Thank you. Look up when the facilitator moves on.`;
     listHead.hidden = notes.length === 0;
     listHead.textContent = left > 0 ? 'Private notes (only on this phone)' : 'Not shared. Only on this phone; wiped at the shred. To be sure, close this tab.';
     sentHead.hidden = sent.length === 0;
@@ -282,8 +291,8 @@ function submitScreen() {
         const stillLeft = remaining() - chosen.length;
         toast.textContent =
           stillLeft > 0
-            ? `Shared. You can still share ${stillLeft} more while there's time, or look up when Erik moves on.`
-            : 'Shared: that’s all 3. Look up when Erik moves on.';
+            ? `Shared. You can still share ${stillLeft} more while there's time, or look up when the facilitator moves on.`
+            : 'Shared: that’s all 3. Look up when the facilitator moves on.';
         toast.hidden = false;
         render();
       } catch (err) {
@@ -377,15 +386,32 @@ function submitScreen() {
 // ---- reactions: one card at a time, one pass ---------------------------------
 
 function reactScreen() {
-  const el = h('div', { class: 'stack' });
+  const timer = h('div', { class: 'timer-banner', hidden: true });
+  const body = h('div', { class: 'stack' });
+  const el = h('div', { class: 'stack' }, timer, body);
   let groups = [];
+  let endsAt = null;
+  // The card on screen, so a phase change can send what's unsent on it.
+  let current = null;
   // What this phone reacted to each card with, and the receipt that lets it
   // change those reactions. Kept and wiped like the private notes.
   const mine = local.get('reactions', {});
+  // Comment drafts per card, kept like the private notes.
+  const drafts = local.get('commentDrafts', {});
   let index = null; // position in this phone's shuffled order
   let shownId = null;
   let finished = false;
   let sentDone = false;
+
+  // Two warnings, like the submission ones. Nothing locks at zero.
+  function tickTimer() {
+    const left = endsAt ? endsAt - serverNow() : Infinity;
+    timer.hidden = finished || left > 60_000 || left <= 0;
+    if (left > 15_000) timer.textContent = `Finish the card you're on (${formatClock(left)}).`;
+    else timer.textContent = `15 seconds: send this card (${formatClock(left)}).`;
+    timer.classList.toggle('urgent', left <= 15_000);
+  }
+  const timerInterval = setInterval(tickTimer, 1000);
 
   function order() {
     const ids = groups.map((g) => g.id).sort((a, b) => a - b);
@@ -401,8 +427,10 @@ function reactScreen() {
   function finish() {
     finished = true;
     shownId = null;
+    current = null;
+    tickTimer();
     fill(
-      el,
+      body,
       lookUp('Look up', 'That was every card. Thank you. Waiting for everyone else to finish.').el,
       h('button', { class: 'quiet', onclick: () => ((finished = false), (index = order().length - 1), show()) }, '◀ Back to the last card'),
     );
@@ -421,6 +449,7 @@ function reactScreen() {
     const id = ids[index];
     if (shownId === id) return;
     shownId = id;
+    current = null;
     const group = groups.find((g) => g.id === id);
     const before = mine[id];
     const selected = new Set(before?.emojis ?? []);
@@ -437,9 +466,10 @@ function reactScreen() {
         const b = h('button', { class: selected.has(e) ? 'on' : '', 'aria-pressed': String(selected.has(e)) }, h('span', { class: 'e' }, e), h('span', { class: 'l' }, label));
         b.addEventListener('click', () => {
           if (selected.has(e)) selected.delete(e);
-          else selected.add(e);
+          else if (selected.size < MAX_EMOJIS) selected.add(e);
           b.classList.toggle('on', selected.has(e));
           b.setAttribute('aria-pressed', String(selected.has(e)));
+          refreshLimit();
         });
         return b;
       }),
@@ -451,8 +481,9 @@ function reactScreen() {
       const chip = h('button', { class: `chip${selected.has(e) ? ' on' : ''}` }, e);
       chip.addEventListener('click', () => {
         if (selected.has(e)) selected.delete(e);
-        else selected.add(e);
+        else if (selected.size < MAX_EMOJIS) selected.add(e);
         chip.classList.toggle('on', selected.has(e));
+        refreshLimit();
       });
       if (first) chips.prepend(chip);
       else chips.append(chip);
@@ -462,6 +493,15 @@ function reactScreen() {
     const emojiHint = h('div', { class: 'emoji-hint', hidden: true }, 'Emojis only: switch to the emoji keyboard.');
     const howTo = h('div', { class: 'small dim', hidden: true }, EMOJI_KEYBOARD_HOWTO);
     const addOwn = h('button', { class: 'add-own' }, '＋ Add your own emoji');
+    const limitHint = h('div', { class: 'emoji-hint', hidden: true }, `Up to ${MAX_EMOJIS} on a card. Tap one to remove it, then add another.`);
+    // At the cap, whatever isn't picked can't be picked; unpicking re-enables.
+    function refreshLimit() {
+      const full = selected.size >= MAX_EMOJIS;
+      for (const b of [...grid.children, ...chips.children]) b.disabled = full && !b.classList.contains('on');
+      addOwn.disabled = full;
+      input.disabled = full;
+      limitHint.hidden = !full;
+    }
     addOwn.addEventListener('click', () => {
       addOwn.hidden = true;
       input.hidden = false;
@@ -478,6 +518,7 @@ function reactScreen() {
         return;
       }
       input.value = '';
+      if (selected.size >= MAX_EMOJIS && !selected.has(e)) return;
       const preset = PRESETS.findIndex((p) => p.e === e);
       if (preset >= 0) {
         if (!selected.has(e)) grid.children[preset].click();
@@ -501,34 +542,72 @@ function reactScreen() {
       custom.unshift(e);
       selected.add(e);
       addChip(e, true);
+      refreshLimit();
     });
 
-    // Sends this card's reactions (or the changed ones, with the receipt),
-    // then moves by `step` cards.
-    async function save(step) {
+    const comment = h('textarea', { rows: 2, maxLength: HARD_MAX, placeholder: 'Add a comment (optional)', 'aria-label': 'Add a comment' });
+    comment.value = drafts[id] ?? before?.comment ?? '';
+    const commentHint = h('div');
+    const refreshComment = () => {
+      drafts[id] = comment.value;
+      local.set('commentDrafts', drafts);
+      fill(commentHint, identifierHint(comment.value) ?? '');
+    };
+    comment.addEventListener('input', refreshComment);
+    refreshComment();
+
+    // Sends the emojis and comment together, with the receipt when this card
+    // was sent before. A first send with neither is not sent at all.
+    let sending = false;
+    const dirty = () => {
       const emojis = [...selected];
-      const unchanged = before && emojis.length === before.emojis.length && emojis.every((e) => before.emojis.includes(e));
-      if (!unchanged && (before || step > 0)) {
+      const text = comment.value.trim();
+      if (!before) return emojis.length > 0 || text !== '';
+      const sameEmojis = emojis.length === before.emojis.length && emojis.every((e) => before.emojis.includes(e));
+      return !sameEmojis || text !== (before.comment ?? '');
+    };
+    async function send() {
+      const emojis = [...selected];
+      const text = comment.value.trim();
+      sending = true;
+      try {
+        const { receipt } = await post('react', { cid, groupId: id, emojis, receipt: before?.receipt, comment: text });
+        mine[id] = { emojis, comment: text, receipt: receipt ?? before?.receipt };
+        local.set('reactions', mine);
+        // Remember your own emojis for later cards, most recent first.
+        const own = custom.filter((e) => selected.has(e)); // newest first, as shown
+        if (own.length) local.set('recentEmojis', [...new Set([...own, ...local.get('recentEmojis', [])])].slice(0, MAX_OWN));
+      } finally {
+        sending = false;
+      }
+    }
+
+    // Sends this card if it has anything unsent, then moves by `step` cards.
+    async function save(step) {
+      if (dirty()) {
         try {
-          const { receipt } = await post('react', { cid, groupId: id, emojis, receipt: before?.receipt });
-          mine[id] = { emojis, receipt: receipt ?? before?.receipt };
-          local.set('reactions', mine);
-          // Remember your own emojis for later cards, most recent first.
-          const own = custom.filter((e) => selected.has(e)); // newest first, as shown
-          if (own.length) local.set('recentEmojis', [...new Set([...own, ...local.get('recentEmojis', [])])].slice(0, MAX_OWN));
+          await send();
         } catch (err) {
           if (!/every card|No such card/.test(err.message)) {
             // Stay on this card, with both buttons working again, so a
             // dropped connection never leaves the phone stuck here.
             next.disabled = false;
             back.disabled = index === 0;
-            return showError(el, err);
+            return showError(body, err);
           }
         }
       }
       index += step;
       show();
     }
+    // The phase left reactions: send what's unsent on this card, once. The
+    // draft stays in storage if it fails, so nothing is lost from the phone.
+    current = {
+      flush() {
+        if (sending || !dirty()) return;
+        send().catch(() => {});
+      },
+    };
 
     const next = h('button', { class: 'primary grow' }, 'Next');
     next.addEventListener('click', () => ((next.disabled = true), save(1)));
@@ -536,21 +615,27 @@ function reactScreen() {
     back.addEventListener('click', () => ((back.disabled = true), save(-1)));
 
     fill(
-      el,
-      h('div', { class: 'small faint' }, `Card ${index + 1} of ${ids.length}`, before ? ' · you reacted to this one' : ''),
+      body,
+      h('div', { class: 'small faint' }, `Card ${index + 1} of ${ids.length}`, (before?.emojis.length || before?.comment) ? ' · you reacted to this one' : ''),
       h('div', { class: 'react-card' }, textFor(group)),
       grid,
       h('div', { class: 'row wrap custom-row' }, addOwn, input, chips),
       howTo,
       emojiHint,
+      limitHint,
+      comment,
+      commentHint,
       h('div', { class: 'row' }, back, next),
     );
+    refreshLimit();
   }
 
   return {
     el,
     update(v) {
       groups = v.react.groups;
+      endsAt = v.react.endsAt;
+      tickTimer();
       if (finished) return;
       if (v.react.done && index === null) return finish();
       // Keep the place by card, not by position: a hidden card leaves the
@@ -562,26 +647,19 @@ function reactScreen() {
       }
       show();
     },
+    destroy() {
+      clearInterval(timerInterval);
+      current?.flush();
+    },
   };
 }
 
-// ---- walk-through and last call: look up, with a few light taps ---------------
+// ---- walk-through: look up, with two light taps -------------------------------
 
-function walkScreen(first) {
-  const last = first.phase === 'lastcall';
+function walkScreen() {
   const el = h('div', { class: 'stack', style: { flex: '1' } });
-  // Last call is in person first: say it aloud. The anonymous pause is the
-  // alternative, not the main ask.
-  const head = h(
-    'div',
-    { class: 'lookup' },
-    h('div', { class: 'big' }, last ? 'Last call' : 'Look up'),
-    last && h('p', { class: 'lastcall-sub' }, 'Anything else to say? Out loud, or anonymously:'),
-  );
   const signals = h('div', { class: 'signals' });
-  const pauseButton = h('button', {}, 'Ask for an anonymous pause');
-  const pausePanel = h('div');
-  el.append(head, pausePanel, last ? '' : signals, pauseButton);
+  el.append(h('div', { class: 'lookup' }, h('div', { class: 'big' }, 'Look up')), signals);
 
   const toggles = {};
   const signal = (kind, label, sub) => {
@@ -594,90 +672,12 @@ function walkScreen(first) {
     toggles[kind] = b;
     return b;
   };
-  signals.append(signal('stay', 'Stay', 'on this card'), signal('moveOn', 'Move on', 'only Erik sees'), signal('back', 'Go back', 'a card'));
-  pauseButton.addEventListener('click', () => {
-    const on = !pauseButton.classList.contains('on');
-    pauseButton.classList.toggle('on', on);
-    pauseButton.textContent = on ? 'Pause requested (tap to cancel)' : 'Ask for an anonymous pause';
-    post('requestPause', { cid, on }).catch(() => pauseButton.classList.toggle('on', !on));
-  });
-
-  let pauseKey = null;
-  let pause = null;
-  const countdown = h('div', { class: 'timer' });
-  const tick = () => {
-    if (!pause) return;
-    const end = pause.graceEndsAt ?? pause.endsAt;
-    countdown.textContent = pause.graceEndsAt
-      ? `Time's up: send as is or cancel (${formatClock(end - serverNow())})`
-      : formatClock(end - serverNow());
-  };
-  const interval = setInterval(tick, 500);
-
-  function renderPause() {
-    if (!pause) return fill(pausePanel, );
-    const parts = [h('div', { class: 'row' }, h('strong', { class: 'grow' }, 'Anonymous pause'), countdown)];
-    if (pause.text) parts.push(h('div', { class: 'about' }, pause.text));
-    if (pause.submitted) {
-      parts.push(h('p', { class: 'dim' }, 'Sent. Look up.'));
-    } else if (pause.opened) {
-      const input = h('textarea', { rows: 3, maxLength: HARD_MAX, placeholder: 'Your anonymous comment' });
-      // The draft survives a reload, but only within this pause: an unsent
-      // comment about one card never turns up in a later pause about another.
-      const at = pause.startedAt;
-      const draft = local.get('comment', null);
-      input.value = draft?.at === at ? draft.text : '';
-      const hint = h('div');
-      const send = h('button', { class: 'primary grow' }, 'Send');
-      const refresh = () => {
-        local.set('comment', { at, text: input.value });
-        send.disabled = !input.value.trim();
-        fill(hint, identifierHint(input.value) ?? '');
-      };
-      input.addEventListener('input', refresh);
-      refresh();
-      send.addEventListener('click', async () => {
-        send.disabled = true;
-        try {
-          await post('comment', { cid, text: input.value });
-          local.set('comment', null);
-        } catch (err) {
-          send.disabled = false;
-          showError(pausePanel, err);
-        }
-      });
-      const cancel = h('button', { class: 'quiet' }, 'Cancel');
-      cancel.addEventListener('click', () => {
-        local.set('comment', null);
-        post('cancelComment', { cid }).catch(() => {});
-      });
-      parts.push(input, hint, h('div', { class: 'row' }, cancel, send));
-      setTimeout(() => input.focus(), 0);
-    } else if (!pause.graceEndsAt) {
-      parts.push(h('button', { onclick: () => post('openComment', { cid }).catch((err) => showError(pausePanel, err)) }, 'Add a comment'));
-    }
-    fill(pausePanel, h('div', { class: 'pause-panel' }, parts));
-    tick();
-  }
+  signals.append(signal('stay', 'Stay', 'on this card'), signal('back', 'Go back', 'a card'));
 
   return {
     el,
     update(v) {
-      const w = v.walk;
-      for (const [kind, b] of Object.entries(toggles)) b.classList.toggle('on', !!w.mine[kind]);
-      pauseButton.classList.toggle('on', w.mine.pause);
-      pauseButton.textContent = w.mine.pause ? 'Pause requested (tap to cancel)' : 'Ask for an anonymous pause';
-      pause = w.pause;
-      pauseButton.hidden = !!pause;
-      signals.hidden = !!pause;
-      const key = pause ? `${pause.startedAt}:${pause.opened}:${pause.submitted}:${!!pause.graceEndsAt}` : null;
-      if (key !== pauseKey) {
-        pauseKey = key;
-        renderPause();
-      }
-    },
-    destroy() {
-      clearInterval(interval);
+      for (const [kind, b] of Object.entries(toggles)) b.classList.toggle('on', !!v.walk.mine[kind]);
     },
   };
 }

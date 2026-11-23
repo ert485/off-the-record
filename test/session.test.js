@@ -1,12 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Session, normalizeClusters, PAUSE, SKIPPED } from '../server/session.js';
-import { paceMinutes, PHASES } from '../server/phases.js';
+import { Session, normalizeClusters, cleanHaiku, SKIPPED } from '../server/session.js';
+import { paceMinutes, PHASES, PLAN } from '../server/phases.js';
+import { shredTimeline } from '../public/shared/shred-timing.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+const C = 'cccccccccccccccccccccccc';
 
-function make({ cluster } = {}) {
+// Starts at join: the demo before it is covered in flow.test.js.
+function make({ cluster, atDemo = false } = {}) {
   let t = 1_000_000;
   const clock = { now: () => t, tick: (ms) => (t += ms) };
   let changes = 0;
@@ -18,6 +21,8 @@ function make({ cluster } = {}) {
     onShred: () => shreds++,
     shredAnimationMs: 10,
   });
+  session.advance(); // teaser to demo
+  if (!atDemo) session.advance();
   return { session, clock, changes: () => changes, shreds: () => shreds };
 }
 
@@ -33,9 +38,14 @@ async function toReact(session) {
 }
 
 test('phases advance in order and back works until the shred', () => {
-  const { session } = make();
-  assert.equal(session.state.phase, 'join');
+  const { session } = make({ atDemo: true });
+  assert.equal(session.state.phase, 'demo');
+  session.back();
+  assert.equal(session.state.phase, 'teaser');
   assert.throws(() => session.back(), /Nothing to go back/);
+  session.advance();
+  session.advance();
+  assert.equal(session.state.phase, 'join');
   session.advance();
   assert.equal(session.state.phase, 'submit');
   session.back();
@@ -56,7 +66,6 @@ test('the shred needs a confirm and cannot be undone', async () => {
   const { session, shreds } = make();
   await toReact(session);
   session.advance(); // walk
-  session.advance(); // lastcall
   session.advance(); // finale
   assert.throws(() => session.advance(), /Confirm the shred/);
   session.advance({ confirm: true });
@@ -90,6 +99,23 @@ test('extend adds a minute to the submission window', () => {
   const before = session.state.submitEndsAt;
   session.extendSubmit();
   assert.equal(session.state.submitEndsAt, before + 60_000);
+});
+
+test('+1 minute tapped on two devices adds one minute', async () => {
+  const { session } = make();
+  session.advance(); // submit
+  const seen = session.view('facilitator').submit.endsAt;
+  session.extendSubmit({ from: seen });
+  assert.throws(() => session.extendSubmit({ from: seen }), /Already extended/);
+  assert.equal(session.state.submitEndsAt, seen + 60_000);
+  session.submitCards(A, ['one']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  const reactSeen = session.view('facilitator').react.endsAt;
+  session.extendReact({ from: reactSeen });
+  assert.throws(() => session.extendReact({ from: reactSeen }), /Already extended/);
+  assert.equal(session.state.reactEndsAt, reactSeen + 60_000);
 });
 
 test('clustering groups every card once; hidden cards are never sent', async () => {
@@ -129,8 +155,8 @@ test('a clustering failure falls back to one card per group', async () => {
 test('normalizeClusters drops unknown and duplicate ids and keeps missing ones', () => {
   const themes = normalizeClusters([{ name: 'T', groups: [[1, 2, 99], [2, 3]] }], [1, 2, 3, 4]);
   assert.deepEqual(themes, [
-    { name: 'T', groups: [[1, 2], [3]] },
-    { name: 'Other', groups: [[4]] },
+    { name: 'T', haiku: '', groups: [[1, 2], [3]] },
+    { name: 'Other', haiku: '', groups: [[4]] },
   ]);
 });
 
@@ -141,7 +167,7 @@ test('reactions are pooled per group and capped at one pass', async () => {
   assert.equal(groups.length, 3);
   session.react(A, groups[0].id, ['🙋', '🫂', '🙋']);
   session.react(A, groups[1].id, ['🦆']);
-  session.react(A, groups[2].id, []);
+  session.react(A, groups[2].id, [], null, 'no emoji for this one');
   assert.throws(() => session.react(A, groups[0].id, ['😂']), /every card/);
   assert.throws(() => session.react(B, groups[0].id, ['hello']), /emojis only/);
   session.reactDone(A);
@@ -149,19 +175,16 @@ test('reactions are pooled per group and capped at one pass', async () => {
   assert.equal(session.view('facilitator').react.done, 1);
 });
 
-test('walk-through: cards move, signals reset per card, move-on stays private', async () => {
+test('walk-through: cards move, signals reset per card, stay and back counted', async () => {
   const { session } = make();
   await toReact(session);
   session.advance();
   assert.equal(session.state.phase, 'walk');
   session.signal(A, 'stay', true);
-  session.signal(B, 'moveOn', true);
   session.signal(B, 'back', true);
   const p = session.view('projector');
   assert.equal(p.walk.stay, 1);
   assert.equal(p.walk.back, 1);
-  assert.equal(JSON.stringify(p).includes('moveOn'), false);
-  assert.equal(session.view('facilitator').walk.moveOn, 1);
   session.moveCard(1);
   assert.equal(session.view('projector').walk.stay, 0);
   session.moveCard(-1);
@@ -176,54 +199,176 @@ test('hidden cards leave the stream and the reaction stack', async () => {
   const texts = session.view('phone', { cid: A }).react.groups.flatMap((g) => g.texts);
   assert.equal(texts.includes(card.text), false);
   session.advance();
-  assert.equal(session.state.walk.stream.length, 3); // the overview, then 2 cards
+  assert.equal(session.state.walk.stream.length, 4); // the overview, 2 cards, the last slide
   assert.equal(session.state.walk.stream[0].overview, true);
   assert.equal(JSON.stringify(session.view('projector')).includes(card.text), false);
 });
 
-test('pause: ends when everyone who opened has submitted (after the minimum)', async () => {
-  const { session, clock } = make();
+// Seven phones, hex ids like the real ones.
+const PHONES = Array.from({ length: 7 }, (_, i) => String(i).repeat(24));
+
+test('a comment is sent with a card\'s reactions and stored with no author', async () => {
+  const { session } = make();
   await toReact(session);
-  session.advance();
-  session.requestPause(A, true);
-  assert.equal(session.view('projector').walk.pauseRequests, 1);
-  session.acceptPause();
-  assert.equal(session.view('projector').walk.pauseRequests, 0);
-  session.openComment(A);
-  session.openComment(B);
-  session.submitComment(A, 'me too, honestly');
-  assert.ok(session.state.pause);
-  session.submitComment(B, 'same');
-  clock.tick(PAUSE.minMs);
-  session.tick();
-  assert.equal(session.state.pause, null);
-  assert.equal(session.view('projector').walk.comments.length, 2);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  session.react(A, g, ['🙋'], null, '  ha ');
+  const { comments } = session.state;
+  assert.equal(comments.length, 1);
+  assert.deepEqual(Object.keys(comments[0]), ['id', 'g', 'text', 'r']);
+  assert.equal(comments[0].text, 'ha');
+  assert.equal(JSON.stringify(comments).includes(A), false);
 });
 
-test('pause: 90 seconds, then 20 seconds grace for anyone still typing', async () => {
-  const { session, clock } = make();
+test('sending again with the receipt replaces the reactions and the comment', async () => {
+  const { session } = make();
   await toReact(session);
-  session.advance();
-  session.acceptPause();
-  session.openComment(A);
-  clock.tick(PAUSE.maxMs);
-  session.tick();
-  assert.ok(session.state.pause.graceAt);
-  assert.throws(() => session.openComment(B), /ending/);
-  clock.tick(PAUSE.graceMs);
-  session.tick();
-  assert.equal(session.state.pause, null);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const { receipt } = session.react(A, g, ['🙋'], null, 'first');
+  session.react(A, g, ['🦆'], receipt, 'new');
+  assert.deepEqual(session.state.comments.map((c) => c.text), ['new']);
+  assert.deepEqual(session.state.reactions.map((r) => r.e), ['🦆']);
+  session.react(A, g, ['🫂'], receipt, '');
+  assert.equal(session.state.comments.length, 0);
+  assert.deepEqual(session.state.reactions.map((r) => r.e), ['🫂']);
 });
 
-test('the facilitator can remove a comment after it appears', async () => {
+test('a comment alone counts as a send; nothing at all does not', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  session.react(A, g, [], null, 'x');
+  assert.equal(session.state.comments.length, 1);
+  assert.throws(() => session.react(B, g, [], null, ''), /Pick an emoji or write a comment/);
+  assert.throws(() => session.react(B, g, []), /Pick an emoji or write a comment/);
+});
+
+test('an empty resend with the receipt clears the card\'s reactions and comment', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const { receipt } = session.react(A, g, ['🙋'], null, 'hi');
+  session.react(A, g, [], receipt, '');
+  assert.equal(session.state.reactions.length, 0);
+  assert.equal(session.state.comments.length, 0);
+  assert.equal(session.state.clients[A].reacted, 1);
+  assert.throws(() => session.react(A, g, [], 'feedfacefeedface', ''), /Nothing to change/);
+});
+
+test('a removed comment stays removed when the phone resends', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const { receipt } = session.react(A, g, ['🙋'], null, 'mean');
+  session.removeComment(session.state.comments[0].id);
+  session.react(A, g, ['🦆'], receipt, 'mean again');
+  assert.equal(session.state.comments.length, 0);
+  assert.deepEqual(session.state.reactions.map((r) => r.e), ['🦆']);
+  assert.equal(JSON.stringify(session.state.removedComments).includes(A), false);
+});
+
+test('comments are capped like cards', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  assert.throws(() => session.react(A, g, ['🙋'], null, 'x'.repeat(201)), /up to 200/);
+  session.react(A, g, ['🙋'], null, 'x'.repeat(200));
+});
+
+async function sevenComments() {
+  const made = make();
+  const { session } = made;
+  await toReact(session);
+  const groups = session.view('phone', { cid: A }).react.groups;
+  const stream = groups.map((g) => g.id);
+  PHONES.forEach((cid, i) => session.react(cid, stream[0], ['🙋'], null, `comment ${i}`));
+  session.advance(); // walk, on the overview
+  const idOf = (groupId) => session.state.walk.stream.findIndex((it) => it.groupId === groupId);
+  while (session.state.walk.index < idOf(stream[0])) session.moveCard(1);
+  return made;
+}
+
+test('the projector shows up to 5 comments, the rest counted', async () => {
+  const { session } = await sevenComments();
+  const one = session.view('projector').walk.comments;
+  assert.equal(one.shown.length, 5);
+  assert.equal(one.more, 2);
+  assert.deepEqual(session.view('projector').walk.comments, one);
+  assert.equal(JSON.stringify(session.view('phone', { cid: A })).includes('comment 0'), false);
+});
+
+test('comments show oldest first; the newest are the ones counted in +N more', async () => {
+  const { session } = await sevenComments();
+  const { shown, more } = session.view('projector').walk.comments;
+  assert.deepEqual(shown.map((c) => c.text), [0, 1, 2, 3, 4].map((i) => `comment ${i}`));
+  assert.equal(more, 2);
+  const all = session.view('facilitator').comments.current;
+  assert.deepEqual(all.map((c) => c.text), [0, 1, 2, 3, 4, 5, 6].map((i) => `comment ${i}`));
+});
+
+test('editing a comment keeps its place', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const { receipt } = session.react(A, g, ['🙋'], null, 'first');
+  session.react(B, g, ['🙋'], null, 'second');
+  session.react(A, g, ['🙋'], receipt, 'first, edited');
+  assert.deepEqual(session.allCommentsFor(g).map((c) => c.text), ['first, edited', 'second']);
+  // A comment added on a later resend goes to the end.
+  const { receipt: rb } = session.react(C, g, ['🙋']);
+  session.react(C, g, ['🙋'], rb, 'late');
+  assert.deepEqual(session.allCommentsFor(g).map((c) => c.text), ['first, edited', 'second', 'late']);
+});
+
+test('the emoji limit says how many to remove', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const many = (n) => Array.from({ length: n }, (_, i) => String.fromCodePoint(0x1f600 + i));
+  session.react(A, g, many(14));
+  assert.throws(() => session.react(B, g, many(15)), /Up to 14 emojis on a card: remove 1$/);
+  assert.throws(() => session.react(B, g, many(17)), /remove 3$/);
+});
+
+test('the facilitator sees every comment on the current and next card, and can remove one', async () => {
+  const { session } = await sevenComments();
+  const f = session.view('facilitator').comments;
+  assert.equal(f.current.length, 7);
+  assert.deepEqual(f.next, []);
+  const gone = f.current[0];
+  session.removeComment(gone.id);
+  assert.equal(JSON.stringify(session.view('projector')).includes(gone.text), false);
+  assert.equal(session.view('facilitator').comments.current.length, 6);
+});
+
+test('the facilitator also sees comments on the next card', async () => {
+  const { session } = await toReactAndComment();
+  const f = session.view('facilitator').comments;
+  assert.deepEqual(f.current, []);
+  assert.equal(f.next.length, 1);
+});
+
+async function toReactAndComment() {
+  const made = make();
+  const { session } = made;
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  session.react(A, g, [], null, 'for later');
+  session.advance(); // walk, on the overview
+  while (session.currentItem().groupId !== g && session.state.walk.index < session.state.walk.stream.length - 1) {
+    const next = session.state.walk.stream[session.state.walk.index + 1];
+    if (next.groupId === g) break;
+    session.moveCard(1);
+  }
+  return made;
+}
+
+test('the anonymous pause and move on are gone', async () => {
   const { session } = make();
   await toReact(session);
   session.advance();
-  session.acceptPause();
-  session.submitComment(A, 'mean comment');
-  const id = session.state.comments[0].id;
-  session.removeComment(id);
-  assert.equal(JSON.stringify(session.state).includes('mean comment'), false);
+  assert.equal(session.requestPause, undefined);
+  assert.equal(session.acceptPause, undefined);
+  assert.throws(() => session.signal(A, 'moveOn', true), /Unknown signal/);
 });
 
 test('finale gets the reaction sequence, nothing else', async () => {
@@ -233,26 +378,54 @@ test('finale gets the reaction sequence, nothing else', async () => {
   session.react(A, g.id, ['🎉', '😢']);
   session.advance();
   session.advance();
-  session.advance();
   const v = session.view('projector');
   assert.deepEqual(v.finale.sequence, ['🎉', '😢']);
 });
 
 test('pace marker: ahead before the plan, behind after it', () => {
-  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 1 }), 1);
-  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 4 }), 0);
-  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 8 }), -2);
-  assert.ok(Math.abs(paceMinutes({ phase: 'walk', elapsedMinutes: 12, walkIndex: 0, walkLength: 10 }) + 1.55) < 1e-9);
-  assert.equal(PHASES.length, 9);
+  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 4 }), 1);
+  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 7 }), 0);
+  assert.equal(paceMinutes({ phase: 'submit', elapsedMinutes: 12 }), -2);
+  // Walk-through: 6 minutes over 10 steps; at 17 minutes we should be on step 2 (16.7 to 17.3).
+  assert.ok(Math.abs(paceMinutes({ phase: 'walk', elapsedMinutes: 18, walkIndex: 0, walkLength: 10 }) + 1.9) < 1e-9);
+  assert.deepEqual(PHASES, ['teaser', 'demo', 'join', 'submit', 'cluster', 'react', 'walk', 'finale', 'shred', 'closing']);
+  assert.deepEqual(PLAN.walk, [15.5, 21.5]);
 });
 
 test('after the shred, the closing screen comes up by itself', async () => {
   const { session } = make();
   await toReact(session);
-  for (let i = 0; i < 3; i++) session.advance();
+  for (let i = 0; i < 2; i++) session.advance();
   session.advance({ confirm: true });
   assert.equal(session.state.phase, 'shred');
   await new Promise((r) => setTimeout(r, 30));
+  assert.equal(session.state.phase, 'closing');
+  assert.equal(session.shredPayload, null);
+});
+
+test('speeding up the shred brings the closing screen sooner', async () => {
+  let t = 1_000_000;
+  const session = new Session({
+    now: () => t,
+    clusterCards: async (cards) => ({ themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }),
+    shredAnimationMs: null, // the real timeline
+  });
+  session.advance(); // demo
+  session.advance(); // join
+  await toReact(session);
+  for (let i = 0; i < 2; i++) session.advance(); // walk, finale
+  session.advance({ confirm: true });
+  const start = session.state.phaseStartedAt;
+  const { closingAt } = shredTimeline(session.shredPayload);
+  assert.ok(closingAt > 5000);
+  // 300 ms before the end on the session's clock, the rest is sped up:
+  // the closing comes at t + (closingAt - (t - start)) / 3, 100 ms later.
+  t = start + closingAt - 300;
+  session.speedUp({ from: 'shred' });
+  assert.deepEqual(session.view('projector').speedUp, { at: t, factor: 3 });
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(session.state.phase, 'shred');
+  await new Promise((r) => setTimeout(r, 120));
   assert.equal(session.state.phase, 'closing');
   assert.equal(session.shredPayload, null);
 });
@@ -261,14 +434,16 @@ test('a new session can start only after the shred', async () => {
   const { session } = make();
   await toReact(session);
   assert.throws(() => session.reset(), /Shred first/);
-  for (let i = 0; i < 3; i++) session.advance();
+  for (let i = 0; i < 2; i++) session.advance();
   session.advance({ confirm: true });
   session.advance();
   session.reset();
-  assert.equal(session.state.phase, 'join');
+  assert.equal(session.state.phase, 'teaser');
   assert.equal(session.state.cards.length, 0);
   assert.equal(session.shredded, false);
-  session.advance();
+  session.advance(); // demo
+  session.advance(); // join
+  session.advance(); // submit
   session.submitCards(A, ['a fresh card']);
   assert.equal(session.state.cards.length, 1);
 });
@@ -327,7 +502,7 @@ test('each session has its own id, kept through the shred, new after a reset', a
   const first = session.view('phone', { cid: A }).session;
   assert.match(first, /^[0-9a-f]{16}$/);
   await toReact(session);
-  for (let i = 0; i < 3; i++) session.advance();
+  for (let i = 0; i < 2; i++) session.advance();
   session.advance({ confirm: true });
   assert.equal(session.view('phone', { cid: A }).session, first);
   session.advance();
@@ -349,8 +524,8 @@ test('a phone can go back and change its reactions to a card', async () => {
   // Changing doesn't use up the one pass.
   assert.equal(session.state.clients[A].reacted, 2);
   // A receipt only works for its own card.
-  assert.throws(() => session.react(B, g2.id, [], receipt), /Nothing to change/);
-  assert.throws(() => session.react(B, g1.id, [], 'feedfacefeedface'), /Nothing to change/);
+  assert.throws(() => session.react(B, g2.id, ['🎉'], receipt), /Nothing to change/);
+  assert.throws(() => session.react(B, g1.id, ['🎉'], 'feedfacefeedface'), /Nothing to change/);
   // Receipts carry no phone id.
   assert.equal(JSON.stringify(session.state.receipts).includes(A), false);
 });
@@ -390,16 +565,31 @@ test('going back to grouping after hiding a card keeps the groups, names and rea
   assert.deepEqual(session.emojiMix(g1.id), [['🙋', 1]]);
 });
 
-test('going back to grouping regroups when new cards came in', async () => {
-  const { session } = make();
+test('going back to grouping places new cards; existing groups, names and reactions stay', async () => {
+  let groupings = 0;
+  const { session } = make({
+    cluster: async (cards) => {
+      groupings += 1;
+      return { themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] };
+    },
+  });
   await toReact(session);
+  session.approveAll({});
+  const [g1] = session.view('phone', { cid: A }).react.groups;
+  session.react(A, g1.id, ['🙋']);
+  const before = session.state.themes.flatMap((t) => t.groups.map((g) => g.id));
   session.back(); // cluster
   session.back(); // submit
   session.submitCards(B, ['four']);
   session.advance(); // cluster
   await flush();
-  const grouped = session.state.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds));
-  assert.equal(grouped.length, 4);
+  assert.equal(groupings, 1);
+  assert.equal(session.state.clustering.late.status, 'done');
+  const groups = session.state.themes.flatMap((t) => t.groups);
+  assert.equal(groups.flatMap((g) => g.cardIds).length, 4);
+  assert.deepEqual(groups.map((g) => g.id).slice(0, before.length), before);
+  assert.equal(session.state.themes[0].approved, true);
+  assert.deepEqual(session.emojiMix(g1.id), [['🙋', 1]]);
 });
 
 test('the facilitator can skip a slow grouping; its late result is ignored', async () => {
@@ -428,8 +618,85 @@ test('going back to the walk-through does not restart its section timer', async 
   session.advance(); // walk
   const endsAt = session.view('projector').section.endsAt;
   clock.tick(120_000);
-  session.advance(); // lastcall
+  session.advance(); // finale
   clock.tick(30_000);
   session.back(); // walk
   assert.equal(session.view('projector').section.endsAt, endsAt);
+});
+
+const HAIKU = 'Snow on the keyboard / we all stare at the same screen / thaw comes late again';
+const withHaiku = (haiku) => async (cards) => ({ themes: [{ name: 'Work', haiku, groups: cards.map((c) => [c.id]) }] });
+
+test('a haiku is cleaned: newlines become " / ", too long is dropped', async () => {
+  assert.equal(cleanHaiku(42), '');
+  assert.equal(cleanHaiku('  one\ntwo \r\n three  '), 'one / two / three');
+  assert.equal(cleanHaiku('a   b'), 'a b');
+  assert.equal(cleanHaiku('abc\n'), 'abc');
+  assert.equal(cleanHaiku('\nabc'), 'abc');
+  assert.equal(cleanHaiku('x'.repeat(121)), '');
+  assert.equal(cleanHaiku('x'.repeat(120)).length, 120);
+  const themes = normalizeClusters([{ name: 'W', haiku: 'a\nb\nc', groups: [[1]] }], [1]);
+  assert.equal(themes[0].haiku, 'a / b / c');
+  assert.equal(normalizeClusters([], [1])[0].haiku, '');
+});
+
+test('the facilitator can edit or clear a haiku; approving covers both', async () => {
+  const { session } = make({ cluster: withHaiku(HAIKU) });
+  await toReact(session);
+  const t = session.state.themes[0];
+  assert.equal(t.haiku, HAIKU);
+  assert.equal(t.approved, false);
+  assert.throws(() => session.approveTheme(t.id, 'Work', 'x'.repeat(121)), /Haiku are up to 120 characters/);
+  assert.equal(t.approved, false);
+  session.approveTheme(t.id, 'Work', 'my own / haiku / here');
+  assert.equal(t.haiku, 'my own / haiku / here');
+  assert.equal(t.approved, true);
+  session.approveTheme(t.id, 'Work', '');
+  assert.equal(t.haiku, '');
+  session.approveTheme(t.id, 'Work', 'kept / as / is');
+  session.approveTheme(t.id, 'Work');
+  assert.equal(t.haiku, 'kept / as / is');
+  session.approveAll({}, { [t.id]: 'typed / in / bulk' });
+  assert.equal(t.haiku, 'typed / in / bulk');
+  assert.throws(() => session.approveAll({}, { [t.id]: 'x'.repeat(121) }), /Haiku are up to 120 characters/);
+  assert.equal(session.view('facilitator').themes[0].haiku, 'typed / in / bulk');
+});
+
+test("the projector shows an approved theme's haiku on its cards, never on the overview; phones never get it", async () => {
+  const { session } = make({ cluster: withHaiku(HAIKU) });
+  const phoneJson = () => JSON.stringify([A, B].map((cid) => session.view('phone', { cid })));
+  session.advance(); // submit
+  session.submitCards(A, ['one', 'two']);
+  session.submitCards(B, ['three']);
+  session.advance(); // cluster
+  await flush();
+  assert.equal(phoneJson().includes('Snow on the keyboard'), false);
+  session.advance(); // react
+  assert.equal(phoneJson().includes('Snow on the keyboard'), false);
+  session.approveAll({});
+  session.advance(); // walk
+  assert.equal(phoneJson().includes('Snow on the keyboard'), false);
+  const overview = session.view('projector').walk.item;
+  assert.ok(overview.overview);
+  assert.equal(JSON.stringify(overview).includes('Snow on the keyboard'), false);
+  session.moveCard(1);
+  assert.equal(session.view('projector').walk.item.haiku, HAIKU);
+  assert.equal(phoneJson().includes('Snow on the keyboard'), false);
+});
+
+test('a theme without a haiku shows none on the projector', async () => {
+  const { session } = make({ cluster: withHaiku('') });
+  await toReact(session);
+  session.approveAll({});
+  session.advance();
+  session.moveCard(1);
+  assert.equal('haiku' in session.view('projector').walk.item, false);
+});
+
+test("the projector's comments carry text only", async () => {
+  const { session } = await sevenComments();
+  const { shown } = session.view('projector').walk.comments;
+  assert.equal(shown.length, 5);
+  for (const c of shown) assert.deepEqual(Object.keys(c), ['text']);
+  assert.deepEqual(Object.keys(session.view('facilitator').comments.current[0]).includes('id'), true);
 });

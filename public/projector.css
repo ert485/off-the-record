@@ -1,16 +1,12 @@
 /* Sized in viewport units so it reads from the back row at any resolution. */
 body { background: #000; overflow: hidden; cursor: none; }
 #app { position: fixed; inset: 0; }
-.emoji, .mix, .particle, .pool, .sheet-emojis { font-family: var(--emoji); }
+.emoji, .mix, .pool, .sheet-emojis { font-family: var(--emoji); }
 
 #corner-qr { position: fixed; right: 1.5vw; bottom: 1.5vw; width: 13vw; display: flex; flex-direction: column; align-items: center; gap: 0.4vw; z-index: 5; opacity: 0.9; }
 #corner-qr span { font-size: 1.6vw; font-weight: 600; color: var(--text); text-align: center; line-height: 1.2; }
 #corner-qr img { width: 100%; background: white; padding: 0.4vw; border-radius: 0.6vw; }
 #section { position: fixed; top: 1.6vh; left: 50%; transform: translateX(-50%); font-size: 1.8vw; color: var(--text-dim); font-variant-numeric: tabular-nums; z-index: 5; }
-.overview-title { font-size: 3vw; color: var(--text-dim); margin-bottom: 3vh; }
-.overview { display: grid; gap: 1.6vh; font-size: 3.4vw; }
-.overview div { display: flex; justify-content: center; align-items: baseline; gap: 1.5vw; }
-.overview small { font-size: 1.5vw; color: var(--text-faint); }
 .closing { animation: fade-in 1.6s ease; }
 @keyframes fade-in { from { opacity: 0; } }
 #corner-qr.hidden { display: none; }
@@ -18,6 +14,11 @@ body { background: #000; overflow: hidden; cursor: none; }
 .center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 6vh 8vw; }
 .huge { font-size: 7vw; font-weight: 600; letter-spacing: -0.01em; }
 .sub { font-size: 2.2vw; color: var(--text-dim); margin-top: 2vh; }
+
+/* Teaser: the title large, its lines below. */
+.teaser .huge { font-size: 7.5vw; line-height: 1.1; }
+.teaser-lines { margin-top: 3vh; }
+.teaser-lines .sub { font-size: 2.8vw; margin-top: 1.4vh; line-height: 1.3; }
 
 .join { position: absolute; inset: 0; display: grid; grid-template-columns: auto 1fr; gap: 5vw; align-items: center; padding: 6vh 6vw; }
 .join .qr { width: min(42vw, 78vh); background: white; padding: 1.2vw; border-radius: 1.4vw; }
@@ -27,41 +28,129 @@ body { background: #000; overflow: hidden; cursor: none; }
 .join .disclosure { font-size: 1.1vw; line-height: 1.45; color: var(--text-faint); max-width: 46vw; }
 .join .phones { font-size: 1.6vw; color: var(--text-faint); margin-top: 3vh; }
 
-.walk { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr auto auto; padding: 4vh 6vw 3vh; gap: 2vh; }
-.walk .top { display: flex; justify-content: space-between; font-size: 1.6vw; color: var(--text-faint); }
-.walk .theme { color: var(--accent); }
-.walk .card { align-self: center; justify-self: center; text-align: center; font-weight: 500; line-height: 1.25; max-width: 78vw; overflow-wrap: anywhere; }
-.walk .more { font-size: 1.5vw; color: var(--text-faint); text-align: center; margin-top: 1.5vh; }
-.walk .mix { display: flex; justify-content: center; align-items: flex-end; gap: 2.4vw; min-height: 9vw; }
+:root { --manila: #e6cf94; --manila-edge: #b99a4c; }
+/* Leaves room under the walk for the waiting line, in one column that never grows
+   past the screen (a long emoji row shrinks to fit instead). A crowded card
+   fits by --crowd (1 down to 0.5, set by projector.js): it scales the card
+   text, comments and haiku, each to its floor, and the gaps and paddings
+   (to half). The bottom padding stays: the waiting line needs it. The rows
+   under the card are max-content, not auto: an auto row squeezes down to its
+   min-height when the card is crowded, and the emojis then ride up over the
+   card while the measured layout still looks as if it fits. */
+.walk { --crowd: 1; position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: max-content 1fr max-content max-content max-content; padding: calc(3vh * var(--crowd)) 6vw 8.5vh; gap: calc(1.4vh * var(--crowd)); }
+.walk .top { display: flex; justify-content: flex-end; font-size: 1.5vw; color: var(--text-faint); min-height: 1.6em; }
+.stage-card { align-self: center; justify-self: center; display: flex; flex-direction: column; align-items: center; max-width: 80vw; }
+
+/* A manila folder: the theme name on its tab, the card on the folder. */
+.folder-card { display: flex; flex-direction: column; align-items: flex-start; max-width: 80vw; }
+.tab {
+  background: var(--manila);
+  color: #2b2209;
+  font-size: 2.3vw;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 0.8vh 2.2vw 0.9vh;
+  margin-left: 1.5vw;
+  border-radius: 1vw 1vw 0 0;
+  border: 0.22vw solid var(--manila-edge);
+  border-bottom: 0;
+  position: relative;
+  max-width: 60vw;
+  overflow-wrap: anywhere;
+}
+/* The tab opens into the folder: its bottom edge covers the folder's top line. */
+.folder-card > .tab { margin-bottom: -0.22vw; z-index: 1; }
+.card {
+  position: relative;
+  overflow: hidden;
+  background: #1c1d22;
+  border: 0.22vw solid var(--manila-edge);
+  border-radius: 0.8vw;
+  padding: calc(3.2vh * var(--crowd, 1)) calc(3.6vw * var(--crowd, 1)) calc(3.8vh * var(--crowd, 1));
+  text-align: center;
+  font-weight: 500;
+  line-height: 1.25;
+  max-width: 80vw;
+  overflow-wrap: anywhere;
+  align-self: stretch;
+}
+.folder-card:has(> .tab[hidden]) .card { border-radius: 0.8vw; }
+.folder-card > .tab:not([hidden]) + .card { border-top-left-radius: 0; }
+.card-text { position: relative; }
+.folder-card.last .card { background: transparent; border-color: transparent; }
+.folder-card.last { align-items: center; }
+/* The one per-card clock: a bar along the bottom edge that drains. No numbers. */
+.drain { position: absolute; left: 0; bottom: 0; height: 0.7vh; width: 100%; background: var(--accent); transform-origin: left; will-change: transform; }
+
+/* Overview: the themes as folders in a file drawer. */
+.folder-card.plain { align-items: center; }
+.overview-title { font-size: 2.6vw; color: var(--text-dim); margin-bottom: 2.4vh; text-align: center; }
+.drawer { display: grid; grid-template-columns: repeat(auto-fit, minmax(24vw, 30vw)); justify-content: center; gap: 3vh 2.4vw; width: 84vw; }
+.folder { display: flex; flex-direction: column; align-items: flex-start; }
+.folder .tab { font-size: 2.1vw; margin-bottom: -0.22vw; z-index: 1; max-width: 100%; }
+.folder-body {
+  align-self: stretch;
+  background: #1c1d22;
+  border: 0.22vw solid var(--manila-edge);
+  border-radius: 0 0.8vw 0.8vw 0.8vw;
+  padding: 1.6vh 1.6vw;
+  font-size: 2.3vw;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.walk .more { font-size: 1.6vw; color: var(--text-dim); text-align: center; margin-top: calc(1.2vh * var(--crowd)); min-height: calc(1.3em * var(--crowd)); }
+/* The same right-hand reserve as under the card, so the corner QR never covers an
+   emoji (mirrored on the left to keep the row centred under the card). One row:
+   projector.js shrinks a row that doesn't fit (--mix-scale). The space it
+   reserves shrinks with a crowded card; the emojis themselves don't. */
+.walk .mix { display: flex; justify-content: center; align-items: flex-end; gap: 2vw; min-height: calc(6.5vw * var(--crowd)); padding: 0 14vw; }
 .walk .mix span { display: flex; flex-direction: column; align-items: center; line-height: 1; }
-.walk .mix small { font-family: var(--font); font-size: 1.2vw; color: var(--text-faint); margin-top: 0.6vh; }
-.walk .bottom { display: flex; gap: 2vw; align-items: flex-end; min-height: 4vh; padding-right: 10vw; }
+.walk .mix small { font-family: var(--font); font-size: 1.2vw; color: var(--text-faint); margin-top: 0.5vh; }
+/* Starts at the card's left edge (projector.js sets padding-left); the right keeps clear of the corner QR. */
+.walk .under { display: flex; flex-direction: column; gap: calc(0.8vh * var(--crowd)); min-width: 0; padding-right: 14vw; }
+/* Floors when crowded: comments 1.4vw, haiku 1.3vw. */
+.comments { display: flex; flex-direction: column; gap: calc(0.6vh * var(--crowd, 1)); }
+.comments .comment { font-size: max(1.4vw, calc(1.7vw * var(--crowd, 1))); line-height: 1.25; background: #15161a; border-left: 0.35vw solid var(--accent); padding: calc(0.6vh * var(--crowd, 1)) 1.2vw; border-radius: 0 0.8vw 0.8vw 0; overflow-wrap: anywhere; }
+.comments-more { font-size: max(1.4vw, calc(1.5vw * var(--crowd, 1))); color: var(--text-dim); padding-left: 1.2vw; }
+.comments-more:empty { display: none; }
+.haiku { font-size: max(1.3vw, calc(1.5vw * var(--crowd, 1))); font-style: italic; color: var(--text-dim); line-height: 1.35; overflow: hidden; padding-left: 1.2vw; }
+.haiku:empty { display: none; }
+/* Haiku segments stay whole; lines break only at the space after a slash
+   (projector.js shrinks a segment that is too wide, and wraps one only past
+   its smallest size). */
+.hseg { display: inline-block; white-space: nowrap; }
+.hseg.hwrap { white-space: normal; text-wrap: balance; }
+.hsep { color: var(--text-faint); }
+.walk .bottom { display: flex; gap: 2vw; align-items: flex-end; min-height: 3vh; padding-right: 10vw; }
 .walk .counts { display: flex; gap: 1.2vw; font-size: 1.5vw; color: var(--text-dim); }
 .walk .counts span { background: #15161a; border-radius: 99px; padding: 0.5vh 1.1vw; }
 .walk .counts span.zero { visibility: hidden; }
-.walk .controls-line { font-size: 1.3vw; color: var(--text-faint); }
-.comments { display: flex; flex-direction: column; gap: 1vh; max-height: 34vh; overflow: hidden; justify-content: flex-end; }
-.comments .comment { font-size: 1.9vw; background: #15161a; border-left: 0.35vw solid var(--accent); padding: 1vh 1.4vw; border-radius: 0 0.8vw 0.8vw 0; animation: arrive 0.5s ease-out; overflow-wrap: anywhere; }
-@keyframes arrive { from { opacity: 0; transform: translateY(1vh); } }
-.pause-banner { font-size: 1.8vw; color: var(--accent); display: flex; gap: 1.5vw; align-items: baseline; }
-.pause-banner .clock { font-variant-numeric: tabular-nums; font-size: 2.6vw; }
+.walk .controls-line { font-size: 1.4vw; color: var(--text-faint); }
+.walk.is-last .stage-card { margin-top: 0; }
+.walk.is-last .card-text { font-size: inherit; }
+
+/* The app is waiting on the facilitator: said plainly, at the bottom. */
+.waiting { position: fixed; left: 0; right: 0; bottom: 1.8vh; text-align: center; font-size: 2.2vw; font-weight: 600; color: var(--accent); z-index: 6; pointer-events: none; }
 
 /* Finale: the emotional fingerprint */
 .stage { position: absolute; inset: 0; overflow: hidden; }
-.particle { position: absolute; left: 0; top: 0; font-size: 28px; line-height: 1; transition: transform 1.6s cubic-bezier(0.5, 0, 0.2, 1), opacity 1.2s ease; will-change: transform; }
+.finale-canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 .pools { position: absolute; inset: 0; display: flex; flex-wrap: wrap; justify-content: center; align-content: center; align-items: center; gap: 2vw 3vw; padding: 6vh 8vw; }
-.pool { line-height: 1; opacity: 0; transition: opacity 1.6s ease; }
+/* Laid out by the browser to place the pools; drawn on the canvas. */
+.pool { line-height: 1; visibility: hidden; }
 
 /* Shred */
-.shredder { position: absolute; inset: 0; background: #000; transition: opacity 2s ease; overflow: hidden; }
-.shredder .upper, .shredder .lower { position: absolute; left: 0; right: 0; overflow: hidden; }
-.shredder .upper { top: 0; z-index: 2; }
-.shredder .lower { bottom: 0; z-index: 3; }
+.shredder { position: absolute; inset: 0; background: #000; overflow: hidden; }
+.shredder .upper { position: absolute; left: 0; right: 0; top: 0; overflow: hidden; z-index: 2; }
+/* The moving strips (under the shredder's mouth) and the landed ones (in the bin): canvases. */
+.shredder .strips, .shredder .bin-inside { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.shredder .strips { z-index: 3; }
 .shredder .head { position: absolute; left: 12vw; right: 12vw; background: linear-gradient(#26272c, #131417); border-radius: 0.6vh 0.6vh 1.4vh 1.4vh; box-shadow: 0 1vh 3vh #000; z-index: 4; }
 .shredder .slot { position: absolute; left: 15vw; right: 15vw; height: 1.4vh; background: #050506; border-radius: 1vh; box-shadow: 0 0 0 0.3vh #33353b; z-index: 5; }
 /* The bin: a mesh wastebasket. Strips fall between its back and its front. */
 .shredder .bin-back, .shredder .bin-front { position: absolute; left: 13vw; right: 13vw; clip-path: polygon(0 0, 100% 0, 91% 100%, 9% 100%); }
-.shredder .bin-inside { position: absolute; inset: 0; z-index: 1; }
+.shredder .bin-inside { z-index: 1; }
 .shredder .bin-back { background: linear-gradient(#141518, #0b0b0d); z-index: 1; }
 .shredder .bin-front {
   z-index: 6;
@@ -71,11 +160,10 @@ body { background: #000; overflow: hidden; cursor: none; }
     repeating-linear-gradient(0deg, rgba(110, 114, 124, 0.55) 0 0.2vh, transparent 0.2vh 2.2vh),
     rgba(10, 10, 12, 0.55);
 }
-.sheet { position: absolute; width: 64vw; background: var(--text); color: #15161a; border-radius: 0.8vw; padding: 2vw; }
+.sheet { position: absolute; will-change: transform; width: 64vw; background: var(--text); color: #15161a; border-radius: 0.8vw; padding: 2vw; }
 .sheet-emojis { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 1vw 1.6vw; }
 .sheet-cards { display: grid; gap: 1vw; }
 .sheet-cards div { line-height: 1.3; background: #e4e1da; border-radius: 0.5vw; padding: 0.8vw; overflow-wrap: anywhere; }
-.strip { position: absolute; left: 0; top: 0; overflow: hidden; }
 
 .closing h1 { font-size: 6vw; margin: 0; }
 .closing .url { font-size: 2.4vw; color: var(--text-dim); margin-top: 3vh; }
@@ -90,5 +178,95 @@ body { background: #000; overflow: hidden; cursor: none; }
 .del-actions span { padding: 0.7vw 1.4vw; border-radius: 0.6vw; }
 .del-cancel { color: var(--text-dim); }
 .del { background: var(--danger); color: white; font-weight: 600; }
-.cursor { position: absolute; left: 0; top: 0; width: 2.2vw; height: 2.2vw; pointer-events: none; }
-.walk .more.lastcall-sub { font-size: 2.8vw; color: var(--text-dim); margin-top: 3vh; }
+.cursor { position: absolute; left: 0; top: 0; width: 2.2vw; height: 2.2vw; pointer-events: none; will-change: transform; }
+
+/* Demo: a phone drawn on the left, the caption on the right. The phone is laid
+   out in its own pixels (420 x 780) and scaled to fit by projector.js, so the
+   real phone's styles can be imitated here. Everything is scoped under .demo
+   so it can't touch another screen. */
+.demo { position: absolute; inset: 0; }
+.demo-main { position: absolute; inset: 0; display: grid; grid-template-columns: 44vw 1fr; align-items: center; }
+.demo-phone-wrap { position: relative; height: 100%; }
+.demo-side { padding: 0 6vw 0 1vw; }
+.demo-caption { font-size: 4.6vw; font-weight: 700; line-height: 1.15; letter-spacing: -0.01em; }
+.demo .cap { display: block; }
+.demo .cap.enter { animation: demo-in 0.6s ease both; }
+.demo .walk .top.demo-top { justify-content: center; font-size: 3vw; font-weight: 700; color: var(--text); }
+
+.demo .dphone {
+  position: absolute; left: 50%; top: 50%; width: 420px; height: 780px;
+  transform: translate(-50%, -50%) scale(var(--s, 0.8));
+  background: var(--bg); border: 12px solid #2a2c33; border-radius: 60px;
+  box-shadow: 0 0 0 2px #3b3e47, 0 30px 80px rgba(0, 0, 0, 0.7); overflow: hidden;
+  font-size: 22px; line-height: 1.35;
+}
+.demo .dnotch { position: absolute; top: 12px; left: 50%; width: 110px; height: 26px; margin-left: -55px; border-radius: 14px; background: #000; z-index: 2; }
+.demo .dscreen { position: absolute; inset: 0; padding: 52px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+.demo .dscreen h2 { font-size: 25px; margin: 0; line-height: 1.3; }
+.demo .dscreen p { margin: 0; }
+.demo .dscreen button { font-size: 22px; min-height: 52px; pointer-events: none; }
+.demo .dscreen .small { font-size: 18px; }
+.demo .dscreen .small.faint { color: var(--text-dim); }
+.demo .note { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%; color: var(--text); }
+.demo .note .text { flex: 1; }
+.demo .note .check { position: relative; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); flex: none; margin-top: 2px; }
+.demo .react-card { background: var(--text); color: #15161a; border-radius: 18px; padding: 22px 20px; font-size: 24px; line-height: 1.35; display: grid; place-items: center; text-align: center; overflow-wrap: anywhere; }
+
+/* Step 2, sharing. Picked: the check fills and a ring lights up. Then the note
+   turns to blank paper, folds to an envelope's size, and the envelope takes
+   its place: its flap closes, a seal goes on, and it slides up out of the
+   phone. All transform and opacity. */
+.demo .note.pickable { position: relative; transition: opacity 0.35s, transform 0.55s ease-in-out; }
+.demo .note.pickable .text, .demo .note.pickable .check { transition: opacity 0.3s; }
+.demo .note.pickable .check::after { content: ''; position: absolute; inset: -2px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform 0.35s cubic-bezier(0.3, 1.6, 0.5, 1); }
+.demo .note.pickable.picked .check::after { transform: scale(1); }
+.demo .note.pickable::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; box-shadow: 0 0 0 3px var(--accent) inset; opacity: 0; transition: opacity 0.3s; }
+.demo .note.pickable.picked::after { opacity: 1; }
+.demo .note.pickable::before { content: ''; position: absolute; inset: -1px; border-radius: inherit; background: #ece6d6; opacity: 0; transition: opacity 0.35s; }
+.demo .note.pickable.blank::before { opacity: 1; }
+.demo .note.pickable.blank::after, .demo .note.pickable.blank .text, .demo .note.pickable.blank .check { opacity: 0; }
+.demo .note.pickable.away, .demo .note.pickable.gone { opacity: 0; }
+.demo .note.pickable.gone { transition-duration: 0.25s; }
+.demo .dscreen button.dshare { position: relative; overflow: hidden; transition: opacity 0.4s; }
+.demo .dscreen button.dshare.away { opacity: 0; }
+.demo .dshare.press { animation: demo-press 0.45s ease; }
+.demo .dtouch { position: absolute; left: 50%; top: 50%; width: 90px; height: 90px; margin: -45px 0 0 -45px; border-radius: 50%; background: rgba(255, 255, 255, 0.6); opacity: 0; pointer-events: none; }
+.demo .dshare.press .dtouch { animation: demo-touch 0.6s ease-out; }
+.demo .denv { position: absolute; width: 200px; height: 124px; z-index: 1; opacity: 0; background: #ddd5c0; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); transition: opacity 0.25s, transform 0.9s cubic-bezier(0.55, 0, 0.8, 0.2); }
+.demo .denv::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: #ece6d6; clip-path: polygon(0 100%, 50% 42%, 100% 100%); }
+.demo .denv.shown { opacity: 1; }
+.demo .denv-flap { position: absolute; left: 0; right: 0; top: 0; height: 62%; background: #e4dcc8; clip-path: polygon(0 0, 100% 0, 50% 100%); transform-origin: top; transform: perspective(500px) rotateX(180deg); transition: transform 0.5s ease-in-out; }
+.demo .denv.sealed .denv-flap { transform: perspective(500px) rotateX(0deg); }
+.demo .denv-seal { position: absolute; left: 50%; top: 62%; width: 28px; height: 28px; margin: -16px 0 0 -14px; border-radius: 50%; background: var(--accent); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); transform: scale(0); transition: transform 0.3s cubic-bezier(0.3, 1.6, 0.5, 1) 0.45s; }
+.demo .denv.sealed .denv-seal { transform: scale(1); }
+.demo .dtoast { background: color-mix(in srgb, var(--ok) 18%, transparent); border: 1px solid var(--ok); border-radius: var(--radius); padding: 16px 18px; font-size: 24px; font-weight: 600; line-height: 1.3; margin-top: 40px; }
+.demo .emoji-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.demo .emoji-grid button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; min-height: 84px; }
+.demo .emoji-grid .e { font-size: 38px; line-height: 1.1; font-family: var(--emoji); }
+.demo .emoji-grid .l { font-size: 14px; color: var(--text-dim); white-space: nowrap; }
+.demo .emoji-grid button.on .l { color: var(--bg); }
+.demo .emoji-grid button.tap { animation: demo-tap 0.4s ease; }
+.demo .add-own { flex: 1; border-style: dashed; color: var(--text-dim); font-size: 19px; }
+.demo .chip { font-family: var(--emoji); font-size: 32px; padding: 4px 12px; min-height: 52px; }
+.demo .dtextarea { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-height: 100px; font-size: 22px; overflow-wrap: anywhere; }
+.demo .dtextarea.empty { color: var(--text-faint); }
+.demo .dfolder { display: flex; flex-direction: column; align-items: flex-start; margin-top: 60px; }
+.demo .dtab { background: var(--manila); color: #2b2209; font-size: 25px; font-weight: 700; padding: 6px 20px 7px; margin-left: 14px; border-radius: 12px 12px 0 0; border: 2px solid var(--manila-edge); border-bottom: 0; margin-bottom: -2px; position: relative; z-index: 1; overflow-wrap: anywhere; max-width: 330px; }
+.demo .dfolder-card { align-self: stretch; background: #1c1d22; border: 2px solid var(--manila-edge); border-radius: 0 12px 12px 12px; padding: 36px 24px; text-align: center; font-size: 28px; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere; }
+.demo .dhaiku { margin-top: 30px; font-size: 34px; line-height: 1.3; font-weight: 500; color: var(--text); display: flex; flex-direction: column; align-items: center; text-align: center; }
+.demo .dhaiku .hsep { color: var(--text-faint); }
+
+/* Entrances: only on a forward step (.animate); Back shows everything settled. */
+.demo .animate .pop { animation: demo-in 0.55s ease both; animation-delay: var(--d, 0s); }
+.demo .animate .dtab { animation: demo-drop 0.6s ease both 0.5s; }
+.demo .animate .dhaiku { animation: demo-in 0.8s ease both 1.6s; }
+.demo .animate .dfolder-card { animation: demo-in 0.5s ease both; }
+.demo .animate.demo-reveal .card { animation: demo-grow 0.6s ease both; }
+.demo .animate.demo-reveal .mix > span { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
+.demo .animate.demo-reveal .comment, .demo .animate.demo-reveal .comments-more, .demo .animate.demo-reveal .haiku { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
+@keyframes demo-in { from { opacity: 0; transform: translateY(14px); } }
+@keyframes demo-drop { from { opacity: 0; transform: translateY(-14px); } }
+@keyframes demo-grow { from { opacity: 0; transform: scale(0.94); } }
+@keyframes demo-tap { 50% { transform: scale(1.12); } }
+@keyframes demo-press { 40% { transform: scale(0.93); } }
+@keyframes demo-touch { from { opacity: 0.8; transform: scale(0.2); } to { opacity: 0; transform: scale(1.8); } }

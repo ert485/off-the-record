@@ -1,22 +1,35 @@
 // The session's phases, in order. The facilitator moves forward and back;
 // every phone follows. See "Session flow" in the spec.
-export const PHASES = ['join', 'submit', 'cluster', 'react', 'walk', 'lastcall', 'finale', 'shred', 'closing'];
+export const PHASES = ['teaser', 'demo', 'join', 'submit', 'cluster', 'react', 'walk', 'finale', 'shred', 'closing'];
 
-// Planned clock in minutes for each phase: [start, end]. From the spec's
-// 25-minute timing table. Drives the facilitator-only pace marker.
+// Planned talk-clock minutes for each phase: [start, end]. From the spec's
+// 25-minute talk plan. The teaser has no entry: it is before the talk. Drives the facilitator-only pace marker.
 export const PLAN = {
-  join: [0, 2],
-  submit: [2, 6],
-  cluster: [6, 7],
-  react: [7, 9.5],
-  walk: [9.5, 19],
-  lastcall: [19, 19.5],
-  finale: [19.5, 20.5],
-  shred: [20.5, 21.5],
-  closing: [21.5, 22.5],
+  demo: [1.5, 3.5],
+  join: [3.5, 5],
+  submit: [5, 10],
+  cluster: [10, 10.5],
+  react: [10.5, 15.5],
+  walk: [15.5, 21.5],
+  finale: [21.5, 22.5],
+  shred: [22.5, 23.5],
+  closing: [23.5, 24.5],
 };
 
-export const SUBMIT_MINUTES = 4;
+export const TALK_MINUTES = 25;
+export const SUBMIT_MINUTES = 5;
+export const REACT_MINUTES = 5;
+// Reactions still count this long after the room moves on.
+export const REACT_GRACE_MS = 10_000;
+
+// The walk-through runs itself. The last slide ("Anything else? Out loud.")
+// gets a fixed share, no card gets less than the floor, and the walk ends at
+// minute talk.minutes - 3.5 on the talk clock (21.5 of 25), never shorter
+// than the minimum.
+export const LAST_SLIDE_MS = 20_000;
+export const MIN_CARD_MS = 15_000;
+export const MIN_WALK_MS = 180_000;
+export const WALK_END_BEFORE_MINUTES = 3.5;
 
 export function nextPhase(phase) {
   const i = PHASES.indexOf(phase);

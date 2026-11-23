@@ -1,19 +1,20 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
 import { randomBytes, randomInt } from 'node:crypto';
-import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES } from './phases.js';
+import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
+import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP } from './flow.js';
+import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
 import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
+import { DEMO_STEPS, DEMO_STEP_MS, DEFAULT_TEASER } from './demo.js';
 
-export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 12, themeName: 60 };
-// Anonymous pause: ends once everyone who opened the comment box has
-// submitted (but not before minMs, so one fast typist can't end it for
-// everyone), or at maxMs followed by a grace period for anyone still typing.
-export const PAUSE = { minMs: 15_000, maxMs: 90_000, graceMs: 20_000 };
-const WALK_MS = (PLAN.walk[1] - PLAN.walk[0]) * 60_000;
+export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 14, themeName: 60, haiku: 120 };
+// The projector shows this many comments on a card, the rest as "+N more".
+export const COMMENTS_SHOWN = 5;
 const OVERVIEW = 'overview';
+const LAST = 'last';
 
 export class ActionError extends Error {
   constructor(message) {
@@ -25,18 +26,26 @@ const fail = (message) => {
   throw new ActionError(message);
 };
 
-const emptySignals = () => ({ stay: {}, moveOn: {}, back: {} });
+const emptySignals = () => ({ stay: {}, back: {} });
 const count = (obj) => Object.keys(obj ?? {}).length;
 
-export function freshState(now) {
+export function freshState(now, talkMinutes = TALK_MINUTES) {
   return {
     // Random per session. Phones compare it with the one their notes were
     // written in, and wipe notes left over from a session they missed the end of.
     sessionId: randomBytes(8).toString('hex'),
-    phase: 'join',
+    phase: 'teaser',
     phaseStartedAt: now,
-    clockStart: null,
+    // Which step of the demo the projector shows, whether it plays on its own
+    // (and since when), and the card the demo added.
+    demo: { step: 0, cardId: null, auto: false, stepStartedAt: now },
+    // The talk clock: starts with one tap, or backdated when the room moves
+    // on without it, and never restarts.
+    talk: { startedAt: null, minutes: talkMinutes },
     submitEndsAt: null,
+    reactEndsAt: null,
+    // When the room moved on from reacting, for the 10-second grace.
+    reactClosedAt: null,
     // Off until the facilitator turns them on.
     nudgesOn: false,
     // Which nudges phones show: all in turn, one label, or none (mix is varied).
@@ -47,18 +56,30 @@ export function freshState(now) {
     // Per anonymous phone id: counts only, never which cards or reactions.
     clients: {},
     nextId: 1,
-    clustering: { status: 'idle', error: null, key: null, local: false },
+    // early: the grouping started at the 1-minute warning (once per session).
+    // late: the quick call placing cards that came in after the grouping ran.
+    clustering: { status: 'idle', error: null, key: null, local: false, early: false, late: null },
     themes: [],
     // Pooled per group, in the order they happened (the finale replays it).
     reactions: [],
     // Receipt -> card, so a phone can change its reactions to that card.
     receipts: {},
-    walk: { stream: [], index: 0, cardStartedAt: null, signals: emptySignals() },
-    pauseRequests: {},
-    pauseHeld: false,
-    pause: null,
+    walk: { stream: [], index: 0, cardStartedAt: null, cardEndsAt: null, endsAt: null, paused: false, done: false, signals: emptySignals() },
+    // { id, g, text, r }: no phone id. r is the card's receipt, so sending
+    // again replaces the comment along with the reactions.
     comments: [],
+    // Receipts whose comment the facilitator removed.
+    removedComments: {},
   };
+}
+
+// A theme's haiku as one line: newlines become " / ". Not text, or too long to
+// show whole, means none (a cut haiku reads broken; the facilitator can write one).
+const oneLine = (raw) => raw.trim().replace(/\s*[\r\n]+\s*/g, ' / ').replace(/ {2,}/g, ' ');
+export function cleanHaiku(raw) {
+  if (typeof raw !== 'string') return '';
+  const clean = oneLine(raw);
+  return clean.length > LIMITS.haiku ? '' : clean;
 }
 
 // Makes the model's grouping safe to use: every visible card exactly once.
@@ -73,11 +94,50 @@ export function normalizeClusters(rawThemes, cardIds) {
       ids.forEach((id) => seen.add(id));
       if (ids.length) groups.push(ids);
     }
-    if (groups.length) themes.push({ name: String(t?.name ?? '').trim().slice(0, LIMITS.themeName), groups });
+    if (groups.length) themes.push({ name: String(t?.name ?? '').trim().slice(0, LIMITS.themeName), haiku: cleanHaiku(t?.haiku), groups });
   }
   const missing = cardIds.filter((id) => !seen.has(id));
-  if (missing.length) themes.push({ name: 'Other', groups: missing.map((id) => [id]) });
+  if (missing.length) themes.push({ name: 'Other', haiku: '', groups: missing.map((id) => [id]) });
   return themes;
+}
+
+// Makes the quick call's placements safe to use. Each late card is placed at
+// most once, in a theme that exists; a group from another theme becomes a new
+// group. Each card is in at most one flag (the first). A late card with no
+// valid placement is flagged, and keeping it puts it in "Other".
+export const NOT_PLACED = 'Not placed';
+export function normalizePlacements(raw, { themeIds, groupIds, lateIds }) {
+  const themes = new Set(themeIds);
+  const groupTheme = new Map(groupIds);
+  const late = new Set(lateIds);
+  const placed = new Set();
+  const placements = [];
+  for (const p of Array.isArray(raw?.placements) ? raw.placements : []) {
+    if (!late.has(p?.cardId) || placed.has(p.cardId) || !themes.has(p.themeId)) continue;
+    placed.add(p.cardId);
+    placements.push({ cardId: p.cardId, themeId: p.themeId, groupId: groupTheme.get(p.groupId) === p.themeId ? p.groupId : null });
+  }
+  const flagged = new Set();
+  const flags = [];
+  for (const f of Array.isArray(raw?.flags) ? raw.flags : []) {
+    const cardIds = [];
+    for (const id of Array.isArray(f?.cardIds) ? f.cardIds : []) {
+      if (!late.has(id) || flagged.has(id)) continue;
+      flagged.add(id);
+      cardIds.push(id);
+    }
+    if (!cardIds.length) continue;
+    const reason = typeof f.reason === 'string' && f.reason.trim() ? f.reason.trim().slice(0, 200) : 'Might not fit the themes';
+    flags.push({ cardIds, reason });
+  }
+  for (const id of lateIds) if (!placed.has(id) && !flagged.has(id)) flags.push({ cardIds: [id], reason: NOT_PLACED });
+  return { placements, flags };
+}
+export const QUICK_CHECK_FAILED = "The quick check didn't finish: ";
+// A failed (or skipped) quick call flags every late card, with why. The
+// message is a fixed label or the API's error, never card text.
+function failedPlacement(lateIds, message) {
+  return { placements: [], flags: lateIds.length ? [{ cardIds: lateIds, reason: QUICK_CHECK_FAILED + message }] : [] };
 }
 
 // Without the AI (it failed, or the facilitator skipped it): one theme, every
@@ -92,8 +152,11 @@ export class Session {
     state,
     now = Date.now,
     clusterCards,
+    placeLateCards = localPlacer,
     tagCards = null,
+    demo = null,
     nudgeQuietMs = 10_000,
+    talkMinutes = TALK_MINUTES,
     onChange = () => {},
     onShred = () => {},
     shredAnimationMs = null, // tests only: overrides the animation's length
@@ -101,25 +164,52 @@ export class Session {
   }) {
     this.now = now;
     this.tagCards = tagCards;
+    // The prepared demo content (never stored in the state, never sent to phones).
+    this.demo = demo;
     this.nudgeQuietMs = nudgeQuietMs;
     this.nudgeTimer = null;
+    this.talkMinutes = talkMinutes;
     this.clusterCards = clusterCards;
+    this.placeLateCards = placeLateCards;
     this.onChange = onChange;
     this.onShred = onShred;
     this.shredAnimationMs = shredAnimationMs;
     this.onReset = onReset;
     this.closingTimer = null;
+    this.closingAt = null; // when the closing screen is due, before any speed-up
     this.clusterRun = 0;
     this.shredPayload = null;
-    this.state = state ?? freshState(now());
+    this.state = state ?? freshState(now(), talkMinutes);
     this.state.nudge ??= { mode: 'all', label: null };
     this.state.receipts ??= {};
+    if (!state?.shredded) {
+      this.state.talk ??= { startedAt: null, minutes: talkMinutes };
+      this.state.reactEndsAt ??= null;
+      this.state.reactClosedAt ??= null;
+    }
+    if (!this.state.shredded) this.state.removedComments ??= {};
+    if (!this.state.shredded) {
+      this.state.demo ??= { step: 0, cardId: null };
+      this.state.demo.auto ??= false;
+      this.state.demo.stepStartedAt ??= now();
+    }
     this.state.sessionId ??= randomBytes(8).toString('hex');
     this.shredded = !!this.state.shredded;
-    // A restart mid-clustering: run it again.
-    if (this.state.clustering?.status === 'running') {
-      this.state.clustering.status = 'idle';
-      if (this.state.phase === 'cluster') this.startClustering(true);
+    const c = this.state.clustering;
+    if (c) {
+      c.early ??= false;
+      c.late ??= null;
+      // A restart mid-grouping: run it again. The early run reruns in submit;
+      // anywhere else, entering grouping starts what's needed.
+      if (c.status === 'running') {
+        c.status = 'idle';
+        if (this.state.phase === 'submit' || this.state.phase === 'cluster') this.startClustering();
+      }
+      // A restart mid-placement: place the cards that still have no group again.
+      if (c.late?.status === 'running') {
+        c.late = null;
+        if (this.state.phase === 'cluster') this.continueGrouping();
+      }
     }
   }
 
@@ -128,7 +218,17 @@ export class Session {
   }
 
   changed() {
+    // Whatever this broadcast carries already includes the prompt, so tick()
+    // need not announce it again.
+    this.promptKey = this.timedPromptKey();
     this.onChange();
+  }
+
+  // The prompt that appears by time alone (phoneCount 0 leaves out the
+  // "everyone finished reacting" path, which broadcasts by itself).
+  timedPromptKey() {
+    const move = pendingMove(this.s, this.now(), { phoneCount: 0 });
+    return move ? `${move.to}:${move.label}` : '';
   }
 
   // ---- lookups ----------------------------------------------------------
@@ -190,10 +290,17 @@ export class Session {
 
   // ---- phases -----------------------------------------------------------
 
-  advance({ confirm = false } = {}) {
+  // `from` is the phase the facilitator's screen showed when they tapped. If
+  // the room has already moved on, the tap is ignored rather than skipping a part.
+  advance({ confirm = false, from } = {}) {
+    if (from !== undefined && from !== null && from !== this.s.phase) fail('Already moved on');
     const to = nextPhase(this.s.phase);
     if (!to) fail('This is the last phase');
-    if (this.s.phase === 'cluster' && this.s.clustering.status === 'running') fail('Clustering is still running');
+    if (this.s.phase === 'cluster') {
+      const c = this.s.clustering;
+      if (c.status === 'running' || c.late?.status === 'running') fail('Grouping is still running');
+      if (c.late?.status === 'flagged') fail('Choose: keep the themes or regroup');
+    }
     if (to === 'shred') {
       if (!confirm) fail('Confirm the shred: it cannot be undone');
       return this.shred();
@@ -202,7 +309,10 @@ export class Session {
     this.changed();
   }
 
-  back() {
+  // `from` is the phase the facilitator's screen showed; if the room has moved
+  // on, the tap is ignored (a double-tapped Back).
+  back({ from } = {}) {
+    if (from !== undefined && from !== null && from !== this.s.phase) fail('Already moved on');
     const to = previousPhase(this.s.phase);
     if (!to) fail(this.shredded ? 'The shred cannot be undone' : 'Nothing to go back to');
     this.enter(to, 'back');
@@ -211,26 +321,83 @@ export class Session {
 
   enter(to, direction) {
     const now = this.now();
-    this.s.pause = null;
+    const from = this.s.phase;
+    // The demo's shared note joins the session as an ordinary card, once: no
+    // author, and not counted against any phone.
+    if (from === 'demo' && direction === 'forward' && this.demo && this.s.demo && this.s.demo.cardId === null) {
+      this.s.demo.cardId = this.addCard(this.demo.notes.find((n) => n.share).text);
+    }
+    if (direction === 'forward' && PLAN[to] && to !== 'demo' && this.s.talk && this.s.talk.startedAt === null) this.s.talk.startedAt = now - PLAN[to][0] * 60_000;
+    if (from === 'react' && direction === 'forward') this.s.reactClosedAt = now;
     this.s.phase = to;
     this.s.phaseStartedAt = now;
+    this.s.speedUp = null; // each part starts at its own speed
+    // The demo plays on a loop when the room first reaches it; coming back to
+    // it later waits for the facilitator.
+    if (to === 'demo') Object.assign(this.s.demo, { auto: from === 'teaser' && direction === 'forward' && this.s.talk.startedAt === null, step: from === 'teaser' ? 0 : this.s.demo.step, stepStartedAt: now });
+    if (to === 'react') {
+      this.s.reactEndsAt =
+        direction === 'forward' ? now + REACT_MINUTES * 60_000 : Math.max(this.s.reactEndsAt ?? 0, now + 60_000);
+    }
     if (to === 'submit') {
-      this.s.clockStart ??= now - PLAN.submit[0] * 60_000;
       this.s.submitEndsAt =
         direction === 'forward' ? now + SUBMIT_MINUTES * 60_000 : Math.max(this.s.submitEndsAt ?? 0, now + 60_000);
     }
-    // The room's section timer starts when a part is entered going forward,
-    // so going back (from last call to the walk-through, say) doesn't
-    // restart it.
-    if ((to === 'react' || to === 'walk') && direction === 'forward') this.s.sectionStartedAt = { ...this.s.sectionStartedAt, [to]: now };
-    if (to === 'cluster') this.startClustering(false);
+    if (to === 'cluster') this.continueGrouping();
     if (to === 'walk' && direction === 'forward') this.buildWalk();
-    if (to === 'walk' && direction === 'back') this.s.walk.cardStartedAt = now;
+    // Coming back to the walk-through holds the card until the facilitator resumes.
+    if (to === 'walk' && direction === 'back') {
+      Object.assign(this.s.walk, { paused: true, done: false, cardStartedAt: now, cardEndsAt: null });
+    }
   }
 
-  extendSubmit() {
+  // The facilitator's taps through the demo's steps. Only while in the demo.
+  // `from` is the step the facilitator's screen showed; a double tap moves once.
+  demoStep(delta, { from } = {}) {
+    if (this.s.phase !== 'demo') fail('The demo is over');
+    if (from !== undefined && from !== null && from !== this.s.demo.step) fail('Already moved on');
+    const step = this.s.demo.step + delta;
+    if (step < 0) fail('This is the first step');
+    if (step >= DEMO_STEPS.length) fail('That was the last step');
+    this.s.demo.step = step;
+    this.s.demo.auto = false;
+    this.s.demo.stepStartedAt = this.now();
+    this.changed();
+  }
+
+  // The facilitator's switch for the loop: on starts again from the first
+  // step, so the room sees the loop begin at once. A second tap while it
+  // already loops (another device) leaves it where it is. Off stays put.
+  demoAuto(on) {
+    if (this.s.phase !== 'demo') fail('The demo is over');
+    if (on && this.s.demo.auto) return;
+    Object.assign(this.s.demo, { auto: !!on, stepStartedAt: this.now() }, on ? { step: 0 } : {});
+    this.changed();
+  }
+
+  // `from` is the end time the facilitator's screen showed: "+1 minute" tapped
+  // on two devices (or twice) adds one minute.
+  extendSubmit({ from } = {}) {
     if (this.s.phase !== 'submit') fail('Submissions are not open');
+    if (from !== undefined && from !== null && from !== this.s.submitEndsAt) fail('Already extended');
     this.s.submitEndsAt = Math.max(this.s.submitEndsAt ?? 0, this.now()) + 60_000;
+    this.changed();
+  }
+
+  extendReact({ from } = {}) {
+    if (this.s.phase !== 'react') fail('Reactions are not open');
+    if (from !== undefined && from !== null && from !== this.s.reactEndsAt) fail('Already extended');
+    this.s.reactEndsAt = Math.max(this.s.reactEndsAt ?? 0, this.now()) + 60_000;
+    this.changed();
+  }
+
+  // The facilitator's one tap at the start of the talk. A second is a no-op.
+  startTalk() {
+    if (this.s.talk.startedAt !== null) return;
+    this.s.talk.startedAt = this.now();
+    // The talk has begun: a looping demo stops and waits on its first step; one
+    // the facilitator is stepping by hand is left where it is.
+    if (this.s.phase === 'demo' && this.s.demo.auto) Object.assign(this.s.demo, { auto: false, step: 0, stepStartedAt: this.now() });
     this.changed();
   }
 
@@ -249,17 +416,23 @@ export class Session {
     if (clean.some((t) => t.length === 0 || t.length > LIMITS.cardMax)) fail(`Cards are 1 to ${LIMITS.cardMax} characters`);
     if (client.cards + clean.length > LIMITS.cardsPerPerson) fail(`Up to ${LIMITS.cardsPerPerson} cards each`);
     for (const text of clean) {
-      let id;
-      do id = randomInt(1, 2 ** 31);
-      while (this.card(id));
-      this.s.cards.push({ id, text, hidden: false });
+      this.addCard(text);
     }
-    // Kept in id order, not the order they arrived, so neither the database
-    // nor the shredder's sheets show which cards one phone sent together.
-    this.s.cards.sort((a, b) => a.id - b.id);
     client.cards += clean.length;
     this.changed();
     this.scheduleNudge();
+  }
+
+  // A card with a random id, kept in id order rather than arrival order, so
+  // neither the database nor the shredder's sheets show which cards one phone
+  // sent together.
+  addCard(text) {
+    let id;
+    do id = randomInt(1, 2 ** 31);
+    while (this.card(id));
+    this.s.cards.push({ id, text, hidden: false });
+    this.s.cards.sort((a, b) => a.id - b.id);
+    return id;
   }
 
   hideCard(id, hidden) {
@@ -267,11 +440,10 @@ export class Session {
     if (!card) fail('No such card');
     card.hidden = !!hidden;
     // A card hidden before clustering was never grouped (or sent to the AI).
-    // If it is shown again later, give it a group of its own.
-    if (!card.hidden && this.s.themes.length && !this.s.themes.some((t) => t.groups.some((g) => g.cardIds.includes(id)))) {
-      let other = this.s.themes.find((t) => t.name === 'Other');
-      if (!other) this.s.themes.push((other = { id: this.newId(), name: 'Other', approved: false, groups: [] }));
-      other.groups.push({ id: this.newId(), cardIds: [id] });
+    // If it is shown again later, give it a group of its own. While people are
+    // still submitting, it waits to be placed with the other late cards instead.
+    if (!card.hidden && this.s.phase !== 'submit' && this.s.themes.length && !this.grouped().has(id)) {
+      this.otherTheme().groups.push({ id: this.newId(), cardIds: [id] });
     }
     this.changed();
     if (this.s.phase === 'submit') this.scheduleNudge();
@@ -311,29 +483,88 @@ export class Session {
   }
 
   // ---- clustering -------------------------------------------------------
+  //
+  // The full grouping starts at the 1-minute warning on the cards so far, so
+  // the facilitator can read and approve themes while people finish (or on
+  // entering grouping, if it never ran). Cards that come in after it are
+  // placed by one quick call on entering grouping, keeping the themes already
+  // read; if the call flags them, the facilitator keeps the themes or
+  // regroups. Each call carries a run number: a result from a run that has
+  // since been replaced (skipped, regrouped, shredded) is ignored.
 
-  startClustering(force) {
-    const cards = this.s.cards.filter((c) => !c.hidden);
-    const key = cards.map((c) => c.id).sort((a, b) => a - b).join(',');
+  // Visible cards, as sent to the AI: id and text only. Hidden cards never are.
+  visibleCards() {
+    return this.s.cards
+      .filter((c) => !c.hidden)
+      .map(({ id, text }) => ({ id, text }))
+      .sort((a, b) => a.id - b.id);
+  }
+
+  grouped() {
+    return new Set(this.s.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds)));
+  }
+
+  // Visible cards without a group: the late arrivals the quick call places.
+  ungroupedCards() {
+    const grouped = this.grouped();
+    return this.visibleCards().filter((c) => !grouped.has(c.id));
+  }
+
+  otherTheme() {
+    let other = this.s.themes.find((t) => t.name === 'Other');
+    if (!other) this.s.themes.push((other = { id: this.newId(), name: 'Other', haiku: '', approved: false, groups: [] }));
+    return other;
+  }
+
+  // Every card a placement covers: placed, flagged, or both.
+  lateIds(late) {
+    return [...new Set([...late.placements.map((p) => p.cardId), ...late.flags.flatMap((f) => f.cardIds)])];
+  }
+
+  // On entering grouping, and whenever a call lands there: wait for a call
+  // still running; group everything if there are no themes; place the cards
+  // without a group; otherwise keep everything as it is. Coming back to
+  // grouping never regroups: that would give every group a new id, cutting
+  // reactions off from their cards and losing approved names.
+  continueGrouping() {
     const c = this.s.clustering;
-    // Coming back to grouping only regroups when there are cards without a
-    // group (new submissions). A card hidden since doesn't regroup: that
-    // would give every group a new id, cutting reactions off from their
-    // cards and losing approved names.
-    const grouped = new Set(this.s.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds)));
-    const settled = c.key === key || (this.s.themes.length > 0 && cards.every((card) => grouped.has(card.id)));
-    if (!force && settled && (c.status === 'done' || c.status === 'failed')) return;
-    const run = ++this.clusterRun;
-    if (cards.length === 0) {
-      this.s.themes = [];
-      this.s.clustering = { status: 'done', error: null, key, local: false, empty: true };
+    if (c.status === 'running' || c.late?.status === 'running') return;
+    if (!this.s.themes.length) return this.startClustering();
+    const late = this.ungroupedCards();
+    if (!late.length) return;
+    // The grouping fell back to one card per group (failed, skipped, or no
+    // AI): the late cards join that theme the same way, at once, with no
+    // quick call. Retry is the way back to the AI.
+    if (c.status === 'failed' || c.local) {
+      const placements = late.map((card) => ({ cardId: card.id, themeId: this.s.themes[0].id, groupId: null }));
+      c.late = { status: 'done', placements, flags: [] };
+      this.placeLate(c.late);
       return;
     }
-    this.s.clustering = { status: 'running', error: null, key, local: false };
-    const input = cards.map(({ id, text }) => ({ id, text })).sort((a, b) => a.id - b.id);
+    // Flagged with nothing new since: the facilitator is choosing.
+    if (c.late?.status === 'flagged') {
+      const waiting = new Set(this.lateIds(c.late));
+      if (late.every((card) => waiting.has(card.id))) return;
+    }
+    this.startPlacement(late);
+  }
+
+  // The full grouping, at high effort, of every visible card. Names, haiku
+  // and approvals start over.
+  startClustering() {
+    const input = this.visibleCards();
     const ids = input.map((x) => x.id);
+    const key = ids.join(',');
+    const run = ++this.clusterRun;
+    const { early } = this.s.clustering;
+    if (input.length === 0) {
+      this.s.themes = [];
+      this.s.clustering = { status: 'done', error: null, key, local: false, early, late: null, empty: true };
+      return;
+    }
+    this.s.clustering = { status: 'running', error: null, key, local: false, early, late: null };
     Promise.resolve()
-      .then(() => this.clusterCards(input))
+      .then(() => this.clusterCards(input, { effort: 'high' }))
       .then(
         (result) => ({ themes: normalizeClusters(result.themes, ids), status: 'done', error: null, local: !!result.local }),
         (err) => fallbackClusters(ids, String(err?.message ?? err).slice(0, 200)),
@@ -346,34 +577,115 @@ export class Session {
     this.s.themes = themes.map((t) => ({
       id: this.newId(),
       name: t.name,
+      haiku: t.haiku ?? '',
       approved: false,
       groups: t.groups.map((cardIds) => ({ id: this.newId(), cardIds })),
     }));
-    this.s.clustering = { status, error, key, local };
+    this.s.clustering = { status, error, key, local, early: this.s.clustering.early, late: null };
+    // Cards that came in while it ran (after the warning) are placed now.
+    if (this.s.phase === 'cluster') this.continueGrouping();
+    this.changed();
+  }
+
+  // The quick call: the themes and their groups as they stand (visible cards
+  // only), and the late cards.
+  startPlacement(late) {
+    const themes = this.s.themes
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        haiku: t.haiku,
+        groups: t.groups
+          .map((g) => ({ id: g.id, texts: this.visibleCardIds(g).map((id) => this.card(id).text) }))
+          .filter((g) => g.texts.length > 0),
+      }))
+      .filter((t) => t.groups.length > 0);
+    // Nothing left to place them next to: group everything instead.
+    if (!themes.length) return this.startClustering();
+    const run = ++this.clusterRun;
+    this.s.clustering.late = { status: 'running', placements: [], flags: [] };
+    const lateIds = late.map((c) => c.id);
+    const scope = { themeIds: themes.map((t) => t.id), groupIds: themes.flatMap((t) => t.groups.map((g) => [g.id, t.id])), lateIds };
+    Promise.resolve()
+      .then(() => this.placeLateCards({ themes, late }))
+      .then((raw) => normalizePlacements(raw, scope))
+      .catch((err) => failedPlacement(lateIds, String(err?.message ?? err).slice(0, 200)))
+      .then((result) => this.applyPlacement(run, result));
+  }
+
+  // Nothing flagged: placed at once, names, haiku and approvals kept.
+  // Anything flagged: held until the facilitator keeps or regroups.
+  applyPlacement(run, { placements, flags }) {
+    if (run !== this.clusterRun || this.shredded) return;
+    const late = { status: flags.length ? 'flagged' : 'done', placements, flags };
+    if (!flags.length) this.placeLate(late);
+    this.s.clustering.late = late;
+    if (this.s.phase === 'cluster') this.continueGrouping();
+    this.changed();
+  }
+
+  // Each late card where the call suggested (flagged ones too: the model
+  // still placed them); one with no valid placement goes to "Other".
+  placeLate(late) {
+    const grouped = this.grouped();
+    const where = new Map(late.placements.map((p) => [p.cardId, p]));
+    for (const id of this.lateIds(late)) {
+      if (grouped.has(id) || !this.card(id)) continue;
+      const p = where.get(id);
+      const theme = p && this.s.themes.find((t) => t.id === p.themeId);
+      const group = theme && p.groupId !== null ? theme.groups.find((g) => g.id === p.groupId) : null;
+      if (group) group.cardIds.push(id);
+      else (theme ?? this.otherTheme()).groups.push({ id: this.newId(), cardIds: [id] });
+      grouped.add(id);
+    }
+  }
+
+  keepLate() {
+    const late = this.s.clustering.late;
+    if (late?.status !== 'flagged') fail('No late arrivals are waiting');
+    this.placeLate(late);
+    late.status = 'done';
+    if (this.s.phase === 'cluster') this.continueGrouping();
+    this.changed();
+  }
+
+  regroupAll() {
+    if (this.s.clustering.late?.status !== 'flagged') fail('No late arrivals are waiting');
+    this.startClustering();
     this.changed();
   }
 
   // While the AI is grouping, the facilitator can stop waiting: every card
   // becomes its own group in one theme, exactly as when grouping fails, and
-  // Retry runs the AI again.
+  // Retry runs the AI again. Skipping the quick call flags the late cards,
+  // as if it had failed.
   skipClustering() {
-    if (this.s.phase !== 'cluster' || this.s.clustering.status !== 'running') fail('Grouping is not running');
-    const ids = this.s.cards.filter((c) => !c.hidden).map((c) => c.id).sort((a, b) => a - b);
+    const c = this.s.clustering;
+    if (this.s.phase !== 'cluster' || (c.status !== 'running' && c.late?.status !== 'running')) fail('Grouping is not running');
     const run = ++this.clusterRun;
-    this.applyClusters(run, this.s.clustering.key, fallbackClusters(ids, SKIPPED));
+    if (c.status === 'running') return this.applyClusters(run, c.key, fallbackClusters(this.visibleCards().map((x) => x.id), SKIPPED));
+    this.applyPlacement(run, failedPlacement(this.ungroupedCards().map((x) => x.id), SKIPPED));
   }
 
   recluster() {
     if (this.s.phase !== 'cluster') fail('Clustering runs in the cluster phase');
-    this.startClustering(true);
+    this.startClustering();
     this.changed();
   }
 
-  // names: { themeId: name } for names typed but not yet approved.
-  approveAll(names = {}) {
+  // names: { themeId: name } and haikus: { themeId: haiku } for what was typed
+  // but not yet approved. A typed haiku replaces the stored one ('' clears it).
+  approveAll(names = {}, haikus = {}) {
+    const typed = new Map();
+    for (const theme of this.s.themes) {
+      const raw = haikus?.[theme.id];
+      if (raw === undefined) continue;
+      typed.set(theme.id, this.typedHaiku(raw));
+    }
     let missing = 0;
     for (const theme of this.s.themes) {
-      const raw = names[theme.id] ?? theme.name;
+      if (typed.has(theme.id)) theme.haiku = typed.get(theme.id);
+      const raw = names?.[theme.id] ?? theme.name;
       const clean = typeof raw === 'string' ? raw.trim().slice(0, LIMITS.themeName) : '';
       if (!clean) {
         missing += 1;
@@ -386,14 +698,25 @@ export class Session {
     if (missing) fail(`${missing} ${missing === 1 ? 'theme needs' : 'themes need'} a name first`);
   }
 
-  approveTheme(id, name) {
+  approveTheme(id, name, haiku) {
     const theme = this.s.themes.find((t) => t.id === id);
     if (!theme) fail('No such theme');
     const clean = typeof name === 'string' ? name.trim() : '';
     if (!clean || clean.length > LIMITS.themeName) fail(`Theme names are 1 to ${LIMITS.themeName} characters`);
+    const typed = haiku === undefined ? theme.haiku : this.typedHaiku(haiku);
     theme.name = clean;
+    theme.haiku = typed;
     theme.approved = true;
     this.changed();
+  }
+
+  // A haiku the facilitator typed: joined onto one line, empty to clear it,
+  // refused (not silently dropped) when too long.
+  typedHaiku(raw) {
+    if (typeof raw !== 'string') return '';
+    const clean = oneLine(raw);
+    if (clean.length > LIMITS.haiku) fail(`Haiku are up to ${LIMITS.haiku} characters`);
+    return clean;
   }
 
   // ---- reactions --------------------------------------------------------
@@ -402,17 +725,29 @@ export class Session {
   // sending again with it replaces those reactions, so a phone can go back and
   // change its mind. The receipt is tied to that one card's reactions, never
   // to the phone, so reactions stay unlinkable across cards.
-  react(cid, groupId, emojis, receipt) {
-    if (this.s.phase !== 'react') fail('Reactions are closed');
+  // The optional comment travels with the reactions and is replaced with them.
+  react(cid, groupId, emojis, receipt, comment) {
+    const graceLeft = this.s.phase === 'walk' && this.s.reactClosedAt !== null && this.now() - this.s.reactClosedAt <= REACT_GRACE_MS;
+    if (this.s.phase !== 'react' && !graceLeft) fail('Reactions are closed');
     const client = this.client(cid);
     const found = this.findGroup(groupId);
     if (!found || this.visibleCardIds(found.group).length === 0) fail('No such card');
-    if (!Array.isArray(emojis) || emojis.length > LIMITS.emojisPerCard) fail('Too many emojis');
+    if (!Array.isArray(emojis)) fail('Reactions are emojis only');
+    if (emojis.length > LIMITS.emojisPerCard) fail(`Up to ${LIMITS.emojisPerCard} emojis on a card: remove ${emojis.length - LIMITS.emojisPerCard}`);
     const unique = [...new Set(emojis)];
     if (!unique.every(isSingleEmoji)) fail('Reactions are emojis only');
-    if (receipt !== undefined && receipt !== null) {
+    const text = typeof comment === 'string' ? comment.trim() : '';
+    if (text.length > LIMITS.commentMax) fail(`Comments are up to ${LIMITS.commentMax} characters`);
+    const resend = receipt !== undefined && receipt !== null;
+    let keepId; // an edited comment keeps its id, so it keeps its place in the order
+    // Clearing a card with its receipt is fine; a first send needs something.
+    if (!resend && unique.length === 0 && !text) fail('Pick an emoji or write a comment');
+    if (resend) {
       if (typeof receipt !== 'string' || this.s.receipts[receipt] !== groupId) fail('Nothing to change');
       this.s.reactions = this.s.reactions.filter((r) => r.r !== receipt);
+      const old = this.s.comments.find((c) => c.r === receipt);
+      keepId = old?.id;
+      this.s.comments = this.s.comments.filter((c) => c.r !== receipt);
     } else {
       if (client.reacted >= this.visibleGroups().length) fail('You have reacted to every card');
       client.reacted += 1;
@@ -420,6 +755,7 @@ export class Session {
       this.s.receipts[receipt] = groupId;
     }
     for (const e of unique) this.s.reactions.push({ g: groupId, e, r: receipt });
+    if (text && !this.s.removedComments[receipt]) this.s.comments.push({ id: keepId ?? this.newId(), g: groupId, text, r: receipt });
     this.changed();
     return { receipt };
   }
@@ -437,138 +773,163 @@ export class Session {
       id: t.id,
       groups: t.groups.map((g) => ({ id: g.id, cardCount: this.visibleCardIds(g).length })).filter((g) => g.cardCount > 0),
     }));
+    const now = this.now();
     this.s.walk = {
       // The walk-through opens on an overview of what came up, so the room
-      // can take it in before the first card.
-      stream: [{ groupId: OVERVIEW, overview: true }, ...buildStream(themes, this.reactionCounts())],
+      // can take in the whole before the first card, and closes on a last
+      // slide that invites the room to speak out loud.
+      stream: [{ groupId: OVERVIEW, overview: true }, ...buildStream(themes, this.reactionCounts()), { groupId: LAST, last: true }],
       index: 0,
-      cardStartedAt: this.now(),
+      cardStartedAt: now,
+      cardEndsAt: null,
+      endsAt: walkEndsAt(this.s.talk, now),
+      paused: false,
+      done: false,
       signals: emptySignals(),
     };
+    this.s.walk.cardEndsAt = now + cardMs(this.s.walk, now);
   }
 
-  moveCard(delta) {
+  // Shows another card and starts its clock. A paused walk holds the new card too.
+  showCard(index) {
+    const w = this.s.walk;
+    const now = this.now();
+    w.index = index;
+    w.cardStartedAt = now;
+    w.cardEndsAt = w.paused ? null : now + (w.stream[index].last ? LAST_SLIDE_MS : cardMs(w, now));
+    w.signals = emptySignals();
+  }
+
+  // `from` is the card the facilitator's screen showed when they tapped; if
+  // the walk-through has moved on, the tap is ignored (a double-tapped Next).
+  moveCard(delta, { from } = {}) {
     if (this.s.phase !== 'walk') fail('Cards move in the walk-through');
     const w = this.s.walk;
-    const index = w.index + delta;
-    if (index < 0 || index >= w.stream.length) fail(delta > 0 ? 'That was the last card' : 'This is the first card');
-    w.index = index;
-    w.cardStartedAt = this.now();
-    w.signals = emptySignals();
-    this.s.pause = null;
+    if (from !== undefined && from !== null && from !== w.index) fail('Already moved on');
+    const last = w.stream.length - 1;
+    if (delta > 0 && w.index === last) {
+      if (w.done) fail('That was the last card');
+      w.done = true;
+      w.cardEndsAt = null;
+    } else if (delta < 0 && w.done) {
+      w.done = false;
+      this.showCard(w.index);
+    } else {
+      const index = w.index + delta;
+      if (index < 0) fail('This is the first card');
+      this.showCard(index);
+      // After the walk-through's time is up, a Back or Next onto a real card
+      // holds it until the facilitator resumes; otherwise the next tick would
+      // snap straight back to the last slide. The last slide runs normally.
+      if (!w.stream[index].last && this.now() >= w.endsAt - LAST_SLIDE_MS) {
+        w.paused = true;
+        w.cardEndsAt = null;
+      } else if (w.stream[index].last && w.paused) {
+        w.paused = false;
+        this.showCard(index);
+      }
+    }
+    this.changed();
+  }
+
+  // Pausing holds the card; resuming gives it a fresh share. The finish time never moves.
+  pauseWalk(paused) {
+    if (this.s.phase !== 'walk') fail('Not in the walk-through');
+    const w = this.s.walk;
+    if (typeof paused !== 'boolean') fail('Pause or resume');
+    if (paused === w.paused) return;
+    w.paused = paused;
+    if (paused) w.cardEndsAt = null;
+    else if (!w.done) {
+      const now = this.now();
+      w.cardEndsAt = now + (w.stream[w.index].last ? LAST_SLIDE_MS : cardMs(w, now));
+      w.cardStartedAt = now;
+    }
     this.changed();
   }
 
   signal(cid, kind, on) {
     if (this.s.phase !== 'walk') fail('Not in the walk-through');
-    if (!['stay', 'moveOn', 'back'].includes(kind)) fail('Unknown signal');
+    if (!['stay', 'back'].includes(kind)) fail('Unknown signal');
     this.client(cid);
     if (on) this.s.walk.signals[kind][cid] = 1;
     else delete this.s.walk.signals[kind][cid];
     this.changed();
   }
 
-  // ---- anonymous pauses -------------------------------------------------
-
-  requestPause(cid, on) {
-    if (!['walk', 'lastcall'].includes(this.s.phase)) fail('Pauses happen in the walk-through');
-    this.client(cid);
-    if (on) this.s.pauseRequests[cid] = 1;
-    else delete this.s.pauseRequests[cid];
-    if (!count(this.s.pauseRequests)) this.s.pauseHeld = false;
-    this.changed();
-  }
-
-  acceptPause() {
-    if (!['walk', 'lastcall'].includes(this.s.phase)) fail('Pauses happen in the walk-through');
-    if (this.s.pause) fail('A pause is already running');
-    this.s.pause = {
-      about: this.currentItem()?.groupId ?? null,
-      startedAt: this.now(),
-      graceAt: null,
-      opened: {},
-      submitted: {},
-    };
-    this.s.pauseRequests = {};
-    this.s.pauseHeld = false;
-    this.changed();
-  }
-
-  holdPause() {
-    this.s.pauseHeld = true;
-    this.changed();
-  }
-
-  endPause() {
-    this.s.pause = null;
-    this.changed();
-  }
-
-  openComment(cid) {
-    const p = this.s.pause;
-    if (!p) fail('No pause is running');
-    this.client(cid);
-    if (p.graceAt !== null && !p.opened[cid]) fail('The pause is ending');
-    p.opened[cid] = 1;
-    this.changed();
-  }
-
-  cancelComment(cid) {
-    const p = this.s.pause;
-    if (!p) return;
-    delete p.opened[cid];
-    this.checkPause();
-    this.changed();
-  }
-
-  submitComment(cid, text) {
-    const p = this.s.pause;
-    if (!p) fail('No pause is running');
-    this.client(cid);
-    const clean = typeof text === 'string' ? text.trim() : '';
-    if (!clean || clean.length > LIMITS.commentMax) fail(`Comments are 1 to ${LIMITS.commentMax} characters`);
-    if (p.submitted[cid]) fail('One comment per pause');
-    if (p.graceAt !== null && !p.opened[cid]) fail('The pause is ending');
-    p.opened[cid] = 1;
-    p.submitted[cid] = 1;
-    this.s.comments.push({ id: this.newId(), g: p.about, text: clean });
-    this.checkPause();
-    this.changed();
-  }
+  // ---- comments ---------------------------------------------------------
 
   removeComment(id) {
     const i = this.s.comments.findIndex((c) => c.id === id);
     if (i < 0) fail('No such comment');
+    // Remember the receipt (not the phone) so a resend can't bring it back.
+    this.s.removedComments[this.s.comments[i].r] = 1;
     this.s.comments.splice(i, 1);
     this.changed();
   }
 
-  // Returns true when the pause state changed.
-  checkPause() {
-    const p = this.s.pause;
-    if (!p) return false;
-    const now = this.now();
-    const opened = Object.keys(p.opened);
-    const pending = opened.filter((c) => !p.submitted[c]).length;
-    if (p.graceAt === null) {
-      if (opened.length > 0 && pending === 0 && now - p.startedAt >= PAUSE.minMs) {
-        this.s.pause = null;
-        return true;
-      }
-      if (now - p.startedAt >= PAUSE.maxMs) {
-        if (pending > 0) p.graceAt = now;
-        else this.s.pause = null;
-        return true;
-      }
-    } else if (pending === 0 || now - p.graceAt >= PAUSE.graceMs) {
-      this.s.pause = null;
-      return true;
-    }
-    return false;
+  // Called every second by the server. Each timed part has its own check;
+  // anything that isn't running does nothing.
+  tick() {
+    if (this.shredded) return;
+    if (this.s.phase === 'demo') this.tickDemo();
+    if (this.s.phase === 'submit') this.tickSubmit();
+    if (this.s.phase === 'walk') this.tickWalk();
+    // A deadline simply passing changes the prompt with no event to broadcast it.
+    if (this.timedPromptKey() !== this.promptKey) this.changed();
   }
 
-  tick() {
-    if (this.checkPause()) this.changed();
+  // On the loop, the server moves the demo on, so every projector shows the
+  // same step; the last step wraps to the first.
+  tickDemo() {
+    const d = this.s.demo;
+    const now = this.now();
+    if (!this.demo || !d.auto || now < d.stepStartedAt + DEMO_STEP_MS[d.step]) return;
+    d.step = (d.step + 1) % DEMO_STEPS.length;
+    d.stepStartedAt = now;
+    this.changed();
+  }
+
+  // At the 1-minute warning, group the cards so far, once per session.
+  tickSubmit() {
+    if (!earlyGroupingDue(this.s, this.now())) return;
+    this.s.clustering.early = true;
+    this.startClustering();
+    this.changed();
+  }
+
+  // When the walk-through's time is up, a card that was already running skips
+  // to the last slide. A card shown or resumed after that (it was held) runs
+  // its own fresh share, then goes to the last slide. A hidden card gets no time.
+  tickWalk() {
+    const w = this.s.walk;
+    if (w.paused || w.done) return;
+    const now = this.now();
+    const last = w.stream.length - 1;
+    const timeUp = w.endsAt - LAST_SLIDE_MS;
+    const shownLate = w.cardStartedAt !== null && w.cardStartedAt >= timeUp;
+    if (w.index < last && !shownLate && now >= timeUp) return this.moveTo(last);
+    const over = this.itemView(this.currentItem())?.hidden || (w.cardEndsAt !== null && now >= w.cardEndsAt);
+    if (!over) return;
+    if (w.index < last && shownLate) this.moveTo(last);
+    else this.moveCard(1);
+  }
+
+  moveTo(index) {
+    this.showCard(index);
+    this.changed();
+  }
+
+  // The facilitator's "Speed up" during the finale or the shred: the rest of
+  // the part plays three times faster, once (a second tap does nothing more).
+  // The finale's prompt and the closing screen come sooner to match.
+  speedUp({ from } = {}) {
+    if (from !== undefined && from !== null && from !== this.s.phase) fail('Already moved on');
+    if (this.s.phase !== 'finale' && this.s.phase !== 'shred') fail('Speed up is only for the finale and the shred');
+    if (this.s.speedUp) return;
+    this.s.speedUp = { at: this.now(), factor: SPEED_UP };
+    if (this.s.phase === 'shred') this.scheduleClosing();
+    this.changed();
   }
 
   // ---- shred ------------------------------------------------------------
@@ -581,18 +942,30 @@ export class Session {
     this.clusterRun += 1;
     clearTimeout(this.nudgeTimer);
     this.shredded = true;
-    this.state = { sessionId: this.s.sessionId, phase: 'shred', phaseStartedAt: this.now(), shredded: true, walk: { stream: [], index: 0 } };
+    this.state = {
+      sessionId: this.s.sessionId,
+      phase: 'shred',
+      phaseStartedAt: this.now(),
+      shredded: true,
+      speedUp: null,
+      walk: { stream: [], index: 0 },
+    };
     this.onShred();
-    // Once the animation and a beat of black are over, drop the payload and
-    // move everyone on to the closing screen.
-    const ms = this.shredAnimationMs ?? shredTimeline(this.shredPayload).closingAt;
+    this.closingAt = this.now() + (this.shredAnimationMs ?? shredTimeline(this.shredPayload).closingAt);
+    this.scheduleClosing();
+    this.changed();
+  }
+
+  // Once the animation and a beat of black are over (sooner if sped up), drop
+  // the payload and move everyone on to the closing screen.
+  scheduleClosing() {
+    clearTimeout(this.closingTimer);
     this.closingTimer = setTimeout(() => {
       this.shredPayload = null;
       if (this.s.phase === 'shred') this.enter('closing', 'forward');
       this.changed();
-    }, ms);
+    }, Math.max(0, spedUp(this.closingAt ?? this.now(), this.s.speedUp) - this.now()));
     this.closingTimer.unref?.();
-    this.changed();
   }
 
   // After the shred, start over for another session. Only allowed once
@@ -602,12 +975,17 @@ export class Session {
     clearTimeout(this.closingTimer);
     this.shredPayload = null;
     this.shredded = false;
-    this.state = freshState(this.now());
+    this.state = freshState(this.now(), this.talkMinutes);
     this.onReset();
     this.changed();
   }
 
   // ---- views: what each screen is allowed to see -------------------------
+
+  // The page anyone sees before the event; the only part of the demo file that is public.
+  teaser() {
+    return this.demo?.teaser ?? DEFAULT_TEASER;
+  }
 
   view(role, { cid, phoneCount = 0 } = {}) {
     if (role === 'facilitator') return this.facilitatorView({ phoneCount });
@@ -615,24 +993,11 @@ export class Session {
     return this.phoneView(cid);
   }
 
-  pauseView(cid) {
-    const p = this.s.pause;
-    if (!p) return null;
-    return {
-      about: p.about,
-      text: p.about ? this.groupText(p.about) : null,
-      startedAt: p.startedAt,
-      endsAt: p.startedAt + PAUSE.maxMs,
-      graceEndsAt: p.graceAt === null ? null : p.graceAt + PAUSE.graceMs,
-      ...(cid !== undefined && { opened: !!p.opened[cid], submitted: !!p.submitted[cid] }),
-      ...(cid === undefined && { openedCount: count(p.opened), submittedCount: count(p.submitted) }),
-    };
-  }
-
   phoneView(cid) {
     const s = this.s;
     const v = { role: 'phone', session: s.sessionId, phase: s.phase, now: this.now() };
     if (this.shredded) return v;
+    if (s.phase === 'teaser') v.teaser = this.teaser();
     const c = typeof cid === 'string' ? s.clients[cid] : undefined;
     if (s.phase === 'submit') {
       const texts = this.nudgeTexts();
@@ -648,25 +1013,40 @@ export class Session {
       v.react = {
         groups: this.visibleGroups().map((g) => ({ id: g.id, texts: this.visibleCardIds(g).map((id) => this.card(id).text) })),
         done: !!c?.reactDone,
+        endsAt: s.reactEndsAt,
       };
     }
-    if (s.phase === 'walk' || s.phase === 'lastcall') {
+    if (s.phase === 'walk') {
       v.walk = {
-        cardKey: s.phase === 'walk' ? `${s.walk.index}:${this.currentItem()?.groupId ?? ''}` : 'last',
+        cardKey: `${s.walk.index}:${this.currentItem()?.groupId ?? ''}`,
         mine: {
           stay: !!s.walk.signals?.stay?.[cid],
-          moveOn: !!s.walk.signals?.moveOn?.[cid],
           back: !!s.walk.signals?.back?.[cid],
-          pause: !!s.pauseRequests[cid],
         },
-        pause: this.pauseView(cid ?? ''),
       };
     }
     return v;
   }
 
+  // Every comment on a card, oldest first (ids are sequential, and an edit
+  // keeps its id), so the newest are the ones counted in "+N more".
+  allCommentsFor(groupId) {
+    return this.s.comments
+      .filter((c) => c.g === groupId)
+      .map(({ id, text }) => ({ id, text }))
+      .sort((a, b) => Number(a.id) - Number(b.id));
+  }
+
   commentsFor(groupId) {
-    return this.s.comments.filter((c) => c.g === groupId).map(({ id, text }) => ({ id, text }));
+    const all = this.allCommentsFor(groupId);
+    return { shown: all.slice(0, COMMENTS_SHOWN), more: Math.max(0, all.length - COMMENTS_SHOWN) };
+  }
+
+  // The public projector gets the text only: ids come from one session-wide
+  // counter, so neighbouring ids could link one phone's comments across cards.
+  projectorComments(groupId) {
+    const c = this.commentsFor(groupId);
+    return { shown: c.shown.map(({ text }) => ({ text })), more: c.more };
   }
 
   // The themes, biggest first, with how many cards and reactions each drew.
@@ -685,17 +1065,25 @@ export class Session {
       .sort((a, b) => b.reactions - a.reactions || b.cards - a.cards);
   }
 
+  // Only real cards carry comments; the overview and the last slide have none.
+  commentKey(item) {
+    return item && !item.last ? item.groupId : null;
+  }
+
   itemView(item) {
     if (!item) return null;
+    if (item.last) return { last: true };
     if (item.overview) return { overview: this.overviewView() };
     const found = this.findGroup(item.groupId);
     const text = this.groupText(item.groupId);
     if (!found || !text) return { hidden: true };
+    const { theme } = found;
     return {
       text,
       similar: Math.max(0, this.visibleCardIds(found.group).length - 1),
       moreInTheme: item.moreInTheme,
-      theme: found.theme.approved ? found.theme.name : null,
+      theme: theme.approved ? theme.name : null,
+      ...(theme.approved && theme.haiku ? { haiku: theme.haiku } : {}),
       mix: this.emojiMix(item.groupId),
     };
   }
@@ -704,7 +1092,13 @@ export class Session {
     const s = this.s;
     const v = { role: 'projector', phase: s.phase, now: this.now(), phaseStartedAt: s.phaseStartedAt };
     if (s.phase === 'shred') v.shred = this.shredPayload;
+    if (s.phase === 'finale' || s.phase === 'shred') v.speedUp = s.speedUp ?? null;
     if (this.shredded) return v;
+    if (s.phase === 'teaser') v.teaser = this.teaser();
+    if (s.phase === 'demo' && this.demo) {
+      const { teaser, ...content } = this.demo;
+      v.demo = { step: s.demo.step, auto: s.demo.auto, stepStartedAt: s.demo.stepStartedAt, ...content };
+    }
     if (s.phase === 'join') v.phones = phoneCount;
     // How long this part of the session is planned to take, as a hint the
     // room can see. Only while there's time left: a visible "over" would
@@ -712,23 +1106,31 @@ export class Session {
     const sectionEnd =
       s.phase === 'submit'
         ? s.submitEndsAt
-        : ['react', 'walk'].includes(s.phase)
-          ? (s.sectionStartedAt?.[s.phase] ?? s.phaseStartedAt) + (PLAN[s.phase][1] - PLAN[s.phase][0]) * 60_000
-          : null;
+        : s.phase === 'react'
+          ? s.reactEndsAt
+          : s.phase === 'walk'
+            ? s.walk.endsAt
+            : null;
     if (sectionEnd) v.section = { endsAt: sectionEnd };
-    if (s.phase === 'walk' || s.phase === 'lastcall') {
+    // The room is told the app is waiting on the facilitator, never why or
+    // how far over anything is.
+    v.waiting =
+      pendingMove(s, this.now(), { phoneCount }) !== null ||
+      (s.phase === 'cluster' && ['done', 'failed'].includes(s.clustering.status) && s.themes.some((t) => !t.approved)) ||
+      (s.phase === 'cluster' && s.clustering.late?.status === 'flagged');
+    if (s.phase === 'walk') {
       const item = this.currentItem();
       v.walk = {
         index: s.walk.index,
         total: s.walk.stream.length,
         cardStartedAt: s.walk.cardStartedAt,
+        cardEndsAt: s.walk.cardEndsAt,
+        paused: s.walk.paused,
         item: this.itemView(item),
-        comments: this.commentsFor(s.phase === 'walk' ? (item?.groupId ?? null) : null),
-        stay: s.phase === 'walk' ? count(s.walk.signals.stay) : 0,
-        back: s.phase === 'walk' ? count(s.walk.signals.back) : 0,
-        pauseRequests: count(s.pauseRequests),
-        pauseHeld: s.pauseHeld,
-        pause: this.pauseView(),
+        // A hidden card's comments stay off the projector (the facilitator still sees them).
+        comments: this.itemView(item)?.hidden ? { shown: [], more: 0 } : this.projectorComments(this.commentKey(item)),
+        stay: count(s.walk.signals.stay),
+        back: count(s.walk.signals.back),
       };
     }
     if (s.phase === 'finale') v.finale = { sequence: s.reactions.map((r) => r.e) };
@@ -749,21 +1151,23 @@ export class Session {
       shredded: this.shredded,
       phones: phoneCount,
     };
+    if (s.phase === 'finale' || s.phase === 'shred') v.speedUp = s.speedUp ?? null;
     if (this.shredded) return v;
-    const elapsedMs = s.clockStart === null ? 0 : now - s.clockStart;
-    v.clock = {
-      startedAt: s.clockStart,
-      elapsedMs,
-      pace:
-        s.clockStart === null
-          ? 0
-          : paceMinutes({
-              phase: s.phase,
-              elapsedMinutes: elapsedMs / 60_000,
-              walkIndex: s.walk.index,
-              walkLength: s.walk.stream.length,
-            }),
-    };
+    const { startedAt, minutes } = s.talk;
+    if (s.phase === 'teaser') v.teaser = this.teaser();
+    if (s.phase === 'demo' && this.demo) v.demo = { step: s.demo.step, steps: DEMO_STEPS.length, name: DEMO_STEPS[s.demo.step], auto: s.demo.auto };
+    v.talk = { startedAt, minutes, leftMs: startedAt === null ? minutes * 60_000 : startedAt + minutes * 60_000 - now };
+    v.pace =
+      startedAt === null
+        ? 0
+        : paceMinutes({
+            phase: s.phase,
+            elapsedMinutes: (now - startedAt) / 60_000,
+            walkIndex: s.walk.index,
+            walkLength: s.walk.stream.length,
+          });
+    // Set when a part is over and the facilitator is asked to confirm the move.
+    v.move = pendingMove(s, now, { phoneCount: phoneCount });
     v.submit = {
       endsAt: s.submitEndsAt,
       nudgesOn: s.nudgesOn,
@@ -773,11 +1177,24 @@ export class Session {
       people: Object.values(s.clients).filter((c) => c.cards > 0).length,
     };
     v.cards = [...s.cards].sort((a, b) => a.id - b.id).map(({ id, text, hidden }) => ({ id, text, hidden }));
-    v.clustering = s.clustering;
+    // The late cards' flags with their text, for the keep-or-regroup choice
+    // (not the suggested placements: those are applied on keep).
+    const { late, ...clustering } = s.clustering;
+    v.clustering = {
+      ...clustering,
+      late: late && {
+        status: late.status,
+        flags: late.flags.map((f) => ({
+          cards: f.cardIds.map((id) => this.card(id)).filter(Boolean).map(({ id, text }) => ({ id, text })),
+          reason: f.reason,
+        })),
+      },
+    };
     const counts = this.reactionCounts();
     v.themes = s.themes.map((t) => ({
       id: t.id,
       name: t.name,
+      haiku: t.haiku,
       approved: t.approved,
       groups: t.groups.map((g) => ({
         id: g.id,
@@ -788,28 +1205,37 @@ export class Session {
     v.react = {
       done: Object.values(s.clients).filter((c) => c.reactDone).length,
       reactions: s.reactions.length,
+      endsAt: s.reactEndsAt,
     };
     const item = this.currentItem();
+    const inWalk = s.phase === 'walk';
     v.walk = {
       index: s.walk.index,
       total: s.walk.stream.length,
+      // Facilitator only: how many cards are left and each one's share of the time left.
+      cardsLeft: inWalk ? cardsLeft(s.walk) : null,
+      cardMs: inWalk ? cardMs(s.walk, now) : null,
       cardStartedAt: s.walk.cardStartedAt,
-      // Facilitator only: a rough per-card share of the walk-through's time.
-      budgetMs: Math.min(180_000, Math.max(20_000, WALK_MS / Math.max(1, s.walk.stream.length))),
+      cardEndsAt: s.walk.cardEndsAt,
+      endsAt: s.walk.endsAt,
+      paused: s.walk.paused,
+      done: s.walk.done,
       stream: s.walk.stream.map((it) =>
         it.overview
           ? { groupId: it.groupId, text: 'Overview: what came up', reactions: s.reactions.length }
-          : { groupId: it.groupId, text: this.groupText(it.groupId), reactions: counts.get(it.groupId) ?? 0 },
+          : it.last
+            ? { groupId: it.groupId, text: 'Last slide: Anything else? Out loud.', reactions: 0 }
+            : { groupId: it.groupId, text: this.groupText(it.groupId), reactions: counts.get(it.groupId) ?? 0 },
       ),
       item: item ? { groupId: item.groupId, ...this.itemView(item) } : null,
       stay: count(s.walk.signals.stay),
-      moveOn: count(s.walk.signals.moveOn),
       back: count(s.walk.signals.back),
     };
-    v.pauseRequests = count(s.pauseRequests);
-    v.pauseHeld = s.pauseHeld;
-    v.pause = this.pauseView();
-    v.comments = this.commentsFor(s.phase === 'walk' ? (item?.groupId ?? null) : s.phase === 'lastcall' ? null : undefined);
+    const upcoming = s.phase === 'walk' ? s.walk.stream[s.walk.index + 1] : null;
+    v.comments = {
+      current: s.phase === 'walk' ? this.allCommentsFor(this.commentKey(item)) : [],
+      next: upcoming && !upcoming.overview && !upcoming.last ? this.allCommentsFor(upcoming.groupId) : [],
+    };
     return v;
   }
 }

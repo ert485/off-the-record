@@ -11,8 +11,9 @@ import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { Session, ActionError } from './session.js';
 import { openStore } from './db.js';
-import { createClusterer } from './cluster.js';
+import { createClusterer, createPlacer } from './cluster.js';
 import { createNudgeTagger } from './nudges.js';
+import { loadDemo } from './demo.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PUBLIC = join(ROOT, 'public');
@@ -36,7 +37,10 @@ const clusterCards = createClusterer();
 const session = new Session({
   state: store.load(),
   clusterCards,
+  placeLateCards: createPlacer(),
+  talkMinutes: Number(process.env.TALK_MINUTES) || undefined,
   tagCards: createNudgeTagger(),
+  demo: loadDemo(join(ROOT, 'demo')),
   onChange: () => {
     store.save(session.state);
     scheduleBroadcast();
@@ -104,34 +108,36 @@ function openStream(req, res, url) {
 
 const PHONE_ACTIONS = {
   submit: (b) => session.submitCards(b.cid, b.texts),
-  react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt),
+  react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt, b.comment),
   reactDone: (b) => session.reactDone(b.cid),
   signal: (b) => session.signal(b.cid, b.kind, b.on),
-  requestPause: (b) => session.requestPause(b.cid, b.on),
-  openComment: (b) => session.openComment(b.cid),
-  cancelComment: (b) => session.cancelComment(b.cid),
-  comment: (b) => session.submitComment(b.cid, b.text),
 };
 
 const FACILITATOR_ACTIONS = {
-  advance: (b) => session.advance({ confirm: b.confirm === true }),
-  back: () => session.back(),
-  nextCard: () => session.moveCard(1),
-  prevCard: () => session.moveCard(-1),
-  extend: () => session.extendSubmit(),
+  advance: (b) => session.advance({ confirm: b.confirm === true, from: b.from }),
+  back: (b) => session.back({ from: b.from }),
+  demoNext: (b) => session.demoStep(1, { from: b.from }),
+  demoBack: (b) => session.demoStep(-1, { from: b.from }),
+  demoAuto: (b) => session.demoAuto(b.on === true),
+  speedUp: (b) => session.speedUp({ from: b.from }),
+  nextCard: (b) => session.moveCard(1, { from: b.from }),
+  prevCard: (b) => session.moveCard(-1, { from: b.from }),
+  pauseWalk: (b) => session.pauseWalk(b.paused),
+  extend: (b) => session.extendSubmit({ from: b.from }),
+  extendReact: (b) => session.extendReact({ from: b.from }),
+  startTalk: () => session.startTalk(),
   nudges: (b) => session.setNudges(b.on),
   recluster: () => session.recluster(),
   skipClustering: () => session.skipClustering(),
-  approveTheme: (b) => session.approveTheme(b.id, b.name),
-  approveAll: (b) => session.approveAll(b.names),
+  keepLate: () => session.keepLate(),
+  regroupAll: () => session.regroupAll(),
+  approveTheme: (b) => session.approveTheme(b.id, b.name, b.haiku),
+  approveAll: (b) => session.approveAll(b.names, b.haikus),
   reset: (b) => {
     if (b.confirm !== true) throw new ActionError('Confirm the reset');
     session.reset();
   },
   hideCard: (b) => session.hideCard(b.id, b.hidden),
-  acceptPause: () => session.acceptPause(),
-  holdPause: () => session.holdPause(),
-  endPause: () => session.endPause(),
   removeComment: (b) => session.removeComment(b.id),
 };
 

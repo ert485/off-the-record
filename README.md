@@ -6,9 +6,11 @@ A live, anonymous, phone-based retro for a room of about 40 people, ending with 
 
 Three views on one small server:
 
-- **Phone** (`/`): private notes that never leave the phone, then pick up to 3 to share as cards; react to one card at a time with emojis; during the walk-through, "look up", with light taps (stay, move on, go back, ask for an anonymous pause) and anonymous comments during pauses.
-- **Projector** (`/projector`): join QR and trust disclosure, the current card with its emoji mix, live comments, the emotional fingerprint, and the shredder.
-- **Facilitator** (`/facilitate?t=<token>`): everything, plus every control. Works on several devices at once.
+- **Phone** (`/`): private notes that never leave the phone, then pick up to 3 to share as cards; react to one card at a time with emojis and an optional comment; during the walk-through, "look up", with light taps (stay, go back). Before Join, phones see the teaser, then "Starting soon".
+- **Projector** (`/projector`): the scripted demo on a drawn phone, join QR and trust disclosure, each theme as a folder tab with its haiku, the current card with its emoji mix and comments, a draining bar for the walk-through's pace, the emotional fingerprint, and the shredder.
+- **Facilitator** (`/facilitate?t=<token>`): everything, plus every control: stepping through the demo, the talk clock, a "Ready for ...?" prompt to confirm each move, and pause, back and next in the walk-through. Works on several devices at once.
+
+The flow runs on a 25-minute talk clock: demo, join, submit, grouping (starts at the 1-minute warning), react and comment, a self-running walk-through that ends on "Anything else? Out loud.", the finale, the shred, and the closing.
 
 ## Privacy, and how to check it
 
@@ -37,6 +39,11 @@ Open `http://localhost:3000/` (phone), `/projector`, and `/facilitate?t=dev`. Wi
 | `PUBLIC_URL` | What the QR code points to. |
 | `DATA_DIR` | Where the one SQLite file lives (default `./data`). |
 | `REPO_URL` | Shown on the projector. |
+| `TALK_MINUTES` | Length of the talk clock in minutes (default 25). The walk-through finishes on it. |
+
+## The demo
+
+The session starts on a teaser page (the demo file's optional `teaser`: a title and up to four lines), then the demo plays on a loop until the talk clock starts. The demo shows the content in `demo/example.json`. To use your own, copy it to `demo/local.json` and edit it: that file is gitignored, so it stays out of the repo, but `deploy/deploy.sh` still copies it to the server. If it is invalid, the server prints `demo: local file invalid, using the example` and uses the example.
 
 ## Deploy
 
