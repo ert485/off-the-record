@@ -1,8 +1,8 @@
 // The projector. Shows only what the room should see; it has no controls.
 import { subscribe, fill, h, formatClock, serverNow } from './shared/client.js';
-import { START_DELAY_MS, REPLAY_MS, STEP_MS, MAX_PARTICLES, POOL_DELAY_MS, POOL_MS } from './shared/finale-timing.js';
+import { finaleTimeline, arrivalMs, sampleEvery, POOL_MS } from './shared/finale-timing.js';
 import { PRESETS } from './shared/emoji.js';
-import { cardSheets, shredTimeline, PRELUDE_MS, FIRST_SHEET_MS, PULL_MS, SHEET_GAP_MS, FADE_MS } from './shared/shred-timing.js';
+import { cardSheets, shredTimeline, PRELUDE_MS, FADE_MS } from './shared/shred-timing.js';
 
 const app = document.getElementById('app');
 const cornerQr = document.getElementById('corner-qr');
@@ -569,7 +569,7 @@ function walkScreen() {
       barWidth = barIndex = null;
     }
     bar.hidden = barWidth === null;
-    if (barWidth !== null) bar.style.width = `${(barWidth * 100).toFixed(2)}%`;
+    if (barWidth !== null) bar.style.transform = `scaleX(${barWidth.toFixed(4)})`; // transform only, so it never repaints the card
   }
   function loop() {
     drawBar();
@@ -628,14 +628,67 @@ function walkScreen() {
   };
 }
 
+// ---- the finale and the shred: one clock, drawn on canvases ----------------
+// Each plays on its own clock: ms since the part started on the server, so a
+// projector that reloads mid-part picks up where the room is. The hundreds of
+// things that move (emoji particles, paper strips) are drawn on a canvas each
+// frame rather than being DOM elements; everything else moves by transform
+// and opacity only, so the laptop's GPU composites it.
+
+function partClock(v) {
+  const origin = performance.now() - Math.max(0, v.now - v.phaseStartedAt);
+  return { at: (now = performance.now()) => now - origin };
+}
+
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
+const easeOut = (x) => 1 - (1 - x) * (1 - x);
+
+// A canvas the size of the screen, drawn in CSS pixels.
+function screenCanvas(cls) {
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  const c = h('canvas', { class: cls });
+  c.width = Math.round(innerWidth * dpr);
+  c.height = Math.round(innerHeight * dpr);
+  return { c, ctx: c.getContext('2d'), dpr };
+}
+
+const emojiFont = () => getComputedStyle(document.documentElement).getPropertyValue('--emoji').trim();
+
+// The projector's emoji font arrives in pieces, as the page first shows each
+// emoji, and a canvas doesn't wait for it: load the ones needed first (or
+// give up after a second and draw with what's there).
+const loadEmoji = (text) =>
+  Promise.race([document.fonts.load(`40px ${emojiFont()}`, text).catch(() => {}), new Promise((ok) => setTimeout(ok, 1000))]);
+
+// One emoji drawn once at a size (CSS px), to be stamped many times. Emoji
+// fonts top out at about 160 device pixels (bigger is scaled up anyway), and
+// drawing beyond that is slow, so bigger sprites are drawn at 160 and scaled.
+const warmer = document.createElement('canvas').getContext('2d');
+function emojiSprite(e, px, dpr) {
+  const font = Math.min(160, px * dpr);
+  const size = Math.max(1, Math.ceil(font * 1.3));
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.font = `${font}px ${emojiFont()}`;
+  // Centred on the glyph itself, not on the font's line.
+  const m = ctx.measureText(e);
+  ctx.fillText(e, (size - m.actualBoundingBoxRight + m.actualBoundingBoxLeft) / 2, (size + m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
+  // Canvas drawing is deferred: use it once now, so the glyph is drawn here
+  // and not mid-animation.
+  warmer.drawImage(c, 0, 0, 1, 1);
+  return { c, px: px * 1.3 };
+}
+
 // ---- finale: the emotional fingerprint -------------------------------------
-// Every reaction arrives as an emoji in the order it happened (about a
-// 10-second replay), then they pool into one emoji per type, sized by count
-// (area, not width). Each type's particles together cover about the same area
-// as its pool, so pooling reads as the particles merging, not a jump in scale.
-// No numbers, no words.
+// Every reaction arrives as an emoji in the order it happened, then they pool
+// into one emoji per type, sized by count (area, not width). Each type's
+// particles together cover about the same area as its pool, so pooling reads
+// as the particles merging, not a jump in scale. No numbers, no words.
 
 const MIN_POOL_PX = 28;
+const APPEAR_MS = 900; // a particle grows in
 
 // Pool size in px per emoji: all pools together fill about a third of the
 // screen, and each pool's area is proportional to its count.
@@ -654,76 +707,112 @@ const countOf = (list) => {
 
 function finaleScreen(v) {
   const stage = h('div', { class: 'stage' });
-  const timers = [];
-  const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+  const clock = partClock(v);
   const sequence = v.finale?.sequence ?? [];
-  if (sequence.length) later(() => replay(sequence, stage, later), START_DELAY_MS);
+  let frame = 0;
+  let draw = null;
+  let live = true;
+  const loop = (now) => {
+    if (draw(clock.at(now))) frame = requestAnimationFrame(loop);
+  };
+  // Set up once the stage is on screen (the pools are laid out by the
+  // browser) and the emojis' font is here.
+  if (sequence.length) {
+    loadEmoji([...new Set(sequence)].join('')).then(() => {
+      if (!live) return;
+      frame = requestAnimationFrame((now) => {
+        draw = fingerprint(sequence, stage);
+        loop(now);
+      });
+    });
+  }
   return {
     el: stage,
     destroy() {
-      timers.forEach(clearTimeout);
+      live = false;
+      cancelAnimationFrame(frame);
     },
   };
 }
 
-function replay(sequence, stage, later) {
+// Builds the picture and returns draw(t): it paints the finale at t ms from
+// its start, and says whether anything is still moving.
+function fingerprint(sequence, stage) {
   const W = innerWidth;
   const H = innerHeight;
-  const every = Math.ceil(sequence.length / MAX_PARTICLES);
-  const sample = sequence.filter((_, i) => i % every === 0);
+  const { c, ctx, dpr } = screenCanvas('finale-canvas');
   const sizes = poolSizes(countOf(sequence), W, H);
-  const sampled = countOf(sample);
-  const step = Math.min(STEP_MS, REPLAY_MS / sample.length);
-  const particles = [];
-  sample.forEach((e, i) =>
-    later(() => {
-      // This particle's share of its pool's area.
-      const s = sizes.get(e) / Math.sqrt(sampled.get(e));
-      const x = Math.random() * Math.max(0, W - s);
-      const y = Math.random() * Math.max(0, H - s);
-      const p = h('span', { class: 'particle', style: { fontSize: `${s}px` } }, e);
-      p.style.transform = `translate(${x}px, ${y}px) scale(0)`;
-      stage.append(p);
-      particles.push({ p, e, s });
-      requestAnimationFrame(() => requestAnimationFrame(() => (p.style.transform = `translate(${x}px, ${y}px) scale(1)`)));
-    }, i * step),
-  );
-  later(() => pool(particles, sizes, stage), sample.length * step + POOL_DELAY_MS);
-}
-
-function pool(particles, sizes, stage) {
-  const pools = h('div', { class: 'pools' });
-  const byEmoji = new Map();
-  // Biggest in the middle, smaller ones alternating out to each side.
+  // Biggest in the middle, smaller ones alternating out to each side. The
+  // browser lays the pools out (never shown); the canvas draws them.
   const arranged = [];
   [...sizes].sort((a, b) => b[1] - a[1]).forEach((entry, i) => (i % 2 ? arranged.unshift(entry) : arranged.push(entry)));
-  for (const [e, px] of arranged) {
-    const el = h('span', { class: 'pool', style: { fontSize: `${px}px` } }, e);
-    byEmoji.set(e, el);
-    pools.append(el);
-  }
-  stage.append(pools);
-  requestAnimationFrame(() => {
-    for (const { p, e, s } of particles) {
-      // Land somewhere inside the pool, so together they fill its shape.
-      const r = byEmoji.get(e).getBoundingClientRect();
-      const x = r.left + Math.random() * Math.max(0, r.width - s);
-      const y = r.top + Math.random() * Math.max(0, r.height - s);
-      p.style.transform = `translate(${x}px, ${y}px) scale(1)`;
-    }
-    setTimeout(() => {
-      for (const el of byEmoji.values()) el.style.opacity = '1';
-      for (const { p } of particles) p.style.opacity = '0';
-    }, POOL_MS);
+  const spans = arranged.map(([e, px]) => h('span', { class: 'pool', style: { fontSize: `${px}px` } }, e));
+  stage.append(h('div', { class: 'pools' }, spans), c);
+  // The only layout read, before anything moves.
+  const rects = new Map(arranged.map(([e], i) => [e, spans[i].getBoundingClientRect()]));
+  const pools = arranged.map(([e, px]) => ({ r: rects.get(e), sprite: emojiSprite(e, px, dpr) }));
+
+  const every = sampleEvery(sequence.length);
+  const sample = sequence.filter((_, i) => i % every === 0);
+  const sampled = countOf(sample);
+  const { replayAt, replayMs, poolAt } = finaleTimeline(sequence.length);
+  const sprites = new Map();
+  const particles = sample.map((e, i) => {
+    // This particle's share of its pool's area.
+    const s = sizes.get(e) / Math.sqrt(sampled.get(e));
+    if (!sprites.has(e)) sprites.set(e, emojiSprite(e, s, dpr));
+    const r = rects.get(e);
+    return {
+      sprite: sprites.get(e),
+      s,
+      at: replayAt + arrivalMs(i, sample.length, replayMs),
+      x: Math.random() * Math.max(0, W - s),
+      y: Math.random() * Math.max(0, H - s),
+      // Where it lands inside its pool, so together they fill its shape.
+      tx: r.left + Math.random() * Math.max(0, r.width - s),
+      ty: r.top + Math.random() * Math.max(0, r.height - s),
+    };
   });
+  // The particles gather over the first two thirds of the pooling; in its
+  // second half they fade as the pools appear.
+  const gatherMs = (POOL_MS * 2) / 3;
+  const fadeAt = poolAt + POOL_MS / 2;
+  const fadeMs = POOL_MS / 2;
+
+  return (t) => {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const g = easeInOut(clamp01((t - poolAt) / gatherMs));
+    const fade = clamp01((t - fadeAt) / fadeMs);
+    if (fade < 1) {
+      ctx.globalAlpha = 1 - fade;
+      for (const p of particles) {
+        if (t < p.at) break; // in order of arrival
+        const d = p.sprite.px * easeInOut(clamp01((t - p.at) / APPEAR_MS));
+        const x = p.x + (p.tx - p.x) * g + p.s / 2;
+        const y = p.y + (p.ty - p.y) * g + p.s / 2;
+        ctx.drawImage(p.sprite.c, x - d / 2, y - d / 2, d, d);
+      }
+    }
+    if (fade > 0) {
+      ctx.globalAlpha = fade;
+      for (const { r, sprite } of pools) {
+        ctx.drawImage(sprite.c, r.left + r.width / 2 - sprite.px / 2, r.top + r.height / 2 - sprite.px / 2, sprite.px, sprite.px);
+      }
+    }
+    ctx.globalAlpha = 1;
+    return fade < 1; // the finished picture stays as drawn
+  };
 }
 
 // ---- shred -----------------------------------------------------------------
 
 // Before the shredder: a plain "Delete everything?" dialog, and a cursor that
 // moves over and clicks Delete. It says what's really happening on the server
-// before the shredder shows it as a ritual.
-function deletePrelude() {
+// before the shredder shows it as a ritual. `animate` runs an animation on
+// the shred's clock (delays in ms from its start).
+function deletePrelude(animate) {
   const button = h('span', { class: 'del' }, 'Delete');
   const dialog = h(
     'div',
@@ -736,43 +825,96 @@ function deletePrelude() {
   cursor.innerHTML =
     '<svg viewBox="0 0 24 24" width="100%" height="100%"><path d="M3 2l7.5 19 2.6-7.9L21 10.5z" fill="white" stroke="black" stroke-width="1.4" stroke-linejoin="round"/></svg>';
   const layer = h('div', { class: 'prelude' }, dialog, cursor);
-  requestAnimationFrame(() => {
+  // Once on screen: the cursor needs to know where Delete is.
+  function start() {
     const target = button.getBoundingClientRect();
     const tx = target.left + target.width * 0.6;
     const ty = target.top + target.height * 0.6;
     const sx = innerWidth * 0.82;
     const sy = innerHeight * 0.9;
-    dialog.animate([{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 300, fill: 'backwards' });
-    cursor.animate(
+    const clickAt = PRELUDE_MS - 1050;
+    animate(dialog, [{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 300, fill: 'backwards' });
+    animate(
+      cursor,
       [
         { transform: `translate(${sx}px, ${sy}px)`, offset: 0 },
         { transform: `translate(${sx}px, ${sy}px)`, offset: 0.25 },
         { transform: `translate(${tx}px, ${ty}px)`, easing: 'ease-out', offset: 0.75 },
         { transform: `translate(${tx}px, ${ty}px)`, offset: 1 },
       ],
-      { duration: 2300, fill: 'forwards', easing: 'ease-in-out' },
+      { duration: clickAt - 50, fill: 'both', easing: 'ease-in-out' },
     );
     // The click.
-    button.animate([{ filter: 'brightness(1)' }, { filter: 'brightness(0.7)', transform: 'scale(0.95)' }, { filter: 'brightness(1)' }], {
+    animate(button, [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0.7, transform: 'scale(0.95)' }, { opacity: 1, transform: 'scale(1)' }], {
       duration: 260,
-      delay: 2350,
+      delay: clickAt,
     });
-    layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 500, delay: 2700, fill: 'forwards' });
-  });
-  return layer;
+    animate(layer, [{ opacity: 1 }, { opacity: 0 }], { duration: 500, delay: PRELUDE_MS - 700, fill: 'forwards' });
+  }
+  return { layer, start };
 }
+
 // A literal shredder: the pooled emojis, then the cards behind them, are
 // pulled down through a slot, come out underneath as narrow strips that sway
-// and flutter, and fall into a bin. Ends on black.
+// and flutter, and fall into a bin. Ends on black. Each sheet is drawn once
+// into a canvas; the strips are slices of it, drawn every frame on one
+// canvas, and baked into the bin's canvas once they have landed.
 
 const STRIP_VW = 1.2; // narrow enough that no whole word survives
 const GRAVITY = 1500; // px/s²
 const TERMINAL = 950; // px/s
+const LIE_MS = 350; // a landed strip flops over
+const STEP_S = 1 / 60; // the physics steps at most this far at a time
+
+// Draws a laid-out sheet into a canvas: its paper, each card's box, and its
+// text word by word where the browser put it.
+function rasterize(sheet, dpr) {
+  const box = sheet.getBoundingClientRect();
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.ceil(box.width * dpr));
+  c.height = Math.max(1, Math.ceil(box.height * dpr));
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, -box.left * dpr, -box.top * dpr); // page coordinates
+  const paint = (el) => {
+    const cs = getComputedStyle(el);
+    if (cs.backgroundColor === 'rgba(0, 0, 0, 0)') return;
+    const r = el.getBoundingClientRect();
+    ctx.fillStyle = cs.backgroundColor;
+    ctx.beginPath();
+    ctx.roundRect(r.left, r.top, r.width, r.height, parseFloat(cs.borderTopLeftRadius) || 0);
+    ctx.fill();
+  };
+  paint(sheet);
+  for (const el of sheet.children) paint(el);
+  const range = document.createRange();
+  const walker = document.createTreeWalker(sheet, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const cs = getComputedStyle(node.parentElement);
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    ctx.fillStyle = cs.color;
+    const ascent = ctx.measureText(node.data).fontBoundingBoxAscent;
+    const put = (from, to) => {
+      range.setStart(node, from);
+      range.setEnd(node, to);
+      const rects = range.getClientRects();
+      if (rects.length === 1) return ctx.fillText(node.data.slice(from, to), rects[0].left, rects[0].top + ascent);
+      // A word the browser broke across lines: a character at a time.
+      for (let i = from; i < to; ) {
+        const next = i + (node.data.codePointAt(i) > 0xffff ? 2 : 1);
+        put(i, next);
+        i = next;
+      }
+    };
+    for (const m of node.data.matchAll(/\S+/gu)) put(m.index, m.index + m[0].length);
+  }
+  return c;
+}
 
 function shredScreen(v) {
   const root = h('div', { class: 'shredder' });
   const payload = v.shred;
   if (!payload) return { el: root };
+  const clock = partClock(v);
   const W = innerWidth;
   const H = innerHeight;
   const slotY = Math.round(H * 0.4);
@@ -788,30 +930,43 @@ function shredScreen(v) {
   };
 
   const upper = h('div', { class: 'upper', style: { height: `${slotY}px` } });
-  const lower = h('div', { class: 'lower', style: { top: `${exitY}px` } });
   const head = h('div', { class: 'head', style: { top: `${slotY}px`, height: `${exitY - slotY}px` } });
   const slot = h('div', { class: 'slot', style: { top: `${slotY - H * 0.007}px` } });
   const binBack = h('div', { class: 'bin-back', style: { top: `${binTop}px`, height: `${binBottom - binTop}px` } });
   const binFront = h('div', { class: 'bin-front', style: { top: `${binTop}px`, height: `${binBottom - binTop}px` } });
-  // Landed strips move in here, clipped to the bin's outline so nothing pokes
-  // through its sides.
+  // Landed strips are baked in here, clipped to the bin's outline so nothing
+  // pokes through its sides; the moving ones are drawn on `live` every frame.
+  const bin = screenCanvas('bin-inside');
+  const live = screenCanvas('strips');
+  const dpr = live.dpr;
   const [l0, r0] = binWall(binTop);
   const [l1, r1] = binWall(binBottom);
-  const binInside = h('div', {
-    class: 'bin-inside',
-    style: { clipPath: `polygon(${l0}px 0, ${r0}px 0, ${r1}px ${binBottom}px, ${l1}px ${binBottom}px)` },
-  });
-  const machine = h('div', { class: 'machine' }, binBack, binInside, upper, lower, head, slot, binFront);
-  root.append(machine, deletePrelude());
-  // The shredder fades in as the prelude ends.
-  machine.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, delay: PRELUDE_MS - 500, fill: 'backwards' });
+  const binOutline = new Path2D();
+  binOutline.moveTo(l0, 0);
+  binOutline.lineTo(r0, 0);
+  binOutline.lineTo(r1, binBottom);
+  binOutline.lineTo(l1, binBottom);
+  binOutline.closePath();
+  bin.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  bin.ctx.clip(binOutline);
+  const machine = h('div', { class: 'machine' }, binBack, bin.c, upper, live.c, head, slot, binFront);
 
-  // The sheets: pooled emojis first, then the cards (at most 6 sheets, so the
-  // shred fits its minute whatever the card count).
-  const sheets = [];
+  // Animations run on the shred's clock: `delay` is ms from its start.
+  const animations = [];
+  const animate = (el, keyframes, options) => {
+    const a = el.animate(keyframes, options);
+    a.currentTime = clock.at();
+    animations.push(a);
+    return a;
+  };
+  const prelude = deletePrelude(animate);
+  root.append(machine, prelude.layer);
+
+  // The sheets: pooled emojis first, then the cards (at most 6 sheets).
+  const makers = [];
   if (payload.emojis.length) {
     const max = payload.emojis[0][1];
-    sheets.push(() =>
+    makers.push(() =>
       h('div', { class: 'sheet sheet-emojis' }, payload.emojis.map(([e, n]) => h('span', { style: { fontSize: `${1.6 + 4 * Math.sqrt(n / max)}vw` } }, e))),
     );
   }
@@ -820,7 +975,7 @@ function shredScreen(v) {
   const columns = per <= 3 ? per : per <= 8 ? 4 : 5;
   const fontVw = per <= 3 ? 1.8 : per <= 8 ? 1.3 : 1.05;
   for (const chunk of chunks) {
-    sheets.push(() =>
+    makers.push(() =>
       h(
         'div',
         { class: 'sheet sheet-cards', style: { gridTemplateColumns: `repeat(${Math.max(1, columns)}, 1fr)` } },
@@ -828,45 +983,47 @@ function shredScreen(v) {
       ),
     );
   }
+  const { sheets: times, fadeAt } = shredTimeline(payload);
+  const sheets = makers.map((make, i) => ({ make, ...times[i], el: null, fed: false, gone: false }));
+  let emojiReady = !payload.emojis.length;
+  loadEmoji(payload.emojis.map(([e]) => e).join('')).then(() => (emojiReady = true));
 
-  const strips = []; // every strip, in every phase
-  const pile = new Float32Array(64); // how high the pile is across the bin
-  const pileAt = (x) => pile[Math.min(63, Math.max(0, Math.floor((x / W) * 64)))];
-  const timers = [];
-  let running = true;
-
-  function feed(make) {
-    const sheet = make();
-    sheet.style.visibility = 'hidden';
-    upper.append(sheet);
-    const sw = sheet.offsetWidth;
-    const sh = sheet.offsetHeight;
+  // Lays a sheet out (hidden) above the slot and draws it into its canvas.
+  // Done ahead of time, a sheet at a time, so feeding one costs nothing.
+  function prepare(sheet) {
+    if (sheet.el) return;
+    const el = sheet.make();
+    el.style.visibility = 'hidden';
+    upper.append(el);
+    const sw = el.offsetWidth;
+    const sh = el.offsetHeight;
     const left = (W - sw) / 2;
     const top = Math.max(H * 0.03, slotY - sh - H * 0.05);
-    sheet.style.left = `${left}px`;
-    sheet.style.top = `${top}px`;
-    sheet.style.visibility = '';
-    const travel = slotY - top + sh;
-    const n = Math.max(8, Math.round(sw / ((W * STRIP_VW) / 100)));
-    const w = sw / n;
-    const start = performance.now() + 700;
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    Object.assign(sheet, { el, sw, sh, left, top, travel: slotY - top + sh, paper: rasterize(el, dpr) });
+  }
+
+  const strips = []; // moving: being pulled through, falling, or flopping over in the bin
+  const pile = new Float32Array(64); // how high the pile is across the bin
+  const pileAt = (x) => pile[Math.min(63, Math.max(0, Math.floor((x / W) * 64)))];
+
+  function feed(sheet) {
+    prepare(sheet);
+    sheet.fed = true;
+    sheet.el.style.visibility = '';
+    const n = Math.max(8, Math.round(sheet.sw / ((W * STRIP_VW) / 100)));
+    const w = sheet.sw / n;
     for (let i = 0; i < n; i++) {
-      const inner = make();
-      inner.style.left = `${-i * w}px`;
-      inner.style.top = '0';
-      inner.style.width = `${sw}px`;
-      const el = h('div', { class: 'strip', style: { width: `${Math.ceil(w)}px`, height: `${sh}px` } }, inner);
-      lower.append(el);
       strips.push({
-        el,
-        start,
-        travel,
-        x: left + i * w,
-        x0: left + i * w,
-        y0: top - slotY, // relative to the exit line, mirroring the sheet's slot position
-        y: top - slotY,
+        sheet,
+        sx: i * w,
         w,
-        h: sh,
+        h: sheet.sh,
+        x: sheet.left + i * w,
+        x0: sheet.left + i * w,
+        y: sheet.top - slotY, // relative to the exit line, mirroring the sheet's slot position
+        y0: sheet.top - slotY,
         phase: 'pull',
         angle: 0,
         phi: Math.random() * Math.PI * 2,
@@ -878,56 +1035,35 @@ function shredScreen(v) {
         skew: 0,
       });
     }
-    sheet.dataset.start = String(start);
-    sheet.dataset.travel = String(travel);
-    return sheet;
   }
 
-  const fed = [];
-  sheets.forEach((make, i) => timers.push(setTimeout(() => fed.push(feed(make)), FIRST_SHEET_MS + i * (PULL_MS + SHEET_GAP_MS))));
-  // Then fade to black. The server moves everyone to the closing screen after
-  // a beat of silence (same timeline, public/shared/shred-timing.js).
-  const { fadeAt } = shredTimeline(payload);
-  timers.push(setTimeout(() => (root.style.opacity = '0'), fadeAt));
-  timers.push(setTimeout(() => (running = false), fadeAt + FADE_MS + 500));
-
-  let last = performance.now();
-  function frame(now) {
-    if (!running) return;
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-    for (const sheet of fed) {
-      const p = Math.min(1, Math.max(0, (now - Number(sheet.dataset.start)) / PULL_MS));
-      sheet.style.transform = `translateY(${p * Number(sheet.dataset.travel)}px)`;
-      if (p >= 1 && sheet.isConnected) sheet.remove();
-    }
+  // Moves every strip on to time `t` (ms), `dt` seconds after the last step.
+  function step(t, dt) {
+    for (const sheet of sheets) if (!sheet.fed && t >= sheet.at) feed(sheet);
     for (const s of strips) {
-      if (s.phase === 'landed') continue;
       if (s.phase === 'pull') {
-        const p = Math.min(1, Math.max(0, (now - s.start) / PULL_MS));
-        s.y = s.y0 + p * s.travel;
-        const out = Math.min(1, Math.max(0, (s.y + s.h) / s.h)); // share already through
-        s.angle = Math.sin(now / 260 + s.phi) * s.sway * out;
-        s.x = s.x0 + Math.sin(now / 410 + s.phi) * 3 * out;
-        s.el.style.transformOrigin = `50% ${Math.max(0, -s.y)}px`;
+        const p = clamp01((t - s.sheet.pullAt) / s.sheet.pullMs);
+        s.y = s.y0 + p * s.sheet.travel;
+        const out = clamp01((s.y + s.h) / s.h); // share already through
+        s.angle = Math.sin(t / 260 + s.phi) * s.sway * out;
+        s.x = s.x0 + Math.sin(t / 410 + s.phi) * 3 * out;
         if (s.y >= 0) {
           // Fully out: let go.
           s.phase = 'fall';
-          s.vy = (s.travel / PULL_MS) * 1000;
+          s.vy = (s.sheet.travel / s.sheet.pullMs) * 1000;
           const towardBin = (W / 2 - (s.x + s.w / 2)) * 0.25;
           s.vx = (Math.random() - 0.5) * 120 + towardBin;
           s.va = (Math.random() - 0.5) * 160;
-          s.el.style.transformOrigin = '50% 0';
         }
-      } else {
+      } else if (s.phase === 'fall') {
         s.vy = Math.min(TERMINAL, s.vy + GRAVITY * dt);
-        s.vx += Math.sin(now / 180 + s.phi) * 260 * dt; // flutter
+        s.vx += Math.sin(t / 180 + s.phi) * 260 * dt; // flutter
         s.vx *= 1 - 0.8 * dt;
         s.x += s.vx * dt;
         s.y += s.vy * dt;
         s.angle += s.va * dt;
         s.curl = Math.max(0.45, s.curl - 0.35 * dt); // strips crumple as they fall
-        s.skew = Math.sin(now / 150 + s.phi) * 14;
+        s.skew = Math.sin(t / 150 + s.phi) * 14;
         const screenY = exitY + s.y;
         if (screenY + s.h * s.curl > binTop) {
           const [l, r] = binWall(screenY + s.h * s.curl);
@@ -936,31 +1072,96 @@ function shredScreen(v) {
         }
         const floor = binBottom - pileAt(s.x + s.w / 2);
         if (screenY + s.h * s.curl >= floor) {
-          s.phase = 'landed';
+          s.phase = 'lie';
+          s.landedAt = t;
           s.y = floor - s.h * s.curl - exitY;
-          const lie = (Math.random() < 0.5 ? -1 : 1) * (35 + Math.random() * 50);
+          s.from = s.angle;
+          s.lie = (Math.random() < 0.5 ? -1 : 1) * (35 + Math.random() * 50);
           const i = Math.min(63, Math.max(0, Math.floor(((s.x + s.w / 2) / W) * 64)));
           for (let k = Math.max(0, i - 1); k <= Math.min(63, i + 1); k++) pile[k] += 1.6;
-          binInside.append(s.el); // same x; y now measured from the top of the screen
-          s.el.style.transform = `translate(${s.x}px, ${s.y + exitY}px) rotate(${s.angle}deg) scaleY(${s.curl}) skewX(${s.skew}deg)`;
-          requestAnimationFrame(() => {
-            s.el.style.transition = 'transform 0.35s ease-out';
-            s.el.style.transform = `translate(${s.x}px, ${s.y + exitY}px) rotate(${lie}deg) scaleY(${s.curl}) skewX(${s.skew}deg)`;
-          });
-          continue;
+        }
+      } else if (s.phase === 'lie') {
+        const k = clamp01((t - s.landedAt) / LIE_MS);
+        s.angle = s.from + (s.lie - s.from) * easeOut(k);
+        if (k >= 1) {
+          s.phase = 'landed';
+          drawStrip(bin.ctx, s); // baked into the bin for good
         }
       }
-      s.el.style.transform = `translate(${s.x}px, ${s.y}px) rotate(${s.angle}deg) scaleY(${s.curl}) skewX(${s.skew}deg)`;
     }
-    requestAnimationFrame(frame);
+    for (let i = strips.length - 1; i >= 0; i--) if (strips[i].phase === 'landed') strips.splice(i, 1);
   }
-  requestAnimationFrame(frame);
+
+  // One strip: a slice of its sheet's canvas, turned about the exit line
+  // while it's being pulled out, about its top edge once it's let go.
+  function drawStrip(ctx, s) {
+    const pivotY = s.phase === 'pull' ? Math.max(0, -s.y) : 0;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.translate(s.x + s.w / 2, exitY + s.y + pivotY);
+    ctx.rotate((s.angle * Math.PI) / 180);
+    if (s.curl !== 1 || s.skew) ctx.transform(1, 0, Math.tan((s.skew * Math.PI) / 180), s.curl, 0, 0);
+    ctx.translate(-s.w / 2, -pivotY);
+    const paper = s.sheet.paper;
+    const sx = s.sx * dpr;
+    const sw = Math.min(paper.width - sx, (s.w + 0.5) * dpr);
+    ctx.drawImage(paper, sx, 0, sw, paper.height, 0, 0, sw / dpr, s.h);
+  }
+
+  let frame = 0;
+  let last = 0; // the shred's time at the last step
+  let nextPrepare = 300;
+  function loop(now) {
+    const t = clock.at(now);
+    // Small steps, so a slow frame (or a reload mid-shred) plays out the same.
+    const steps = Math.max(1, Math.ceil((t - last) / 1000 / STEP_S));
+    for (let k = 1; k <= steps; k++) step(last + ((t - last) * k) / steps, (t - last) / 1000 / steps);
+    last = t;
+    for (const sheet of sheets) {
+      if (!sheet.fed || sheet.gone) continue;
+      const p = clamp01((t - sheet.pullAt) / sheet.pullMs);
+      sheet.el.style.transform = `translateY(${p * sheet.travel}px)`;
+      if (p >= 1) {
+        sheet.el.remove();
+        sheet.gone = true;
+      }
+    }
+    const ctx = live.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, live.c.width, live.c.height);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, exitY * dpr, live.c.width, live.c.height - exitY * dpr);
+    ctx.clip(); // under the shredder's mouth
+    for (const s of strips) if (s.phase !== 'lie' && s.y + s.h > 0) drawStrip(ctx, s);
+    ctx.restore();
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clip(binOutline);
+    for (const s of strips) if (s.phase === 'lie') drawStrip(ctx, s);
+    ctx.restore();
+    // Draw the next sheet ahead of time, one now and then, while little is moving.
+    if (t >= nextPrepare) {
+      const next = sheets.find((s) => !s.el);
+      if (next && emojiReady) prepare(next);
+      nextPrepare = t + 200;
+    }
+    if (t < fadeAt + FADE_MS + 500) frame = requestAnimationFrame(loop);
+  }
+  frame = requestAnimationFrame((now) => {
+    prelude.start();
+    // The shredder fades in as the prelude ends; at the end, fade to black.
+    // The server moves everyone to the closing screen after a beat of
+    // silence (same timeline, public/shared/shred-timing.js).
+    animate(machine, [{ opacity: 0 }, { opacity: 1 }], { duration: 600, delay: PRELUDE_MS - 500, fill: 'backwards' });
+    animate(root, [{ opacity: 1 }, { opacity: 0 }], { duration: FADE_MS, delay: fadeAt, fill: 'forwards' });
+    loop(now);
+  });
 
   return {
     el: root,
     destroy() {
-      running = false;
-      timers.forEach(clearTimeout);
+      cancelAnimationFrame(frame);
+      for (const a of animations) a.cancel();
     },
   };
 }

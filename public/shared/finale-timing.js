@@ -9,12 +9,21 @@ export const POOL_DELAY_MS = 2000; // after the last emoji, before they pool
 export const POOL_MS = 1300; // the pooling itself
 export const QUIET_MS = 8000; // the finished picture stays up this long
 
-// ms from the finale's start until it has played and been on screen a while.
-// The replay samples long sequences exactly as the projector does.
+// Long sequences are sampled: every nth reaction becomes a particle.
+export const sampleEvery = (reactionCount) => Math.max(1, Math.ceil(reactionCount / MAX_PARTICLES));
+
+// When the i-th of n particles arrives, in ms from the start of the replay.
+export function arrivalMs(i, n, replayMs) {
+  return (replayMs / n) * i;
+}
+
+// In ms from the finale's start: when the replay starts and how long it runs,
+// when the particles start to pool, and when it has played and been on screen
+// a while. The replay samples long sequences exactly as the projector does.
 export function finaleTimeline(reactionCount) {
-  if (reactionCount <= 0) return { doneAt: START_DELAY_MS + QUIET_MS };
-  const every = Math.ceil(reactionCount / MAX_PARTICLES);
-  const sampled = Math.ceil(reactionCount / every);
-  const replay = Math.min(STEP_MS * sampled, REPLAY_MS);
-  return { doneAt: START_DELAY_MS + replay + POOL_DELAY_MS + POOL_MS + QUIET_MS };
+  if (reactionCount <= 0) return { replayAt: START_DELAY_MS, replayMs: 0, poolAt: START_DELAY_MS, doneAt: START_DELAY_MS + QUIET_MS };
+  const sampled = Math.ceil(reactionCount / sampleEvery(reactionCount));
+  const replayMs = Math.min(STEP_MS * sampled, REPLAY_MS);
+  const poolAt = START_DELAY_MS + replayMs + POOL_DELAY_MS;
+  return { replayAt: START_DELAY_MS, replayMs, poolAt, doneAt: poolAt + POOL_MS + QUIET_MS };
 }

@@ -5,6 +5,7 @@
 // First a moment showing what's about to happen: a cursor clicks "Delete".
 export const PRELUDE_MS = 3400;
 export const FIRST_SHEET_MS = PRELUDE_MS + 400;
+export const REST_MS = 700; // a sheet sits on the shredder this long before it's pulled
 export const PULL_MS = 2600;
 export const SHEET_GAP_MS = 500;
 export const SETTLE_MS = 1800; // the last strips land, then the fade starts
@@ -21,10 +22,19 @@ export function cardSheets(cards) {
   return sheets;
 }
 
-// When the fade starts and when the closing screen should appear, in ms from
-// the start of the shred.
+// Each sheet's times, in ms from the start of the shred: when it appears on
+// the shredder, and when and for how long it is pulled through.
+export function sheetTimes(count) {
+  return Array.from({ length: count }, (_, i) => {
+    const at = FIRST_SHEET_MS + i * (PULL_MS + SHEET_GAP_MS);
+    return { at, pullAt: at + REST_MS, pullMs: PULL_MS };
+  });
+}
+
+// The sheets' times, when the fade starts and when the closing screen should
+// appear, in ms from the start of the shred.
 export function shredTimeline({ emojis, cards }) {
-  const sheets = (emojis.length ? 1 : 0) + cardSheets(cards).length;
-  const fadeAt = FIRST_SHEET_MS + sheets * (PULL_MS + SHEET_GAP_MS) + SETTLE_MS;
-  return { fadeAt, closingAt: fadeAt + FADE_MS + BLANK_MS };
+  const count = (emojis.length ? 1 : 0) + cardSheets(cards).length;
+  const fadeAt = FIRST_SHEET_MS + count * (PULL_MS + SHEET_GAP_MS) + SETTLE_MS;
+  return { sheets: sheetTimes(count), fadeAt, closingAt: fadeAt + FADE_MS + BLANK_MS };
 }
