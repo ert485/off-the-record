@@ -55,6 +55,8 @@ export function freshState(now) {
     // { id, g, text, r }: no phone id. r is the card's receipt, so sending
     // again replaces the comment along with the reactions.
     comments: [],
+    // Receipts whose comment the facilitator removed.
+    removedComments: {},
   };
 }
 
@@ -111,6 +113,7 @@ export class Session {
     this.state = state ?? freshState(now());
     this.state.nudge ??= { mode: 'all', label: null };
     this.state.receipts ??= {};
+    if (!this.state.shredded) this.state.removedComments ??= {};
     this.state.sessionId ??= randomBytes(8).toString('hex');
     this.shredded = !!this.state.shredded;
     // A restart mid-clustering: run it again.
@@ -409,8 +412,10 @@ export class Session {
     if (!unique.every(isSingleEmoji)) fail('Reactions are emojis only');
     const text = typeof comment === 'string' ? comment.trim() : '';
     if (text.length > LIMITS.commentMax) fail(`Comments are up to ${LIMITS.commentMax} characters`);
-    if (unique.length === 0 && !text) fail('Pick an emoji or write a comment');
-    if (receipt !== undefined && receipt !== null) {
+    const resend = receipt !== undefined && receipt !== null;
+    // Clearing a card with its receipt is fine; a first send needs something.
+    if (!resend && unique.length === 0 && !text) fail('Pick an emoji or write a comment');
+    if (resend) {
       if (typeof receipt !== 'string' || this.s.receipts[receipt] !== groupId) fail('Nothing to change');
       this.s.reactions = this.s.reactions.filter((r) => r.r !== receipt);
       this.s.comments = this.s.comments.filter((c) => c.r !== receipt);
@@ -421,7 +426,7 @@ export class Session {
       this.s.receipts[receipt] = groupId;
     }
     for (const e of unique) this.s.reactions.push({ g: groupId, e, r: receipt });
-    if (text) this.s.comments.push({ id: this.newId(), g: groupId, text, r: receipt });
+    if (text && !this.s.removedComments[receipt]) this.s.comments.push({ id: this.newId(), g: groupId, text, r: receipt });
     this.changed();
     return { receipt };
   }
@@ -474,6 +479,8 @@ export class Session {
   removeComment(id) {
     const i = this.s.comments.findIndex((c) => c.id === id);
     if (i < 0) fail('No such comment');
+    // Remember the receipt (not the phone) so a resend can't bring it back.
+    this.s.removedComments[this.s.comments[i].r] = 1;
     this.s.comments.splice(i, 1);
     this.changed();
   }

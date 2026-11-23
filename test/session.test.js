@@ -216,6 +216,30 @@ test('a comment alone counts as a send; nothing at all does not', async () => {
   assert.throws(() => session.react(B, g, []), /Pick an emoji or write a comment/);
 });
 
+test('an empty resend with the receipt clears the card\'s reactions and comment', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const { receipt } = session.react(A, g, ['🙋'], null, 'hi');
+  session.react(A, g, [], receipt, '');
+  assert.equal(session.state.reactions.length, 0);
+  assert.equal(session.state.comments.length, 0);
+  assert.equal(session.state.clients[A].reacted, 1);
+  assert.throws(() => session.react(A, g, [], 'feedfacefeedface', ''), /Nothing to change/);
+});
+
+test('a removed comment stays removed when the phone resends', async () => {
+  const { session } = make();
+  await toReact(session);
+  const g = session.view('phone', { cid: A }).react.groups[0].id;
+  const { receipt } = session.react(A, g, ['🙋'], null, 'mean');
+  session.removeComment(session.state.comments[0].id);
+  session.react(A, g, ['🦆'], receipt, 'mean again');
+  assert.equal(session.state.comments.length, 0);
+  assert.deepEqual(session.state.reactions.map((r) => r.e), ['🦆']);
+  assert.equal(JSON.stringify(session.state.removedComments).includes(A), false);
+});
+
 test('comments are capped like cards', async () => {
   const { session } = make();
   await toReact(session);
