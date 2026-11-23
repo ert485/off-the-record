@@ -103,7 +103,7 @@ function teaserScreen() {
 // step changes and when the screen is destroyed.
 
 const DEMO_CAPTIONS = [
-  'Write private notes. They never leave your phone.',
+  'Write private notes. They stay on your phone for now.',
   'Pick up to 3 to share.',
   'The cards are grouped into themes.',
   'React, and add a comment if you like.',
