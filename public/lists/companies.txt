@@ -1,16 +1,19 @@
 # Saskatoon-area employers and orgs for the on-phone identifier check.
-# SEED LIST: compile the real one before the talk (open item in the spec).
+# Compiled Nov 23, 2026 from local research. Students' schools are left out on purpose:
+# naming the university or polytechnic doesn't identify anyone.
 # One name per line, matched case-insensitively as whole words.
-# Matching is literal: "devtalk" does not match "devtalks", "co-op" does not match "coop",
+# Matching is literal: "federated co-op" does not match "federated co-operatives" or "coop",
 # so list each spelling people actually write. Possessives ("Nutrien's") match on their own.
 # Leave out names that are everyday or tech words ("spaces", "opus", "toast", "sha", "sed"):
 # a hint that fires on ordinary sentences teaches people to ignore it.
+# DevTalk(s) is left out too: the retro runs at a DevTalk, so it would fire on harmless cards.
 
 # Tech companies and startups
 7shifts
 andgo
 andgo systems
 vendasta
+coconut
 coconut software
 coconut calendar
 omnee
@@ -37,6 +40,8 @@ push interactions
 pleasant solutions
 2web
 bourgault
+ethical digital
+croptimistic
 
 # Big local employers with dev or IT teams
 nutrien
@@ -76,15 +81,6 @@ kpmg
 pwc
 solvera
 
-# University and polytechnic
-university of saskatchewan
-usask
-u of s
-uofs
-saskatchewan polytechnic
-sask polytech
-sask poly
-
 # Incubators, coworking, economic development
 innovation saskatchewan
 innovation sask
@@ -98,8 +94,6 @@ startup tnt
 pulse cowork
 
 # Community groups
-devtalks
-devtalk
 gdg saskatoon
 yxe innovators
 owasp saskatoon

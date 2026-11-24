@@ -27,8 +27,8 @@ test('company names match whole words only', () => {
 
 test('company list covers the spellings people write', () => {
   assert.deepEqual(check('moved from Federated Co-operatives to Nutrien'), ['nutrien', 'federated co-operatives']);
-  assert.deepEqual(check('finished my degree at the U of S'), ['u of s']);
   assert.deepEqual(check('pitched at colabs'), ['colabs']);
+  assert.deepEqual(check('Coconut shipped a lot this year'), ['coconut']);
   assert.deepEqual(check('K+S was a good place to land'), ['k+s']);
   assert.deepEqual(check("Calian's team, ex SED Systems"), ['calian', 'sed systems']);
 });
@@ -37,6 +37,7 @@ test('company list leaves out everyday and tech words', () => {
   assert.deepEqual(check('tabs or spaces, sed or awk, check the commit sha in src'), []);
   assert.deepEqual(check('Claude Opus wrote a toast notification for me'), []);
   assert.deepEqual(check('a co-op student read the OWASP top ten'), []);
+  assert.deepEqual(check('finished my degree at the U of S, then Sask Polytech; my first DevTalk'), []);
 });
 
 test('reactions accept exactly one emoji', () => {
