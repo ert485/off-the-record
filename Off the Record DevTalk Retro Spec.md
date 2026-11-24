@@ -242,11 +242,11 @@ From the practice run, things the facilitator says rather than the app showing:
 - [x] The preset nudge list (the main remaining source of bias): light, general enough for any year, kept in the repo, refined after practice rounds
 - [x] Minute-by-minute timings per phase
 - [x] The 8 preset emotion emojis
-- [ ] Compile the company list and first-name list for the local check. Started: `public/lists/first-names.txt` is built by `scripts/build-first-names.mjs` (about 2,500 common names from public-domain US baby-name data since 1950, plus `scripts/first-names-extra.txt`, minus everyday words); `public/lists/companies.txt` is a seed list that still needs a local pass
+- [x] Compile the company list and first-name list for the local check. `public/lists/first-names.txt` is built by `scripts/build-first-names.mjs` (about 2,500 common names from public-domain US baby-name data since 1950, plus `scripts/first-names-extra.txt`, minus everyday words); `public/lists/companies.txt` was compiled on Nov 23, 2026
 - [x] Whether the facilitator can hide a card from the stream (abuse fallback)
 - [x] Design of the emotional fingerprint visual
 - [x] Model provider for clustering, and its retention terms
 - [x] Exact wording of the trust disclosure
-- [ ] Optional: ask someone to review the repo (respected locally, not a colleague; about 30 minutes, a week before; checks no logging, real deletion, only card text sent to the API)
+- [x] ~~Optional: ask someone to review the repo (respected locally, not a colleague; about 30 minutes, a week before; checks no logging, real deletion, only card text sent to the API)~~ Skipped (Erik's decision)
 - [x] Shred visual on the projector
-- [ ] Pick 5–10 testers for the Nov 20–22 full run (comfortable in the real room, not all close friends)
+- [x] Pick 5–10 testers for the Nov 20–22 full run (comfortable in the real room, not all close friends). Done: the full practice run was with the Omnee team on Friday, Nov 20
