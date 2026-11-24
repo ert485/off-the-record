@@ -1,34 +1,108 @@
 # Saskatoon-area employers and orgs for the on-phone identifier check.
 # SEED LIST: compile the real one before the talk (open item in the spec).
 # One name per line, matched case-insensitively as whole words.
+# Matching is literal: "devtalk" does not match "devtalks", "co-op" does not match "coop",
+# so list each spelling people actually write. Possessives ("Nutrien's") match on their own.
+# Leave out names that are everyday or tech words ("spaces", "opus", "toast", "sha", "sed"):
+# a hint that fires on ordinary sentences teaches people to ignore it.
+
+# Tech companies and startups
 7shifts
 andgo
+andgo systems
 vendasta
 coconut software
+coconut calendar
 omnee
 point2
+yardi
 solido
 siemens eda
+siemens
 zu
+teamlinkt
+salonscale
+safetytek
+mycomply
+rivercity innovations
+rivercity tech
+standard rail
+storetodoor
+vecima
+calian
+sed systems
+quarterhill
+international road dynamics
+push interactions
+pleasant solutions
+2web
+bourgault
+
+# Big local employers with dev or IT teams
 nutrien
 cameco
-concentra
-affinity credit union
+bhp
+k+s
+k+s potash
+orano
 federated co-op
+federated co-operatives
+federated coop
+fcl
+affinity credit union
+concentra
+equitable bank
 sasktel
 saskpower
 saskenergy
 sgi
 isc
-university of saskatchewan
-usask
-saskatchewan polytechnic
-sask polytech
+information services corporation
+ehealth saskatchewan
+ehealth sask
+government of saskatchewan
+saskbuilds
 city of saskatoon
 saskatchewan health authority
+saskatoon public schools
+greater saskatoon catholic schools
+gscs
 farm credit canada
 fcc
+canadian light source
+mnp
+deloitte
+kpmg
+pwc
+solvera
+
+# University and polytechnic
+university of saskatchewan
+usask
+u of s
+uofs
+saskatchewan polytechnic
+sask polytech
+sask poly
+
+# Incubators, coworking, economic development
 innovation saskatchewan
+innovation sask
 co.labs
+colabs
+co labs
+collider
+sreda
+sask startup institute
+startup tnt
+pulse cowork
+
+# Community groups
 devtalks
 devtalk
+gdg saskatoon
+yxe innovators
+owasp saskatoon
+sasktech
+saskatoon women in tech
+blackswan
