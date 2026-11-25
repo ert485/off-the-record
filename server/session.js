@@ -1032,7 +1032,10 @@ export class Session {
     let failed = false;
     for (let i = 0; i < items.length; i += HARSHNESS_BATCH) {
       if (run !== this.checkRun) return;
-      const batch = items.slice(i, i + HARSHNESS_BATCH);
+      // Only what is still visible and unchanged: a card hidden or taken back,
+      // or a thought removed or edited, since the run began is not sent.
+      const batch = items.slice(i, i + HARSHNESS_BATCH).filter((item) => this.stillSendable(item));
+      if (!batch.length) continue;
       try {
         const answers = await this.checkHarshness(batch.map(({ key, text }) => ({ id: key, text })));
         if (!(answers instanceof Map)) throw new Error('No answers');
@@ -1051,6 +1054,17 @@ export class Session {
     }
   }
 
+  // The card or thought an item came from, if it is still there with the same text.
+  findCheckTarget(item) {
+    const target = item.kind === 'card' ? this.card(item.id) : this.s.afterthoughts.find((t) => t.id === item.id);
+    return target && target.text === item.text ? target : undefined;
+  }
+
+  stillSendable(item) {
+    const target = this.findCheckTarget(item);
+    return Boolean(target) && !target.hidden;
+  }
+
   // Stores each answer on its item, if the item is still there with the same
   // text (a thought changed while the call ran is checked again later).
   applyCheck(run, items, answers) {
@@ -1059,8 +1073,8 @@ export class Session {
     for (const item of items) {
       const a = answers.get(item.key);
       if (!a || ![0, 1, 2].includes(a.level)) continue;
-      const target = item.kind === 'card' ? this.card(item.id) : this.s.afterthoughts.find((t) => t.id === item.id);
-      if (!target || target.text !== item.text) continue;
+      const target = this.findCheckTarget(item);
+      if (!target) continue;
       target.harsh = { level: a.level, reason: typeof a.reason === 'string' ? a.reason : '' };
       any = true;
     }

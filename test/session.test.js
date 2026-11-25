@@ -1506,6 +1506,37 @@ test('a big check goes in calls of at most 30 items', async () => {
   assert.deepEqual(calls.map((c) => c.length), [30, 30, 10]);
 });
 
+test('a card hidden or taken back while an earlier batch is in flight is never sent in a later one', async () => {
+  let answer;
+  const { session, clock, calls } = makeChecked();
+  session.checkHarshness = (items) => {
+    calls.push(items);
+    return new Promise((resolve) => (answer = () => resolve(new Map(items.map((i) => [i.id, { level: 1, reason: 'look' }])))));
+  };
+  const receipts = {};
+  for (let i = 1; i <= 40; i++) receipts[i] = session.submitCards(cidN(i), [`card ${i}`]).receipts[0];
+  tickFor(session, clock, 5000);
+  await flush();
+  assert.deepEqual(calls.map((c) => c.length), [30]);
+  // Card order isn't submission order, so pick the two victims from batch 2.
+  const inFirst = new Set(calls[0].map((i) => i.text));
+  const second = Array.from({ length: 40 }, (_, i) => `card ${i + 1}`).filter((t) => !inFirst.has(t));
+  assert.equal(second.length, 10);
+  const [hiddenText, takenText] = second;
+  session.hideCard(session.state.cards.find((c) => c.text === hiddenText).id, true);
+  session.submitCards(cidN(Number(takenText.slice(5))), [], [receipts[Number(takenText.slice(5))]]);
+  answer();
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].map((i) => i.text).sort(), second.slice(2).sort());
+  answer();
+  await flush();
+  const f = session.view('facilitator');
+  assert.equal(f.cards.find((c) => c.text === hiddenText).harsh, null, 'hidden: no result stored');
+  assert.equal(f.cards.find((c) => c.text === second[2]).harsh.level, 1, 'the rest of batch 2 still gets its answer');
+  assert.equal(f.cards.find((c) => c.text === takenText), undefined);
+});
+
 test('a failed harshness check is retried once, not more', async () => {
   const { session, clock, calls, logged } = makeChecked({}, { fail: true });
   session.submitCards(A, ['one card']);

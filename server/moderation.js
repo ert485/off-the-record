@@ -72,8 +72,9 @@ export function harshnessRequest(items) {
 }
 
 // (items: [{ id, text }]) → Map(id → { level, reason }), or null with no key.
-// `client` is for tests. No retry: a slow or failed check leaves the items
-// unchecked, and the facilitator can still review them.
+// `client` is for tests. A single call doesn't retry (a slow or failed one leaves
+// its items unchecked, and the facilitator can still review them); the
+// session retries a failed run once.
 export function createHarshnessCheck({ apiKey = process.env.ANTHROPIC_API_KEY, client } = {}) {
   if (!apiKey) return null;
   const api = client ?? new Anthropic({ apiKey, timeout: CHECK_TIMEOUT_MS, maxRetries: 0 });
