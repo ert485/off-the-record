@@ -63,7 +63,7 @@ details summary { cursor: pointer; color: var(--text-dim); }
 .info { min-height: 0; padding: 0 6px; border: none; background: none; color: var(--text-faint); font-size: 16px; line-height: 1; }
 .info.info-open { color: var(--text); }
 .info-text { flex-basis: 100%; font-size: 13px; color: var(--text-dim); }
-.nav button.prompt { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+.nav button.prompt, .walk-nav button.prompt { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
 .nav button.danger.prompt { box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 35%, transparent); }
 .alert.late { flex-direction: column; align-items: stretch; }
 .theme .row input[type='text'] { flex: 1; min-width: 0; }

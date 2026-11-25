@@ -129,12 +129,12 @@ body { background: #000; overflow: hidden; cursor: none; }
 .comments .comment { font-size: max(1.4vw, calc(1.7vw * var(--crowd, 1))); line-height: 1.25; background: #15161a; border-left: 0.35vw solid var(--accent); padding: calc(0.6vh * var(--crowd, 1)) 1.2vw; border-radius: 0 0.8vw 0.8vw 0; overflow-wrap: anywhere; }
 .comments-more { font-size: max(1.4vw, calc(1.5vw * var(--crowd, 1))); color: var(--text-dim); padding-left: 1.2vw; }
 .comments-more:empty { display: none; }
-/* Read from the back of the room: large, centred, floor 1.8vw when crowded. */
-.haiku { font-size: max(1.8vw, calc(2.5vw * var(--crowd, 1))); font-style: italic; color: var(--text); line-height: 1.3; overflow: hidden; text-align: center; text-wrap: balance; }
+/* Read from the back of the room: large, centred, one segment per line, floor 1.8vw when crowded. */
+.haiku { display: flex; flex-direction: column; align-items: center; font-size: max(1.8vw, calc(2.5vw * var(--crowd, 1))); font-style: italic; color: var(--text); line-height: 1.3; overflow: hidden; text-align: center; }
 .haiku:empty { display: none; }
-/* Haiku segments stay whole; lines break only at the space after a slash
-   (projector.js shrinks a segment that is too wide, and wraps one only past
-   its smallest size). */
+/* Haiku segments stay whole, one per line on a card (projector.js shrinks a
+   segment that is too wide, and wraps one only past its smallest size). Not
+   display: block: fitHaiku measures each segment's own width. */
 .hseg { display: inline-block; white-space: nowrap; }
 .hseg.hwrap { white-space: normal; text-wrap: balance; }
 .hsep { color: var(--text-faint); }

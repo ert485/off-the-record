@@ -471,7 +471,8 @@ function crowdFit(walk, count, show) {
 
 // A haiku that looks like one: split at " / ", each segment kept whole on one
 // line, with a dimmed " /" after every segment but the last (an element, so
-// the room sees the break). Lines break only between segments. fitHaiku
+// the room sees the break). On a walk-through card each segment has its own
+// line (projector.css), so it reads as a haiku. fitHaiku
 // shrinks a segment wider than its container, down to HAIKU_FLOOR of the base
 // size; past that floor, and only then, the segment wraps rather than lose words.
 const HAIKU_FLOOR = 0.7;
