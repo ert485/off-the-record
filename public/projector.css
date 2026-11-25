@@ -19,6 +19,8 @@ body { background: #000; overflow: hidden; cursor: none; }
 .teaser .huge { font-size: 7.5vw; line-height: 1.1; }
 .teaser-lines { margin-top: 3vh; }
 .teaser-lines .sub { font-size: 2.8vw; margin-top: 1.4vh; line-height: 1.3; }
+/* A struck word in a teaser line: a thin, muted red line through it, the word still readable. */
+.teaser .struck { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--danger) 75%, transparent); text-decoration-thickness: 0.07em; }
 
 .join { position: absolute; inset: 0; display: grid; grid-template-columns: auto 1fr; gap: 5vw; align-items: center; padding: 6vh 6vw; }
 .join .qr { width: min(42vw, 78vh); background: white; padding: 1.2vw; border-radius: 1.4vw; }
@@ -255,17 +257,16 @@ body { background: #000; overflow: hidden; cursor: none; }
 .demo .dfolder-card { align-self: stretch; background: #1c1d22; border: 2px solid var(--manila-edge); border-radius: 0 12px 12px 12px; padding: 36px 24px; text-align: center; font-size: 28px; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere; }
 .demo .dhaiku { margin-top: 30px; font-size: 34px; line-height: 1.3; font-weight: 500; color: var(--text); display: flex; flex-direction: column; align-items: center; text-align: center; }
 .demo .dhaiku .hsep { color: var(--text-faint); }
+/* Step 3: the haiku's segments wait (laid out, so the fit holds) and come in one at a time. */
+.demo .dhaiku .hseg { transition: opacity 0.6s ease, transform 0.6s ease; }
+.demo .dhaiku .hseg.later { opacity: 0; transform: translateY(14px); }
 
 /* Entrances: only on a forward step (.animate); Back shows everything settled. */
 .demo .animate .pop { animation: demo-in 0.55s ease both; animation-delay: var(--d, 0s); }
-.demo .animate .dtab { animation: demo-drop 0.6s ease both 0.5s; }
-.demo .animate .dhaiku { animation: demo-in 0.8s ease both 1.6s; }
-.demo .animate .dfolder-card { animation: demo-in 0.5s ease both; }
+.demo .animate .dfolder { animation: demo-in 0.5s ease both; }
 .demo .animate.demo-reveal .card { animation: demo-grow 0.6s ease both; }
-.demo .animate.demo-reveal .mix > span { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
-.demo .animate.demo-reveal .comment, .demo .animate.demo-reveal .comments-more, .demo .animate.demo-reveal .haiku { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
+.demo .animate.demo-reveal .mix > span, .demo .animate.demo-reveal .haiku { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
 @keyframes demo-in { from { opacity: 0; transform: translateY(14px); } }
-@keyframes demo-drop { from { opacity: 0; transform: translateY(-14px); } }
 @keyframes demo-grow { from { opacity: 0; transform: scale(0.94); } }
 @keyframes demo-tap { 50% { transform: scale(1.12); } }
 @keyframes demo-press { 40% { transform: scale(0.93); } }

@@ -37,8 +37,8 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     phase: 'teaser',
     phaseStartedAt: now,
     // Which step of the demo the projector shows, whether it plays on its own
-    // (and since when), and the card the demo added.
-    demo: { step: 0, cardId: null, auto: false, stepStartedAt: now },
+    // (and since when), and the cards the demo added (null until it has).
+    demo: { step: 0, cardIds: null, auto: false, stepStartedAt: now },
     // The talk clock: starts with one tap, or backdated when the room moves
     // on without it, and never restarts.
     talk: { startedAt: null, minutes: talkMinutes },
@@ -189,7 +189,12 @@ export class Session {
     }
     if (!this.state.shredded) this.state.removedComments ??= {};
     if (!this.state.shredded) {
-      this.state.demo ??= { step: 0, cardId: null };
+      this.state.demo ??= { step: 0, cardIds: null };
+      // Saved when the demo added a single card.
+      if ('cardId' in this.state.demo) {
+        this.state.demo.cardIds ??= this.state.demo.cardId === null ? null : [this.state.demo.cardId];
+        delete this.state.demo.cardId;
+      }
       this.state.demo.auto ??= false;
       this.state.demo.stepStartedAt ??= now();
     }
@@ -322,10 +327,11 @@ export class Session {
   enter(to, direction) {
     const now = this.now();
     const from = this.s.phase;
-    // The demo's shared note joins the session as an ordinary card, once: no
-    // author, and not counted against any phone.
-    if (from === 'demo' && direction === 'forward' && this.demo && this.s.demo && this.s.demo.cardId === null) {
-      this.s.demo.cardId = this.addCard(this.demo.notes.find((n) => n.share).text);
+    // The demo's shared notes join the session as ordinary cards, once each: no
+    // author, and not counted against any phone. addCard's random ids put them
+    // in a random order.
+    if (from === 'demo' && direction === 'forward' && this.demo && this.s.demo && this.s.demo.cardIds === null) {
+      this.s.demo.cardIds = this.demo.notes.filter((n) => n.share).map((n) => this.addCard(n.text));
     }
     if (direction === 'forward' && PLAN[to] && to !== 'demo' && this.s.talk && this.s.talk.startedAt === null) this.s.talk.startedAt = now - PLAN[to][0] * 60_000;
     if (from === 'react' && direction === 'forward') this.s.reactClosedAt = now;

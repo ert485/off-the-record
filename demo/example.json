@@ -1,12 +1,16 @@
 {
   "teaser": {
     "title": "Off the Record",
-    "lines": ["An anonymous retro, live from your phone.", "Starting soon."]
+    "lines": [
+      "An anonymous retro, live from your phone.",
+      "No ~~action items~~ follow-ups. Just a look back, together.",
+      "Starting soon."
+    ]
   },
   "notes": [
     { "text": "The new build pipeline cut our wait from twenty minutes to five.", "share": true },
     { "text": "I wasn't sure my idea was worth raising, so I kept it to myself." },
-    { "text": "Our weekly check-in finally stopped feeling like a status report." }
+    { "text": "Our weekly check-in finally stopped feeling like a status report.", "share": true }
   ],
   "theme": {
     "name": "Small wins at work",
@@ -14,14 +18,9 @@
   },
   "react": {
     "presets": ["🙋", "😂", "🎉"],
-    "own": "🌈",
-    "comment": "Same here. Waiting on builds used to eat my afternoons."
+    "own": "🌈"
   },
   "reveal": {
-    "mix": [["🎉", 12], ["🙋", 9], ["😂", 5], ["🌈", 3]],
-    "comments": [
-      "Faster builds changed how we work.",
-      "I remember when this took a whole coffee break."
-    ]
+    "mix": [["🎉", 12], ["🙋", 9], ["😂", 5], ["🌈", 3]]
   }
 }

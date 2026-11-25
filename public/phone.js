@@ -6,6 +6,7 @@
 import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle } from './shared/client.js';
 import { PRESETS, firstEmoji } from './shared/emoji.js';
 import { loadChecker, HINT } from './shared/identifier-check.js';
+import { struckParts } from './shared/struck.js';
 
 const PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
 const SOFT_MAX = 140;
@@ -108,7 +109,8 @@ const SCREENS = {
       'div',
       { class: 'teaser' },
       h('h1', {}, view.teaser.title),
-      view.teaser.lines.map((line) => h('p', {}, line)),
+      // ~~words~~ in a line show struck through, still readable.
+      view.teaser.lines.map((line) => h('p', {}, struckParts(line).map((p) => (p.struck ? h('s', { class: 'struck' }, p.text) : p.text)))),
     ),
   }),
   demo: () => lookUp('Starting soon', 'Look up: the facilitator is showing how this works.'),
