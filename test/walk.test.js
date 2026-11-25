@@ -569,7 +569,7 @@ test('a hidden card needs no review: the hold looks past it, and never stops on 
     assert.equal(w.held, false, `no hold at step ${i}`);
   }
   assert.equal(w.index, 3);
-  // A hidden card that is reviewed later still isn't needed, and card 4 is: it holds on card 3.
+  // Card 4 is unreviewed: when card 3's time runs out, it holds on card 3.
   clock.set(w.cardEndsAt);
   session.tick();
   assert.equal(w.index, 3);
@@ -600,4 +600,76 @@ test('with no API key nothing is checked and the walk-through still runs once th
     assert.equal(w.held, false);
   }
   assert.equal(w.done, true);
+});
+
+test('hiding the held card moves the hold to the next unreviewed card, so the alert shows what Next projects', async () => {
+  const { session, clock } = await toWalk({ cards: 4, review: false });
+  const w = session.state.walk;
+  const cardsAt = (i) => session.findGroup(w.stream[i].groupId).group.cardIds;
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.held, true);
+  assert.equal(fac(session).walk.holdTo, 1);
+  for (const id of cardsAt(1)) session.hideCard(id, true);
+  // At once, before any tick: the facilitator's alert is about card 2.
+  assert.equal(fac(session).walk.holdTo, 2);
+  session.tick();
+  assert.equal(w.held, true, 'card 2 is unreviewed too: still held');
+  assert.equal(w.holdTo, 2);
+  assert.equal(w.index, 0);
+  const text = session.card(cardsAt(2)[0]).text;
+  session.moveCard(1, { from: 0 });
+  assert.equal(w.index, 2);
+  assert.equal(proj(session).walk.item.text, text, 'Next shows the card the alert showed');
+  assert.ok(cardsAt(2).every((id) => session.card(id).reviewed));
+});
+
+test('a held card that was hidden while on screen: nothing of it is projected, and Next or a review gets past it', async () => {
+  const { session, clock } = await toWalk({ cards: 4, review: false });
+  const w = session.state.walk;
+  const cardsAt = (i) => session.findGroup(w.stream[i].groupId).group.cardIds;
+  session.moveCard(1, { from: 0 }); // card 1, marked reviewed
+  const hiddenText = session.card(cardsAt(1)[0]).text;
+  for (const id of cardsAt(1)) session.hideCard(id, true);
+  session.tick(); // a hidden card gets no time, but card 2 is unreviewed
+  assert.equal(w.index, 1);
+  assert.equal(w.held, true);
+  assert.equal(fac(session).walk.holdTo, 2);
+  assert.deepEqual(proj(session).walk.item, { hidden: true });
+  assert.equal(JSON.stringify(proj(session)).includes(hiddenText), false);
+  // Resume can't project an unreviewed card: it holds again on the next tick.
+  session.pauseWalk(false);
+  session.tick();
+  assert.equal(w.held, true);
+  assert.equal(w.index, 1);
+  assert.equal(JSON.stringify(proj(session)).includes(hiddenText), false);
+  // Next is always a way out.
+  session.moveCard(1, { from: 1 });
+  assert.equal(w.index, 2);
+  assert.equal(w.held, false);
+  assert.equal(w.paused, false);
+  // And so is a review: hide card 2 while it shows, with card 3 unreviewed, then review card 3.
+  for (const id of cardsAt(2)) session.hideCard(id, true);
+  session.tick();
+  assert.equal(w.held, true);
+  for (const id of cardsAt(3)) session.review('card', id, true);
+  session.tick();
+  assert.equal(w.held, false);
+  assert.equal(w.index, 3);
+  assert.equal(JSON.stringify(proj(session)).includes(hiddenText), false);
+});
+
+test('Back during a hold ends it and its pause: the previous card runs', async () => {
+  const { session, clock } = await toWalk({ cards: 4, review: false });
+  const w = session.state.walk;
+  session.moveCard(1, { from: 0 }); // card 1
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.held, true);
+  session.moveCard(-1, { from: 1 });
+  assert.equal(w.index, 0);
+  assert.equal(w.held, false);
+  assert.equal(w.paused, false, 'the facilitator never tapped Pause');
+  assert.ok(Number.isFinite(w.cardEndsAt));
+  assert.equal(fac(session).walk.paused, false);
 });

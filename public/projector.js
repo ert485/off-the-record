@@ -397,7 +397,7 @@ function joinScreen() {
         'p',
         { class: 'disclosure' },
         'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. ',
-        'Submitted cards and thoughts go to Anthropic (Claude Haiku) for grouping and a check for harsh wording; they don’t train on them and delete them within 30 days. ',
+        'Submitted cards and thoughts go to Anthropic (Claude Haiku) for grouping, picking writing prompts and a check for harsh wording; they don’t train on them and delete them within 30 days. ',
         'I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. ',
         'Everything on our server is shredded tonight. Code: ',
         repo,

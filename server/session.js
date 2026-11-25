@@ -1131,8 +1131,9 @@ export class Session {
       this.showAt(to);
       return this.changed();
     }
-    w.held = false;
-    w.holdTo = null;
+    // Back during a hold ends it, and its pause: the facilitator never tapped
+    // Pause (a paused walk-through never holds, since its timer doesn't run).
+    if (w.held) Object.assign(w, { held: false, holdTo: null, paused: false });
     if (delta > 0 && w.index < w.stream.length - 1) this.markReviewed(this.upcoming(w.index + 1));
     this.stepWalk(delta);
     this.changed();
@@ -1284,10 +1285,19 @@ export class Session {
     this.changed();
   }
 
-  // Held: once the item is reviewed (or hidden), the timer moves on as it would have.
+  // Held: once the item is reviewed, the timer moves on as it would have.
+  // If it was hidden instead and the next one also needs review, the hold
+  // moves on to that one, so the facilitator sees what Next would show.
   tickHeld() {
     const w = this.s.walk;
-    if (this.needsReview(this.upcoming(w.holdTo))) return;
+    const to = this.upcoming(w.holdTo);
+    if (this.needsReview(to)) {
+      if (to !== w.holdTo) {
+        w.holdTo = to;
+        this.changed();
+      }
+      return;
+    }
     Object.assign(w, { held: false, holdTo: null, paused: false, cardEndsAt: this.now() });
     this.tickWalk();
   }
@@ -1595,9 +1605,12 @@ export class Session {
       .sort((a, b) => a.hidden - b.hidden || byReview(a, b));
     // Whether there is a check at all (no API key: every item reads "not
     // checked"), and how many visible items nobody has reviewed yet.
+    const unreviewed = [...s.cards.filter((c) => !c.hidden), ...s.afterthoughts].filter((x) => !x.reviewed);
     v.review = {
       checking: !!this.checkHarshness,
-      left: [...s.cards.filter((c) => !c.hidden), ...s.afterthoughts].filter((x) => !x.reviewed).length,
+      left: unreviewed.length,
+      // What "Mark the rest reviewed" would mark: fine or never checked.
+      rest: unreviewed.filter((x) => !x.harsh || x.harsh.level === 0).length,
     };
     // The late cards' flags with their text, for the keep-or-regroup choice
     // (not the suggested placements: those are applied on keep).
@@ -1649,7 +1662,8 @@ export class Session {
       done: s.walk.done,
       // Holding before an unreviewed item, and which (an index into the stream).
       held: inWalk && !!s.walk.held,
-      holdTo: inWalk && s.walk.held ? s.walk.holdTo : null,
+      // Resolved past hidden cards, so it is always what Next would show.
+      holdTo: inWalk && s.walk.held ? this.upcoming(s.walk.holdTo) : null,
       stream: s.walk.stream.map((it) =>
         it.overview
           ? { groupId: it.groupId, text: 'Overview: what came up', reactions: s.reactions.length }

@@ -336,11 +336,12 @@ function reviewBar(v) {
       ? 'Claude Haiku checks each card and thought for harsh wording: red is harsh, amber is worth a look. “Mark the rest reviewed” marks every one that isn’t red or amber, including any not checked; look at red and amber ones yourself. The walk-through waits before showing a card or thought nobody has reviewed.'
       : 'With no API key on the server, nothing is checked for harsh wording. “Mark the rest reviewed” marks every card and thought; the walk-through waits before showing one nobody has reviewed.',
   );
-  const left = v.review.left;
+  const { left, rest } = v.review;
   return h('div', { class: 'stack' },
     h('div', { class: 'row wrap review-bar' },
       h('span', { class: 'grow small dim' }, left ? `${left} not reviewed ` : 'Everything is reviewed ', i.button),
-      left ? h('button', { class: 'small-btn', onclick: () => act('reviewRest') }, 'Mark the rest reviewed') : ''),
+      // Only when the tap would mark something (red and amber are reviewed one by one).
+      rest ? h('button', { class: 'small-btn', onclick: () => act('reviewRest') }, 'Mark the rest reviewed') : ''),
     i.text);
 }
 
@@ -351,10 +352,11 @@ function foldable(key, summary, defaultOpen, ...children) {
   return el;
 }
 
-function allCards(v, defaultOpen = false) {
+// `bar`: false when the review bar is already shown above (during a hold).
+function allCards(v, defaultOpen = false, { bar = true } = {}) {
   if (!v.cards?.length) return '';
   const visible = v.cards.filter((c) => !c.hidden).length;
-  return foldable('cards', `All cards (${visible} shown, ${v.cards.length - visible} hidden)`, defaultOpen, reviewBar(v), h('div', {}, v.cards.map(cardRow)));
+  return foldable('cards', `All cards (${visible} shown, ${v.cards.length - visible} hidden)`, defaultOpen, bar ? reviewBar(v) : '', h('div', {}, v.cards.map(cardRow)));
 }
 
 function mixLine(mix) {
@@ -390,7 +392,7 @@ const OVERVIEW_PROMPTS = ['First reactions: anything surprise you?', 'Which of t
 
 // Matches the projector's fine print word for word.
 const DISCLOSURE =
-  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards and thoughts go to Anthropic (Claude Haiku) for grouping and a check for harsh wording; they don’t train on them and delete them within 30 days. I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
+  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards and thoughts go to Anthropic (Claude Haiku) for grouping, picking writing prompts and a check for harsh wording; they don’t train on them and delete them within 30 days. I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
 
 // ---- grouping --------------------------------------------------------------
 
@@ -693,15 +695,17 @@ const PHASES = {
                 mixLine(item?.mix),
               ],
         lastSlide ? '' : h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
-        lastSlide ? afterthoughtList('On the projector now, 4 to a page', w.afterthoughts) : '',
-        nextIsLast ? afterthoughtList('Thoughts on the last slide, next: not shown yet', w.afterthoughts) : '',
+        // In the projector's order (oldest first, as its pages turn), not the review order.
+        lastSlide ? afterthoughtList('On the projector now, 4 to a page', [...w.afterthoughts].sort((a, b) => a.id - b.id)) : '',
+        // Held before the last slide, the hold's alert lists the thoughts instead.
+        nextIsLast && !holdLast ? afterthoughtList('Thoughts on the last slide, next: not shown yet', w.afterthoughts) : '',
       ],
       lists: [
         // Earlier in the walk-through, the thoughts wait here, to be read and removed before the last slide.
-        !lastSlide && !nextIsLast && w.afterthoughts.length
+        !lastSlide && !nextIsLast && !holdLast && w.afterthoughts.length
           ? foldable('afterthoughts', `Thoughts for the last slide (${w.afterthoughts.length})`, false, afterthoughtList('Not shown yet', w.afterthoughts))
           : '',
-        allCards(v),
+        allCards(v, false, { bar: !w.held }),
         foldable(
           'stream',
           'Stream',

@@ -16,7 +16,7 @@ The flow runs on a 25-minute talk clock: demo, join, submit, grouping (starts at
 
 - No logins, no names. Cards are stored with no author and no timestamp. Phones are known only by a random id, with counts against it.
 - Private notes stay in the phone's tab (sessionStorage) and are wiped on close or shred.
-- Only card and thought text goes to Anthropic (Claude Haiku 5.5): cards for grouping (`server/cluster.js`), and cards and thoughts for a check for harsh wording that only the facilitator sees (`server/moderation.js`).
+- Only card and thought text goes to Anthropic (Claude Haiku 5.5): cards for grouping (`server/cluster.js`) and, while nudges are on, for picking which writing prompt phones show (`server/nudges.js`); cards and thoughts for a check for harsh wording that only the facilitator sees (`server/moderation.js`).
 - No request logs anywhere: the app prints nothing about requests (`server/index.js`), Caddy discards all logging (`deploy/Caddyfile`), the system journal is kept in memory only (`deploy/provision.sh`).
 - The shred deletes the database and every file in the data directory (`server/db.js`). `test/shred.test.js` runs a whole session, shreds, and checks no file, log line or screen still holds anything, and that the server printed no IP address.
 

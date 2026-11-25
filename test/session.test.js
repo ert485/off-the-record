@@ -1405,8 +1405,11 @@ test('"Mark the rest reviewed" skips edgy and harsh items and includes unchecked
   assert.deepEqual(order(), ['edgy', 'never answered', 'fine', 'cruel', 'hidden']);
   session.review('card', session.state.cards.find((c) => c.text === 'cruel').id, false);
 
+  // The button shows only when it would mark something: fine or unchecked items.
+  assert.deepEqual(session.view('facilitator').review, { checking: true, left: 7, rest: 4 });
   session.reviewRest();
   const f = session.view('facilitator');
+  assert.deepEqual(f.review, { checking: true, left: 3, rest: 0 }, 'only edgy and harsh are left: no button');
   const reviewed = Object.fromEntries(f.cards.map((c) => [c.text, c.reviewed]));
   assert.deepEqual(reviewed, { fine: true, 'never answered': true, edgy: false, cruel: false, hidden: false });
   const thoughts = Object.fromEntries(f.react.afterthoughts.map((t) => [t.text, t.reviewed]));
@@ -1442,4 +1445,33 @@ test('a card taken back while it is being checked is gone, answer and all; the r
   const f = session.view('facilitator');
   assert.deepEqual(f.cards.map((c) => [c.text, c.harsh?.level]), [['kept', 1]]);
   assert.equal(JSON.stringify(session.state).includes('taken back'), false);
+});
+
+test('a thought removed while it is being checked stays gone; its answer is dropped', async () => {
+  let answer;
+  const { session, clock, calls } = makeChecked();
+  session.checkHarshness = (items) => {
+    calls.push(items);
+    return new Promise((resolve) => (answer = () => resolve(new Map(items.map((i) => [i.id, { level: 2, reason: 'REASON-GONE' }])))));
+  };
+  session.submitCards(A, ['a card']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  tickFor(session, clock, 5000);
+  await flush();
+  answer(); // the card's check
+  await flush();
+  session.afterthought(B, 'a thought to remove');
+  tickFor(session, clock, 5000);
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].map((i) => i.text), ['a thought to remove']);
+  session.removeAfterthought(session.state.afterthoughts[0].id);
+  answer();
+  await flush();
+  assert.deepEqual(session.state.afterthoughts, []);
+  assert.deepEqual(session.view('facilitator').react.afterthoughts, []);
+  assert.equal(JSON.stringify(session.state.afterthoughts).includes('REASON-GONE'), false);
+  assert.equal(session.view('facilitator').review.left, 1, 'only the card is left to review');
 });
