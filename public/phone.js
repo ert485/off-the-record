@@ -610,7 +610,7 @@ function reactScreen() {
       body,
       freshLine,
       thoughtBox(),
-      h('p', { class: 'small dim' }, 'Made your own emoji? Go back and add it to a card.'),
+      h('p', { class: 'small dim' }, 'While you wait: any emoji from your keyboard works, not just the 16 buttons. On a card, tap “＋ Add your own emoji”, then the 😀 key (iPhone) or ☺ (Android).'),
       h('button', { class: 'quiet', onclick: () => ((finished = false), (index = order().length - 1), show()) }, '◀ Back to the last card'),
     );
     refreshEnd();
