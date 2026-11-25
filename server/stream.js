@@ -6,8 +6,6 @@
 // 3. With 15 or fewer groups in total, every group is shown. Otherwise each
 //    theme shows its top 3 groups and the last one carries "+N more like this".
 // Near-duplicates inside a group are never shown separately: "+N similar".
-// Two people grieving the same thing from opposite sides share one group, the
-// way Priam and Achilles shared one tent.
 
 export const SHOW_ALL_MAX = 15;
 export const PER_THEME = 3;

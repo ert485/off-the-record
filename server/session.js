@@ -12,8 +12,9 @@ import { DEMO_STEPS, DEMO_STEP_MS, DEFAULT_TEASER } from './demo.js';
 
 export const LIMITS = { cardsPerPerson: 3, cardMax: 200, afterthoughtMax: 200, emojisPerCard: 22, themeName: 60, haiku: 120 };
 const OVERVIEW = 'overview';
-// The last slide hands the room back to live speech: a written card can't
-// answer a question, and the people in the room can.
+// The last slide shows the afterthoughts, or else asks for anything else out
+// loud. After it the talking is in person: a written card can't answer a
+// question, and the people in the room can.
 const LAST = 'last';
 // What an afterthought's receipt maps to (a card's receipt maps to its group id).
 const AFTERTHOUGHT = 'afterthought';
@@ -588,8 +589,8 @@ export class Session {
   hideCard(id, hidden) {
     const card = this.card(id);
     if (!card) fail('No such card');
-    // Quietly, like Alcinous stopping the bard's song: the projector just
-    // stops showing it, and nobody in the room is told why.
+    // Like Alcinous stopping the bard's song to spare his guest: the card just
+    // stops showing, on the projector and the phones, without a scene.
     card.hidden = !!hidden;
     // A card hidden before clustering was never grouped (or sent to the AI).
     // If it is shown again later, give it a group of its own. While people are

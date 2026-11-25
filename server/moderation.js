@@ -4,7 +4,8 @@
 // per-call number: nothing about who wrote it. The answer (a level and a
 // one-line reason) is shown to the facilitator only, and decides nothing on
 // its own: a failed or missing check blocks nothing.
-// Everyone holds the staff here. Thersites was rude, and he still had a point.
+// Everyone holds the speaker's sceptre here: a card is flagged for what it does
+// to people, not for its tone. Thersites was rude, and he still had a point.
 import Anthropic from '@anthropic-ai/sdk';
 import { MODEL } from './cluster.js';
 

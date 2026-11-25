@@ -1,6 +1,6 @@
 // Groups submitted cards into themes with Claude Haiku. Only the card text
 // and a random card id are sent: nothing about who wrote it.
-// The room's cahier, sorted by grievance rather than by parish.
+// The room's cahier, sorted by what was felt rather than by parish.
 import Anthropic from '@anthropic-ai/sdk';
 
 export const MODEL = 'claude-haiku-5-5';
@@ -33,6 +33,8 @@ export const SCHEMA = {
   additionalProperties: false,
 };
 
+// A theme can hold both sides of the same loss, the way Priam and Achilles
+// wept in one tent, each for his own dead.
 export const groupingPrompt = (cardCount) => `You sort anonymous cards from a live community retro, where local tech people shared something they experienced, felt, or were surprised by this year.
 
 The room will see the themes one at a time on a projector. The point is recognition: someone reads a theme and thinks "that's all of us, not just me."

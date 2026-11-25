@@ -33,7 +33,7 @@ export function openStore(dir) {
     },
     // Deletes the database and every other file in the data directory.
     // Returns what is left (always [] unless the filesystem refused).
-    // Afterwards, if anyone asks who kept a copy: Nobody.
+    // Afterwards, ask this server who kept a copy, and the answer is Nobody.
     shred() {
       shredded = true;
       db.close();
