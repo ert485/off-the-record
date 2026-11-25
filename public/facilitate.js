@@ -435,6 +435,44 @@ const PROMPTS = [
 ];
 const OVERVIEW_PROMPTS = ['First reactions: anything surprise you?', 'Which of these feels most like your year?'];
 
+// The facilitator's spoken notes, from the spec's "Facilitator cues": what to
+// say, shown where it's said. Never projected.
+const INTRO_NOTES = {
+  say: [
+    'Not a typical dev talk: it’s an experiment, and the app does most of the work. Stop me any time if how it works is unclear.',
+    'Why: 2026 was a weird year. Harvest the weirdness (good, bad and strange) and turn it into some community bonding.',
+    'This is a safe place for genuine thoughts.',
+    'Point at the struck “shred”: not tearing anything apart, letting it go, released into the wind. Nothing feeds a backlog or an action item due in January.',
+    'It may go quiet while people write and read. That’s expected.',
+    'Feedback on how to improve this is for the end: there’s a QR code then, and I’m around after the next talk.',
+  ],
+  dont: [
+    'Don’t steer the tone toward negative: good, weird and heavy are all welcome.',
+    'Don’t ask “who’s done a retro?”',
+  ],
+};
+const WALK_NOTES = [
+  'Don’t read or explain the slides. A laugh or gasp gets a word, then move on.',
+  'An inappropriate emoji: skip past it, no comment.',
+  'If AI comes up: “The right tool in the right place still works; tonight was about the people.”',
+];
+const CLOSING_NOTES = {
+  say: [
+    'A deep, unhurried thank you, for trusting the room with what people wrote.',
+    'Make good friends along the way. I’ve worked with and learned from many good people who stayed in the city and built amazing things, and a city this size makes it impossible not to keep running into them. Everyone here has people like that around them too; you just have to find them and connect.',
+    '“If a card stuck with you, find someone after the next talk and talk about it.” Name the next speaker.',
+    'What do you think? The QR code on the projector goes to the feedback thread.',
+  ],
+  dont: ['Not “at the break”: it’s too short. After the next talk.'],
+};
+
+function spokenNotes(label, { say, dont = [] }) {
+  return h('div', { class: 'spoken' },
+    h('div', { class: 'label' }, label),
+    h('ol', {}, say.map((s) => h('li', {}, s))),
+    dont.length ? h('ul', { class: 'small dim' }, dont.map((s) => h('li', {}, s))) : '');
+}
+
 // Matches the projector's fine print word for word.
 const DISCLOSURE =
   'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards and thoughts go to Anthropic (Claude Haiku) for grouping, picking writing prompts and a check for harsh wording; they don’t train on them and delete them within 30 days. I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
@@ -526,18 +564,17 @@ function speedUpButton(v) {
 // ---- phases ----------------------------------------------------------------
 
 const PHASES = {
-  teaser: (v) => {
-    const t = v.teaser ?? { title: '', lines: [] };
+  teaser: () => {
     const i = info('teaser', 'Phones and the projector show this until you start the demo. Start it when people begin to arrive; it plays on a loop.');
     return {
       now: now('Teaser', [' on the projector and phones ', i.button], undefined, '', i.text),
-      content: [h('div', { class: 'label' }, 'As the room sees it'), h('div', { class: 'current' }, h('b', {}, t.title), t.lines.map((l) => h('p', {}, l)))],
+      content: spokenNotes('Intro: say over the teaser and demo, under a minute', INTRO_NOTES),
     };
   },
 
   demo: (v) => {
     const d = v.demo;
-    if (!d) return { content: h('p', { class: 'dim' }, 'Talk through the app, then start the session.') };
+    if (!d) return { content: [h('p', { class: 'dim' }, 'Talk through the app, then start the session.'), spokenNotes('Intro', INTRO_NOTES)] };
     const stepInfo = info('demo', 'It loops by itself while people arrive. Back or Next stops the loop and puts you in control, and so does starting the talk clock while it loops (it puts you on step 1); Play on a loop starts it again from step 1.');
     return {
       now: now(
@@ -551,6 +588,7 @@ const PHASES = {
           h('button', { class: 'primary', disabled: d.step >= d.steps - 1, onclick: () => act('demoNext', { from: d.step }) }, 'Next ▶')),
         d.auto ? '' : h('button', { class: 'loop-btn', onclick: () => act('demoAuto', { on: true }) }, 'Play on a loop'),
       ),
+      content: spokenNotes('Intro: say over the teaser and demo, under a minute', INTRO_NOTES),
     };
   },
 
@@ -731,9 +769,9 @@ const PHASES = {
       content: [
         held,
         overview
-          ? h('div', { class: 'current' }, 'The themes are on the projector.')
+          ? ''
           : lastSlide
-            ? h('div', { class: 'current' }, w.afterthoughts.length ? 'Afterthoughts' : 'Anything else? Out loud.')
+            ? w.afterthoughts.length ? '' : spokenNotes('Say', { say: ['Anything else? Out loud.'] })
             : [
                 item?.theme ? h('div', { class: 'dim' }, item.theme) : '',
                 item?.haiku ? h('div', { class: 'dim small' }, item.haiku) : '',
@@ -748,6 +786,7 @@ const PHASES = {
         // Below the card, so the Hide button above it never moves under a finger.
         undoHideLine(v),
         lastSlide ? '' : h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
+        lastSlide ? '' : h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'Remember'), WALK_NOTES.map((p) => h('div', {}, p))),
         // In the projector's order (oldest first, as its pages turn), not the review order.
         lastSlide ? afterthoughtList('On the projector now, 4 to a page', [...w.afterthoughts].sort((a, b) => a.id - b.id)) : '',
         // Held before the last slide, the hold's alert lists the thoughts instead.
@@ -773,7 +812,7 @@ const PHASES = {
   finale: (v) => ({
     // Once it has played, there's nothing left to speed up.
     now: v.move ? undefined : speedUpButton(v),
-    content: h('p', { class: 'dim' }, 'The fingerprint is on the projector. Let it sit. Next is the shred, which needs a confirm.'),
+    content: [h('p', { class: 'dim' }, 'Let it sit. Next is the shred, which needs a confirm.'), spokenNotes('Closing, coming up', CLOSING_NOTES)],
   }),
 
   // After the shred there's nothing to move back or forward to: the closing
@@ -781,13 +820,13 @@ const PHASES = {
   shred: (v) => ({
     move: h('p', { class: 'dim' }, 'Shredding. The closing screen comes up by itself.'),
     now: speedUpButton(v),
-    content: h('p', { class: 'dim' }, 'The database and every file in the data directory are deleted.'),
+    content: spokenNotes('Closing', CLOSING_NOTES),
   }),
 
   closing: () => ({
     move: h('p', { class: 'dim' }, 'Closing. Everything is shredded.'),
     content: [
-      h('p', { class: 'dim' }, 'What the app does, what was left out, and: what do you think? The projector shows a QR code to the feedback thread.'),
+      spokenNotes('Closing', CLOSING_NOTES),
       h('button', {
         onclick: () => {
           if (confirm('Start a new session? The projector goes back to the demo, and every phone to “Starting soon”.')) act('reset', { confirm: true });

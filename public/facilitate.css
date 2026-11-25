@@ -80,3 +80,7 @@ details summary { cursor: pointer; color: var(--text-dim); }
 .harsh-1 .dot { background: var(--warn); }
 .cardrow .review { flex: none; }
 .alert.hold { flex-direction: column; align-items: stretch; border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+/* Spoken notes: what the facilitator says, readable at a glance. */
+.spoken { display: flex; flex-direction: column; gap: 6px; }
+.spoken ol { margin: 0; padding-left: 1.4em; display: grid; gap: 8px; font-size: 18px; line-height: 1.4; }
+.spoken ul { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
