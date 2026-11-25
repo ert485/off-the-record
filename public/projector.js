@@ -93,14 +93,13 @@ function closingScreen(v) {
   );
   // The credits text is required: photos alone show nothing.
   if (v.credits) {
-    el.classList.add('with-credits');
     const track = h(
       'div',
       { class: 'credits-track' },
       h('div', { class: 'credits-spacer' }),
       h('div', { class: 'credits-title' }, v.credits.title),
-      v.credits.lines.map((line) => h('div', { class: 'credits-line' }, line)),
-      creditsPhotos.map((src) => h('img', { class: 'credits-photo', src, alt: '' })),
+      h('div', { class: 'credits-lines' }, v.credits.lines.map((line) => h('div', { class: 'credits-line' }, line))),
+      creditsPhotos.length ? h('div', { class: 'credits-photos' }, creditsPhotos.map((src) => h('img', { class: 'credits-photo', src, alt: '' }))) : null,
     );
     el.append(h('div', { class: 'credits-roll', 'aria-hidden': 'true' }, track));
   }
@@ -148,11 +147,14 @@ function photoPicker() {
 }
 
 function teaserScreen() {
+  const picker = photoPicker();
+  picker.hidden = true; // shown only when the demo file has credits
   const title = h('div', { class: 'huge' });
   const lines = h('div', { class: 'teaser-lines' });
   return {
-    el: h('div', { class: 'center teaser' }, h('div', {}, title, lines), photoPicker()),
+    el: h('div', { class: 'center teaser' }, h('div', {}, title, lines), picker),
     update(v) {
+      picker.hidden = !v.hasCredits;
       title.textContent = v.teaser?.title ?? 'Off the Record';
       fill(lines, (v.teaser?.lines ?? []).map((line) => h('div', { class: 'sub' }, struckParts(line).map((p) => (p.struck ? h('s', { class: 'struck' }, p.text) : p.text)))));
     },
