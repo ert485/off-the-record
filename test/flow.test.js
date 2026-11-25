@@ -372,6 +372,16 @@ test("a phone's deck is its own first cards; hiding one moves the next card up, 
   const after = deck(ids.filter((id) => id !== hidden), `${A}:react`, 30);
   const next = deck(ids, `${A}:react`)[30];
   assert.deepEqual(after, [...mine.filter((id) => id !== hidden), next]);
+  // A card the phone reacted to never leaves its deck: new cards that rank
+  // higher take only the slots left.
+  const reacted = new Set(deck(ids, `${A}:react`).slice(35, 40));
+  const kept = deck(ids, `${A}:react`, 30, reacted);
+  assert.equal(kept.length, 30);
+  assert.ok([...reacted].every((id) => kept.includes(id)));
+  assert.deepEqual(kept.filter((id) => !reacted.has(id)), mine.slice(0, 25));
+  // In the deck's own order.
+  const order = deck(ids, `${A}:react`);
+  assert.deepEqual(kept, order.filter((id) => kept.includes(id)));
   // Fewer cards than the deck size: every card, once.
   assert.deepEqual([...deck(ids.slice(0, 5), `${A}:react`, 30)].sort((a, b) => a - b), [1, 2, 3, 4, 5]);
 });

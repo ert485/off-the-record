@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Session, normalizeClusters, cleanHaiku, SKIPPED } from '../server/session.js';
 import { paceMinutes, PHASES, PLAN } from '../server/phases.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
+import { deck } from '../public/shared/client.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbbbbbbbbbbbbbb';
@@ -750,8 +751,10 @@ test('a phone can react to deckSize cards, no more', async () => {
   // Changing a card already sent still works past the limit.
   session.react(A, v.groups[0].id, ['🎉'], receipts[0]);
   assert.deepEqual(session.emojiMix(v.groups[0].id), [['🎉', 1]]);
-  // Another phone has its own deck.
-  session.react(B, v.groups[34].id, ['🙋']);
+  // Another phone's sends count against its own deck, not A's.
+  assert.match(session.react(B, v.groups[34].id, ['🙋']).receipt, /^[0-9a-f]{16}$/);
+  assert.deepEqual(session.emojiMix(v.groups[34].id), [['🙋', 1]]);
+  assert.equal(session.state.clients[B].reacted, 1);
   // Fewer cards than the deck size: every card.
   const small = make().session;
   await toReact(small);
@@ -793,7 +796,9 @@ test('a card hidden mid-reaction shrinks the deck without stranding a phone', as
   session.hideCard(session.findGroup(first.id).group.cardIds[0], true);
   const v = session.view('phone', { cid: A }).react;
   assert.equal(v.groups.length, 2);
-  assert.equal(Math.min(v.deckSize, v.groups.length), 2); // "Card n of 2"
+  // A's deck, as the phone works it out: "Card n of 2".
+  const aDeck = deck(v.groups.map((g) => g.id), 'seed-a', v.deckSize, new Set([first.id]));
+  assert.deepEqual([...aDeck].sort((x, y) => x - y), rest.map((g) => g.id).sort((x, y) => x - y));
   // A has spent one send on the hidden card and can still react to both left.
   for (const g of rest) session.react(A, g.id, ['🙋']);
   // A phone that hadn't started reacts to the two left, and no more.
@@ -807,7 +812,76 @@ test('a card hidden mid-reaction shrinks the deck without stranding a phone', as
   for (const g of groups.slice(0, 30)) big.react(A, g.id, ['🙋']);
   big.hideCard(big.findGroup(groups[0].id).group.cardIds[0], true);
   // Still a deck of 30 among the 34 left, so A can react to the card that moved up.
-  assert.equal(big.view('phone', { cid: A }).react.groups.length, 34);
+  const after = big.view('phone', { cid: A }).react;
+  assert.equal(after.groups.length, 34);
+  assert.equal(after.deckSize, 30);
   big.react(A, groups[30].id, ['🙋']);
   assert.throws(() => big.react(A, groups[31].id, ['🙋']), /every card in your deck/);
+});
+
+// A phone working through its deck the way phone.js does: its own deck from
+// the visible cards and the cards it has reacted to, one first send per card.
+function reactThroughDeck(session, cid, seed, reacted, max = Infinity) {
+  const v = session.view('phone', { cid }).react;
+  const mine = deck(v.groups.map((g) => g.id), seed, v.deckSize, reacted);
+  let refused = 0;
+  for (const id of mine) {
+    if (reacted.has(id) || reacted.size >= max) continue;
+    try {
+      session.react(cid, id, ['🙋']);
+      reacted.add(id);
+    } catch {
+      refused += 1;
+    }
+  }
+  return { deck: mine, refused };
+}
+
+test('late cards never push a reacted card out of a deck, so no send is refused', async () => {
+  const { session } = make();
+  await toReactWith(session, 35);
+  const phones = Array.from({ length: 40 }, (_, i) => ({ cid: phone(1000 + i), seed: `seed-${i}`, reacted: new Set() }));
+  for (const p of phones) reactThroughDeck(session, p.cid, p.seed, p.reacted, 25);
+  assert.ok(phones.every((p) => p.reacted.size === 25));
+  session.back(); // cluster
+  session.back(); // submit
+  session.submitCards(phone(500), ['late 1', 'late 2', 'late 3']);
+  session.submitCards(phone(501), ['late 4', 'late 5', 'late 6']);
+  session.submitCards(phone(502), ['late 7', 'late 8']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  assert.equal(session.view('phone', { cid: A }).react.groups.length, 43);
+  for (const p of phones) {
+    const { deck: mine, refused } = reactThroughDeck(session, p.cid, p.seed, p.reacted);
+    assert.equal(refused, 0);
+    assert.equal(mine.length, 30);
+    // Every card the phone reacted to is still in its deck.
+    assert.equal(p.reacted.size, 30);
+    assert.ok([...p.reacted].every((id) => mine.includes(id)));
+  }
+});
+
+test('a card unhidden mid-reaction joins every deck when there is time for it', async () => {
+  const { session } = make();
+  session.advance(); // submit
+  for (let i = 0; i < 10; i += 3) session.submitCards(phone(i + 1), Array.from({ length: Math.min(3, 10 - i) }, (_, j) => `card ${i + j}`));
+  session.advance(); // cluster
+  await flush();
+  const hidden = session.state.cards[0].id;
+  session.hideCard(hidden, true);
+  session.advance(); // react
+  assert.equal(session.view('phone', { cid: A }).react.deckSize, 9);
+  assert.equal(session.view('facilitator').react.deckSize, 9);
+  session.hideCard(hidden, false);
+  const v = session.view('phone', { cid: A }).react;
+  assert.equal(v.groups.length, 10);
+  assert.equal(v.deckSize, 10);
+  assert.equal(session.view('facilitator').react.deckSize, 10);
+  for (let i = 0; i < 5; i++) {
+    const p = { cid: phone(2000 + i), seed: `seed-${i}`, reacted: new Set() };
+    const { deck: mine, refused } = reactThroughDeck(session, p.cid, p.seed, p.reacted);
+    assert.equal(mine.length, 10);
+    assert.equal(refused, 0);
+  }
 });

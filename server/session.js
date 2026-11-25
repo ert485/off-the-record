@@ -2,7 +2,7 @@
 // server persists `session.state` after each change and wires up the shred.
 import { randomBytes, randomInt } from 'node:crypto';
 import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
-import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP, lastSlideMs, deckSize } from './flow.js';
+import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP, lastSlideMs, deckTimeSize } from './flow.js';
 import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
@@ -43,7 +43,8 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     reactEndsAt: null,
     // When the room moved on from reacting, for the 10-second grace.
     reactClosedAt: null,
-    // How many cards each phone's deck holds, set when reactions start.
+    // How many cards fit the reaction window, set when reactions start. Each
+    // phone's deck is this many, or every visible card when there are fewer.
     deckSize: null,
     // Off until the facilitator turns them on.
     nudgesOn: false,
@@ -198,7 +199,7 @@ export class Session {
       for (const client of Object.values(this.state.clients ?? {})) client.afterthoughts ??= 0;
       // Saved before decks had a size: reactions have started, so size it now.
       if (this.state.deckSize === undefined) {
-        this.state.deckSize = PHASES.indexOf(this.state.phase) >= PHASES.indexOf('react') ? deckSize(this.visibleGroups().length, REACT_MINUTES * 60_000) : null;
+        this.state.deckSize = PHASES.indexOf(this.state.phase) >= PHASES.indexOf('react') ? deckTimeSize(REACT_MINUTES * 60_000) : null;
       }
     }
     if (!this.state.shredded) {
@@ -361,7 +362,7 @@ export class Session {
         direction === 'forward' ? now + REACT_MINUTES * 60_000 : Math.max(this.s.reactEndsAt ?? 0, now + 60_000);
       // The deck is sized to the window when reactions start; coming back
       // from the walk-through (or "+1 minute") keeps it.
-      if (direction === 'forward') this.s.deckSize = deckSize(this.visibleGroups().length, REACT_MINUTES * 60_000);
+      if (direction === 'forward') this.s.deckSize = deckTimeSize(REACT_MINUTES * 60_000);
     }
     if (to === 'submit') {
       this.s.submitEndsAt =
@@ -782,7 +783,14 @@ export class Session {
   reactLimit() {
     const visible = new Set(this.visibleGroups().map((g) => g.id));
     const hiddenReacted = new Set(Object.values(this.s.receipts).filter((g) => g !== AFTERTHOUGHT && !visible.has(g)));
-    return Math.min(this.s.deckSize ?? visible.size, visible.size) + hiddenReacted.size;
+    return this.deckNow() + hiddenReacted.size;
+  }
+
+  // Each phone's deck size right now: the stored size (what fits the time),
+  // or every visible card when there are fewer.
+  deckNow() {
+    const visible = this.visibleGroups().length;
+    return Math.min(this.s.deckSize ?? visible, visible);
   }
 
   // Reactions and thoughts: open while reacting, and for the 10-second grace
@@ -1088,8 +1096,8 @@ export class Session {
         groups: this.visibleGroups().map((g) => ({ id: g.id, texts: this.visibleCardIds(g).map((id) => this.card(id).text) })),
         done: !!c?.reactDone,
         endsAt: s.reactEndsAt,
-        // The phone reacts to the first deckSize cards of its own shuffle.
-        deckSize: s.deckSize,
+        // The phone reacts to deckSize cards of its own shuffle.
+        deckSize: this.deckNow(),
       };
     }
     return v;
@@ -1248,7 +1256,7 @@ export class Session {
       reactions: s.reactions.length,
       endsAt: s.reactEndsAt,
       // Each phone gets deckSize of the total cards (all of them if fewer).
-      deckSize: s.deckSize,
+      deckSize: s.deckSize === null ? null : this.deckNow(),
       total: this.visibleGroups().length,
       afterthoughts,
     };

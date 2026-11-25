@@ -565,7 +565,8 @@ const PHASES = {
       ),
       content: [
         h('div', {}, h('span', { class: 'dim small' }, `${v.react.reactions} reactions so far `), countInfo.button, countInfo.text),
-        h('div', {}, h('span', { class: 'dim small' }, partDeck ? `${perPhone} of ${v.react.total} cards on each phone ` : `All ${v.react.total} cards on each phone `), deckInfo.button, deckInfo.text),
+        // Nothing to say about decks with no cards to react to.
+        v.react.total ? h('div', {}, h('span', { class: 'dim small' }, partDeck ? `${perPhone} of ${v.react.total} cards on each phone ` : `All ${v.react.total} cards on each phone `), deckInfo.button, deckInfo.text) : '',
         afterthoughtList('Thoughts from the end of the deck, shown on the last slide', v.react.afterthoughts),
       ],
       lists: allCards(v),

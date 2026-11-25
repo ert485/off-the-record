@@ -46,6 +46,19 @@ function newId() {
 let cid = local.get('cid');
 if (!cid) local.set('cid', (cid = newId()));
 
+// The seed for this phone's deck: random, made and kept on the phone, never
+// sent, and wiped with the notes, so the server can't work out which cards a
+// phone's deck holds. Kept in memory only if storage doesn't work.
+let deckSeedMemo = null;
+function deckSeed() {
+  let seed = local.get('deckSeed', null);
+  if (!seed) {
+    local.set('deckSeed', newId());
+    seed = local.get('deckSeed', null) ?? (deckSeedMemo ??= newId());
+  }
+  return seed;
+}
+
 let check = () => [];
 loadChecker().then((c) => (check = c));
 
@@ -411,16 +424,18 @@ function reactScreen() {
   function tickTimer() {
     const left = endsAt ? endsAt - serverNow() : Infinity;
     timer.hidden = local.get('afterthoughtDone', false) || left > 120_000 || left <= 0;
-    if (left > 60_000) timer.textContent = `About 2 minutes left: finish your cards, then add a thought if you like. (${formatClock(left)})`;
-    else timer.textContent = `About a minute left: send your thought now. (${formatClock(left)})`;
+    if (left > 60_000) timer.textContent = `About 2 minutes left: finish your cards, then add a thought if you like (${formatClock(left)}).`;
+    else timer.textContent = `About a minute left: send your thought now (${formatClock(left)}).`;
     timer.classList.toggle('urgent', left <= 60_000);
   }
   const timerInterval = setInterval(tickTimer, 1000);
 
-  // This phone's deck: the first deckSize cards of its own shuffle, so the
-  // server never learns which cards it saw. Fewer cards than that: all of them.
+  // This phone's deck: deckSize cards of its own shuffle, from a seed the
+  // server never sees, so it never learns which cards the phone saw. Cards
+  // already reacted to stay in it; fewer cards than that: all of them.
   function order() {
-    return deck(groups.map((g) => g.id), `${cid}:react`, deckSize);
+    const reacted = new Set(Object.keys(mine).map(Number));
+    return deck(groups.map((g) => g.id), deckSeed(), deckSize, reacted);
   }
   // Whether the deck is every card, so the end of it can say so.
   const everyCard = () => order().length >= groups.length;

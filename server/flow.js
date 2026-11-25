@@ -82,9 +82,15 @@ export function lastSlideMs(count) {
   return Math.min(60_000, Math.max(LAST_SLIDE_MS, ms));
 }
 
-// How many cards each phone gets to react to: as many as fit the window at
-// about 8 seconds a card, after a minute kept for the thought at the end,
-// never fewer than 8, and never more than there are.
+// How many cards fit the reaction window: about 8 seconds a card, after a
+// minute kept for the thought at the end, never fewer than 8. Stored when
+// reactions start, before capping, so a card unhidden later still fits.
+export function deckTimeSize(reactMs) {
+  return Math.max(MIN_DECK, Math.floor((reactMs - AFTERTHOUGHT_RESERVE_MS) / CARD_REACT_MS));
+}
+
+// How many cards each phone gets to react to: as many as fit the window,
+// and never more than there are.
 export function deckSize(groups, reactMs) {
-  return Math.min(groups, Math.max(MIN_DECK, Math.floor((reactMs - AFTERTHOUGHT_RESERVE_MS) / CARD_REACT_MS)));
+  return Math.min(groups, deckTimeSize(reactMs));
 }
