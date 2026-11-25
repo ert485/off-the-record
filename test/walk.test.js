@@ -824,3 +824,42 @@ test('Undo leaves the walk-through where it is when the facilitator went back be
   assert.equal(w.index, 1);
   assert.equal(session.card(id).hidden, false);
 });
+
+test('Undo in a group with another card still showing does not move the walk-through back', async () => {
+  let t = 1_000_000;
+  const session = new Session({
+    now: () => t,
+    // Cards 0 and 1 share a group; the rest have one each.
+    clusterCards: async (list) => ({ themes: [{ name: 'All', groups: [[list[0].id, list[1].id], ...list.slice(2).map((c) => [c.id])] }] }),
+    shredAnimationMs: 10,
+  });
+  session.advance(); // teaser to demo
+  session.startTalk();
+  session.advance(); // join
+  session.advance(); // submit
+  session.submitCards(A, ['card 0', 'card 1', 'card 2']);
+  session.submitCards(B, ['card 3']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.reviewRest();
+  t += 15.5 * MIN;
+  session.advance(); // walk
+  const w = session.state.walk;
+  const endsAt = w.endsAt;
+  const at = w.stream.findIndex((it) => !it.overview && !it.last && session.findGroup(it.groupId).group.cardIds.length === 2);
+  assert.ok(at > 0);
+  session.moveTo(at);
+  const [first] = session.findGroup(w.stream[at].groupId).group.cardIds;
+  session.hideCard(first, true);
+  session.tick();
+  assert.equal(w.index, at, 'the other card still shows: no move');
+  t = w.cardEndsAt; // its share runs out as usual
+  session.tick();
+  assert.ok(w.index > at);
+  const index = w.index;
+  session.undoWalkHide(first);
+  assert.equal(session.card(first).hidden, false);
+  assert.equal(w.index, index, 'the hide never moved it, so the undo does not either');
+  assert.equal(w.endsAt, endsAt);
+});

@@ -334,10 +334,16 @@ function thoughtRow(t) {
 // projector or the phones. Only the last Hide can be undone this way (the
 // card lists' Show still unhides any card).
 const UNDO_HIDE_MS = 20_000;
-let walkHidden = null; // { id, text, until, undone }
+let walkHidden = null; // { id, text, at, until, undone }
 
 function hideInWalk(card) {
-  walkHidden = { id: card.id, text: card.text, until: Date.now() + UNDO_HIDE_MS, undone: false };
+  // A second Hide within a second is the other half of a double tap, landing
+  // on the next card's Hide (same group, or the next item once the walk moves
+  // on): ignored, so it hides nothing more and the first keeps its Undo. A
+  // deliberate second Hide just waits a second.
+  if (walkHidden && !walkHidden.undone && Date.now() - walkHidden.at < 1000) return;
+  const at = Date.now();
+  walkHidden = { id: card.id, text: card.text, at, until: at + UNDO_HIDE_MS, undone: false };
   setTimeout(render, UNDO_HIDE_MS + 50);
   act('hideCard', { id: card.id, hidden: true });
 }
