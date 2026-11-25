@@ -48,6 +48,10 @@ export const AFTERTHOUGHT_PAGE_MS = 10_000;
 export const MIN_CARD_MS = 15_000;
 export const MIN_WALK_MS = 180_000;
 export const WALK_END_BEFORE_MINUTES = 3.5;
+// The facilitator's Next on the last slide goes to the finale, except this
+// soon after the last slide appeared: that tap is the second half of a
+// double-tapped Next, and would skip the last slide.
+export const DOUBLE_TAP_MS = 1_000;
 
 export function nextPhase(phase) {
   const i = PHASES.indexOf(phase);

@@ -128,20 +128,65 @@ test("skipped cards' reactions still count in the finale", async () => {
   assert.equal(proj(session).finale.sequence.length, reactions);
 });
 
-test('back from the last slide returns to the last card; next on the last slide finishes', async () => {
-  const { session } = await toWalk({ cards: 2 });
-  const last = session.state.walk.stream.length - 1;
-  while (session.state.walk.index < last) session.moveCard(1);
+test('back from the last slide returns to the last card; when its time runs out it is done, and Back undoes that', async () => {
+  const { session, clock } = await toWalk({ cards: 2 });
+  const w = session.state.walk;
+  const last = w.stream.length - 1;
+  while (w.index < last) session.moveCard(1);
   assert.equal(proj(session).walk.item.last, true);
   session.moveCard(-1);
-  assert.equal(session.state.walk.index, last - 1);
+  assert.equal(w.index, last - 1);
   session.moveCard(1);
-  assert.equal(session.state.walk.done, false);
-  session.moveCard(1);
-  assert.equal(session.state.walk.done, true);
+  assert.equal(w.done, false);
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.done, true, 'the timer finishes the last slide');
+  assert.equal(fac(session).move.label, 'Ready for the finale?');
   session.moveCard(-1);
-  assert.equal(session.state.walk.done, false);
-  assert.equal(session.state.walk.index, last);
+  assert.equal(w.done, false);
+  assert.equal(w.index, last);
+  assert.equal(session.state.phase, 'walk');
+});
+
+// The facilitator tapped "Finish the walk-through", then "Ready for the
+// finale?": two taps for one intent. Next on the last slide is the finale.
+test('Next on the last slide goes straight to the finale, in one tap', async () => {
+  const { session, clock } = await toWalk({ cards: 2 });
+  const w = session.state.walk;
+  const last = w.stream.length - 1;
+  while (w.index < last) session.moveCard(1, { from: w.index });
+  clock.tick(5_000);
+  session.moveCard(1, { from: last });
+  assert.equal(session.state.phase, 'finale');
+  assert.equal(proj(session).finale.sequence.length, session.state.reactions.length);
+  // Back from the finale returns to the last slide, held, as before.
+  session.back();
+  assert.equal(session.state.phase, 'walk');
+  assert.equal(w.index, last);
+  assert.equal(w.done, false);
+  // Once the timer has finished the last slide, Next still goes to the finale.
+  session.pauseWalk(false);
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.done, true);
+  session.moveCard(1, { from: last });
+  assert.equal(session.state.phase, 'finale');
+});
+
+test('a double-tapped Next onto the last slide shows it, and does not skip it to the finale', async () => {
+  const { session, clock } = await toWalk({ cards: 2 });
+  const w = session.state.walk;
+  const last = w.stream.length - 1;
+  while (w.index < last - 1) session.moveCard(1, { from: w.index });
+  session.moveCard(1, { from: last - 1 });
+  // The second tap lands on the redrawn button, which now says it goes to the finale.
+  clock.tick(300);
+  assert.throws(() => session.moveCard(1, { from: last }), /Already moved on/);
+  assert.equal(session.state.phase, 'walk');
+  assert.equal(w.index, last);
+  clock.tick(1_000);
+  session.moveCard(1, { from: last });
+  assert.equal(session.state.phase, 'finale');
 });
 
 test('a walk-through with no cards goes from the overview to the last slide', async () => {

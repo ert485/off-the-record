@@ -660,7 +660,9 @@ const PHASES = {
         nav(v),
         h('div', { class: 'walk-nav' },
           h('button', { disabled: w.index === 0, onclick: () => act('prevCard', { from: w.index }) }, w.index === 1 ? '◀ Back to the themes overview' : '◀ Back one card'),
-          h('button', { class: 'primary', disabled: w.done, onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : w.index === 0 ? 'First card ▶' : lastSlide ? 'Finish the walk-through ▶' : 'Next card ▶')),
+          // On the last slide, Next is the finale, in one tap (the server ignores
+          // a tap that is the second half of a double-tapped Next).
+          h('button', { class: 'primary', onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : w.index === 0 ? 'First card ▶' : lastSlide ? `${v.move ? v.move.label : FORWARD.finale} ▶` : 'Next card ▶')),
       ],
       now: now(
         overview ? 'Themes' : lastSlide ? 'Last slide' : `Card ${w.index} of ${cards}`,
