@@ -673,3 +673,16 @@ test('Back during a hold ends it and its pause: the previous card runs', async (
   assert.ok(Number.isFinite(w.cardEndsAt));
   assert.equal(fac(session).walk.paused, false);
 });
+
+test('Back while held on the first slide is refused and leaves the hold in place', async () => {
+  const { session, clock } = await toWalk({ cards: 4, review: false });
+  const w = session.state.walk;
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.held, true);
+  assert.equal(w.index, 0);
+  assert.throws(() => session.moveCard(-1), /first card/);
+  assert.equal(w.held, true);
+  assert.equal(w.paused, true);
+  assert.notEqual(w.holdTo, null);
+});

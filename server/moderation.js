@@ -1,6 +1,6 @@
 // A quick check for harsh wording, so the facilitator can look at a card or
 // thought before the room sees it. One low-effort Claude Haiku call checks
-// every unchecked card and thought at once. Only the text is sent, under a
+// up to 30 unchecked cards and thoughts at once. Only the text is sent, under a
 // per-call number: nothing about who wrote it. The answer (a level and a
 // one-line reason) is shown to the facilitator only, and decides nothing on
 // its own: a failed or missing check blocks nothing.
@@ -82,7 +82,7 @@ export function createHarshnessCheck({ apiKey = process.env.ANTHROPIC_API_KEY, c
     const response = await api.messages.create(
       {
         model: MODEL,
-        max_tokens: 2000,
+        max_tokens: 6000,
         output_config: { effort: 'low', format: { type: 'json_schema', schema: HARSH_SCHEMA } },
         system: HARSH_SYSTEM,
         messages: [{ role: 'user', content: request.content }],

@@ -533,6 +533,8 @@ function clusterScreen() {
 // ---- reactions: one card at a time, one pass ---------------------------------
 
 function reactScreen() {
+  // The server clears unsent flags on leaving reactions; a restored draft raises it again.
+  unsentSaid = false;
   const timer = h('div', { class: 'timer-banner', hidden: true });
   const body = h('div', { class: 'stack' });
   const el = h('div', { class: 'stack' }, timer, body);
@@ -559,6 +561,7 @@ function reactScreen() {
   };
   // The "New cards came in" line at the end of the deck.
   let freshLine = null;
+  let shownUnseen = null;
   // On a card reached by jumping to one not yet shown: Next goes on to the
   // next such card (or the end), not back through cards already seen.
   // "◀ Previous" goes back to stepping through the deck in order.
@@ -605,6 +608,7 @@ function reactScreen() {
     current = null;
     tickTimer();
     freshLine = h('div', { class: 'stack', hidden: true });
+    shownUnseen = null;
     fill(
       body,
       freshLine,
@@ -629,6 +633,11 @@ function reactScreen() {
     if (ask) ask.textContent = askCopy(everyCard);
     const wait = body.querySelector('[data-end="wait"]');
     if (wait) wait.textContent = waitCopy(everyCard);
+    // Only rebuild the button when the unseen card changes: SSE updates come
+    // several times a second, and a button replaced between press and release
+    // loses the tap.
+    if (unseen === shownUnseen) return;
+    shownUnseen = unseen;
     freshLine.hidden = unseen === null;
     fill(freshLine, unseen === null ? '' : [h('p', {}, 'New cards came in.'), h('button', { class: 'primary', onclick: seeNew }, 'See them ▶')]);
   }

@@ -1,7 +1,7 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
 import { randomBytes, randomInt } from 'node:crypto';
-import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS, WRITING_WINDOW_MS, HARSHNESS_QUIET_MS } from './phases.js';
+import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS, WRITING_WINDOW_MS, HARSHNESS_QUIET_MS, HARSHNESS_MAX_WAIT_MS, HARSHNESS_BATCH } from './phases.js';
 import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP, lastSlideMs, deckTimeSize } from './flow.js';
 import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
@@ -203,7 +203,12 @@ export class Session {
     this.log = log;
     // The harshness check: when it is due (once things are quiet), whether a
     // call is in flight, and a run number so a result after the shred is ignored.
+    // checkFirstAt: when the oldest item still waiting arrived (the check never
+    // waits more than HARSHNESS_MAX_WAIT_MS past it). checkRetried: a failed
+    // run is retried once.
     this.checkDueAt = null;
+    this.checkFirstAt = null;
+    this.checkRetried = false;
     this.checking = false;
     this.checkRun = 0;
     // The prepared demo content (never stored in the state, never sent to phones).
@@ -986,15 +991,19 @@ export class Session {
   // ---- the harshness check and reviewed marks ------------------------------
   //
   // After each new card or thought, once there's been HARSHNESS_QUIET_MS with
-  // nothing new, every unchecked visible card and thought goes to the check in
-  // one call. A failed check leaves them unchecked and blocks nothing. The
+  // nothing new (or HARSHNESS_MAX_WAIT_MS since the first one waiting, however
+  // busy), every unchecked visible card and thought goes to the check, in calls
+  // of at most HARSHNESS_BATCH. A failed call leaves its items unchecked and
+  // blocks nothing; the run is retried once after the quiet time. The
   // facilitator marks items reviewed; the walk-through holds before an item
   // nobody has reviewed (see tickWalk). Hidden cards are never sent and never
   // need review.
 
   scheduleCheck() {
     if (!this.checkHarshness || this.shredded) return;
-    this.checkDueAt = this.now() + HARSHNESS_QUIET_MS;
+    const now = this.now();
+    this.checkFirstAt ??= now;
+    this.checkDueAt = Math.min(now + HARSHNESS_QUIET_MS, this.checkFirstAt + HARSHNESS_MAX_WAIT_MS);
   }
 
   // Visible cards (in id order) then thoughts (oldest first) with no answer
@@ -1009,20 +1018,37 @@ export class Session {
   tickCheck() {
     if (this.checkDueAt === null || this.checking || this.now() < this.checkDueAt) return;
     this.checkDueAt = null;
+    this.checkFirstAt = null;
     const items = this.uncheckedItems();
     if (!items.length) return;
     const run = ++this.checkRun;
     this.checking = true;
-    Promise.resolve()
-      .then(() => this.checkHarshness(items.map(({ key, text }) => ({ id: key, text }))))
-      .then((answers) => {
+    this.runCheck(run, items);
+  }
+
+  // One in-flight run works through the batches in turn. A batch that fails
+  // is logged (a fixed line) and the rest still go.
+  async runCheck(run, items) {
+    let failed = false;
+    for (let i = 0; i < items.length; i += HARSHNESS_BATCH) {
+      if (run !== this.checkRun) return;
+      const batch = items.slice(i, i + HARSHNESS_BATCH);
+      try {
+        const answers = await this.checkHarshness(batch.map(({ key, text }) => ({ id: key, text })));
         if (!(answers instanceof Map)) throw new Error('No answers');
-        this.applyCheck(run, items, answers);
-      })
-      .catch(() => this.log('moderation: check failed'))
-      .finally(() => {
-        if (run === this.checkRun) this.checking = false;
-      });
+        this.applyCheck(run, batch, answers);
+      } catch {
+        failed = true;
+        if (run === this.checkRun) this.log('moderation: check failed');
+      }
+    }
+    if (run !== this.checkRun) return;
+    this.checking = false;
+    if (!failed) this.checkRetried = false;
+    else if (!this.checkRetried) {
+      this.checkRetried = true;
+      this.scheduleCheck();
+    }
   }
 
   // Stores each answer on its item, if the item is still there with the same
@@ -1133,6 +1159,7 @@ export class Session {
     }
     // Back during a hold ends it, and its pause: the facilitator never tapped
     // Pause (a paused walk-through never holds, since its timer doesn't run).
+    if (delta < 0 && w.index === 0 && !w.done) fail('This is the first card');
     if (w.held) Object.assign(w, { held: false, holdTo: null, paused: false });
     if (delta > 0 && w.index < w.stream.length - 1) this.markReviewed(this.upcoming(w.index + 1));
     this.stepWalk(delta);
@@ -1379,6 +1406,8 @@ export class Session {
   stopChecks() {
     this.checkRun += 1;
     this.checkDueAt = null;
+    this.checkFirstAt = null;
+    this.checkRetried = false;
     this.checking = false;
   }
 

@@ -1475,3 +1475,51 @@ test('a thought removed while it is being checked stays gone; its answer is drop
   assert.equal(JSON.stringify(session.state.afterthoughts).includes('REASON-GONE'), false);
   assert.equal(session.view('facilitator').review.left, 1, 'only the card is left to review');
 });
+
+// ---- harshness check batching ------------------------------------------------
+
+const cidN = (n) => String(n).padStart(24, '0');
+
+test('the harshness check fires at most 15 seconds after the first pending item, even while items keep arriving', async () => {
+  const { session, clock, calls } = makeChecked();
+  session.submitCards(cidN(1), ['first']);
+  for (let i = 2; i <= 5; i++) {
+    tickFor(session, clock, 3000);
+    session.submitCards(cidN(i), [`more ${i}`]);
+  }
+  await flush();
+  assert.equal(calls.length, 0, 'still being debounced at 12 s');
+  tickFor(session, clock, 3000); // 15 s since the first; a quiet 5 s would have been 17
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].length, 5);
+});
+
+test('a big check goes in calls of at most 30 items', async () => {
+  const { session, clock, calls } = makeChecked();
+  for (let i = 1; i <= 70; i++) session.submitCards(cidN(i), [`card ${i}`]);
+  tickFor(session, clock, 5000);
+  await flush();
+  await flush();
+  await flush();
+  await flush();
+  assert.deepEqual(calls.map((c) => c.length), [30, 30, 10]);
+});
+
+test('a failed harshness check is retried once, not more', async () => {
+  const { session, clock, calls, logged } = makeChecked({}, { fail: true });
+  session.submitCards(A, ['one card']);
+  tickFor(session, clock, 5000);
+  await flush();
+  await flush();
+  assert.equal(calls.length, 1);
+  tickFor(session, clock, 5000);
+  await flush();
+  await flush();
+  assert.equal(calls.length, 2, 'retried after the quiet time');
+  tickFor(session, clock, 30000);
+  await flush();
+  assert.equal(calls.length, 2, 'a second failure is left alone');
+  assert.deepEqual(logged, ['moderation: check failed', 'moderation: check failed']);
+  assert.equal(session.view('facilitator').cards[0].harsh, null);
+});

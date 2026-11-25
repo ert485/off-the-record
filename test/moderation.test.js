@@ -42,7 +42,7 @@ test('harshness answers map back from per-call numbers', async () => {
   ]);
   assert.equal(body.messages[0].content.includes('900000'), false);
   assert.equal(body.model, MODEL);
-  assert.equal(body.max_tokens, 2000);
+  assert.equal(body.max_tokens, 6000);
   assert.equal(body.output_config.effort, 'low');
   assert.equal(body.output_config.format.type, 'json_schema');
   assert.deepEqual(options, { timeout: 15_000, maxRetries: 0 });

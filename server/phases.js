@@ -31,6 +31,10 @@ export const MIN_DECK = 8;
 export const WRITING_WINDOW_MS = 20_000;
 // The harshness check runs once there's been this long with no new card or thought.
 export const HARSHNESS_QUIET_MS = 5_000;
+// ...but never later than this after the first item waiting for it arrived,
+// and a call carries at most this many items.
+export const HARSHNESS_MAX_WAIT_MS = 15_000;
+export const HARSHNESS_BATCH = 30;
 
 // The walk-through runs itself. The last slide gets 20 seconds ("Anything
 // else? Out loud."), or a page of afterthoughts every 10 seconds when there
