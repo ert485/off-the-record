@@ -3,7 +3,7 @@
 // reaches the phone or the tab closes. A phone that was offline at the shred
 // wipes them as soon as it reconnects to a later session; the phone also says
 // that closing the tab is the sure way.
-import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle } from './shared/client.js';
+import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle, deck } from './shared/client.js';
 import { PRESETS, firstEmoji } from './shared/emoji.js';
 import { loadChecker, HINT } from './shared/identifier-check.js';
 import { struckParts } from './shared/struck.js';
@@ -394,6 +394,7 @@ function reactScreen() {
   const el = h('div', { class: 'stack' }, timer, body);
   let groups = [];
   let endsAt = null;
+  let deckSize = null;
   // The card on screen, so a phase change can send what's unsent on it.
   let current = null;
   // What this phone reacted to each card with, and the receipt that lets it
@@ -404,20 +405,25 @@ function reactScreen() {
   let finished = false;
   let sentDone = false;
 
-  // Two warnings, like the submission ones. Nothing locks at zero.
+  // Two warnings, like the submission ones, early enough to leave time for
+  // the thought at the end. None once the thought is sent or skipped.
+  // Nothing locks at zero.
   function tickTimer() {
     const left = endsAt ? endsAt - serverNow() : Infinity;
-    timer.hidden = finished || left > 60_000 || left <= 0;
-    if (left > 15_000) timer.textContent = `Finish the card you're on (${formatClock(left)}).`;
-    else timer.textContent = `15 seconds: send this card (${formatClock(left)}).`;
-    timer.classList.toggle('urgent', left <= 15_000);
+    timer.hidden = local.get('afterthoughtDone', false) || left > 120_000 || left <= 0;
+    if (left > 60_000) timer.textContent = `About 2 minutes left: finish your cards, then add a thought if you like. (${formatClock(left)})`;
+    else timer.textContent = `About a minute left: send your thought now. (${formatClock(left)})`;
+    timer.classList.toggle('urgent', left <= 60_000);
   }
   const timerInterval = setInterval(tickTimer, 1000);
 
+  // This phone's deck: the first deckSize cards of its own shuffle, so the
+  // server never learns which cards it saw. Fewer cards than that: all of them.
   function order() {
-    const ids = groups.map((g) => g.id).sort((a, b) => a - b);
-    return seededShuffle(ids, `${cid}:react`).items;
+    return deck(groups.map((g) => g.id), `${cid}:react`, deckSize);
   }
+  // Whether the deck is every card, so the end of it can say so.
+  const everyCard = () => order().length >= groups.length;
 
   function textFor(group) {
     // Each phone sees one wording from a group of near-duplicates.
@@ -426,7 +432,7 @@ function reactScreen() {
   }
 
   // The end of the deck: one thought, if there's anything new after seeing
-  // every card, and a way back to add an emoji. The thought is sent only when
+  // the deck, and a way back to add an emoji. The thought is sent only when
   // its button is tapped, never when the room moves on; an unsent draft stays
   // on the phone and is wiped like the notes.
   function finish() {
@@ -457,6 +463,7 @@ function reactScreen() {
       local.set('afterthoughtDraft', null);
       local.set('afterthoughtDone', true);
       render();
+      tickTimer();
     };
     function write() {
       const sent = local.get('afterthought', null);
@@ -489,13 +496,13 @@ function reactScreen() {
         }
       });
       refresh();
-      return [h('h2', {}, 'That was every card. Anything new after seeing them all?'), input, counter, hint, h('div', { class: 'row' }, add, skip)];
+      return [h('h2', {}, everyCard() ? 'That was every card. Anything new after seeing them all?' : 'That was your deck. Anything new after seeing it?'), input, counter, hint, h('div', { class: 'row' }, add, skip)];
     }
     function done() {
       const text = local.get('afterthought', null)?.text;
-      const reopen = () => (local.set('afterthoughtDone', false), render());
+      const reopen = () => (local.set('afterthoughtDone', false), render(), tickTimer());
       return [
-        lookUp('Look up', text ? 'Thank you. Your thought is in, with no name. It’s for the last slide.' : 'That was every card. Thank you. Waiting for everyone else to finish.').el,
+        lookUp('Look up', text ? 'Thank you. Your thought is in, with no name. It’s for the last slide.' : `${everyCard() ? 'That was every card' : 'That was your deck'}. Thank you. Waiting for everyone else to finish.`).el,
         text ? h('div', { class: 'note sent' }, h('span', { class: 'tick' }, '✓'), h('div', { class: 'text' }, text)) : '',
         h('button', { class: 'quiet', onclick: reopen }, text ? 'Change your thought' : 'Add a thought after all'),
       ];
@@ -683,6 +690,7 @@ function reactScreen() {
     update(v) {
       groups = v.react.groups;
       endsAt = v.react.endsAt;
+      deckSize = v.react.deckSize;
       tickTimer();
       if (finished) return;
       if (v.react.done && index === null) return finish();

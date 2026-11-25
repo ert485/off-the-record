@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Session } from '../server/session.js';
-import { PLAN, LAST_SLIDE_MS, AFTERTHOUGHTS_PER_PAGE, AFTERTHOUGHT_PAGE_MS } from '../server/phases.js';
-import { lastSlideMs } from '../server/flow.js';
+import { PLAN, LAST_SLIDE_MS, AFTERTHOUGHTS_PER_PAGE, AFTERTHOUGHT_PAGE_MS, CARD_REACT_MS, AFTERTHOUGHT_RESERVE_MS, MIN_DECK } from '../server/phases.js';
+import { lastSlideMs, deckSize } from '../server/flow.js';
+import { deck } from '../public/shared/client.js';
 import { finaleTimeline, arrivalMs } from '../public/shared/finale-timing.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 
@@ -342,4 +343,35 @@ test('lastSlideMs: 20 s with none, 10 s a page of 4, at most 60 s', () => {
   assert.equal(lastSlideMs(13), 40_000);
   assert.equal(lastSlideMs(21), 60_000);
   assert.equal(lastSlideMs(100), 60_000);
+});
+
+test('deckSize: 5 minutes and 60 cards gives 30; 10 cards gives 10; a 1-minute window gives 8', () => {
+  assert.equal(CARD_REACT_MS, 8_000);
+  assert.equal(AFTERTHOUGHT_RESERVE_MS, 60_000);
+  assert.equal(MIN_DECK, 8);
+  assert.equal(deckSize(60, 5 * MIN), 30);
+  assert.equal(deckSize(10, 5 * MIN), 10);
+  assert.equal(deckSize(60, 1 * MIN), 8);
+  // Never more cards than there are.
+  assert.equal(deckSize(5, 1 * MIN), 5);
+  assert.equal(deckSize(0, 5 * MIN), 0);
+});
+
+test("a phone's deck is its own first cards; hiding one moves the next card up, never reshuffles", () => {
+  const ids = Array.from({ length: 40 }, (_, i) => i + 1);
+  const mine = deck(ids, `${A}:react`, 30);
+  assert.equal(mine.length, 30);
+  assert.equal(new Set(mine).size, 30);
+  // The same phone gets the same deck on a reload; another phone gets its own.
+  assert.deepEqual(deck(ids, `${A}:react`, 30), mine);
+  assert.notDeepEqual(deck(ids, `${B}:react`, 30), mine);
+  // The whole order, sliced: the deck is its first 30 cards.
+  assert.deepEqual(deck(ids, `${A}:react`).slice(0, 30), mine);
+  // Hide a card in the deck: the rest keep their order, and the next card fills the slot.
+  const hidden = mine[4];
+  const after = deck(ids.filter((id) => id !== hidden), `${A}:react`, 30);
+  const next = deck(ids, `${A}:react`)[30];
+  assert.deepEqual(after, [...mine.filter((id) => id !== hidden), next]);
+  // Fewer cards than the deck size: every card, once.
+  assert.deepEqual([...deck(ids.slice(0, 5), `${A}:react`, 30)].sort((a, b) => a - b), [1, 2, 3, 4, 5]);
 });

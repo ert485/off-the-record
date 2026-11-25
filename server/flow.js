@@ -1,7 +1,7 @@
 // What the room is waiting on, and what is due when. The app runs each part;
 // when a part is over, the facilitator is asked to confirm the move. Nothing
 // here changes state.
-import { LAST_SLIDE_MS, MIN_CARD_MS, MIN_WALK_MS, WALK_END_BEFORE_MINUTES, AFTERTHOUGHTS_PER_PAGE, AFTERTHOUGHT_PAGE_MS } from './phases.js';
+import { LAST_SLIDE_MS, MIN_CARD_MS, MIN_WALK_MS, WALK_END_BEFORE_MINUTES, AFTERTHOUGHTS_PER_PAGE, AFTERTHOUGHT_PAGE_MS, CARD_REACT_MS, AFTERTHOUGHT_RESERVE_MS, MIN_DECK } from './phases.js';
 import { finaleTimeline } from '../public/shared/finale-timing.js';
 
 export function pendingMove(state, now, { phoneCount = 0 } = {}) {
@@ -80,4 +80,11 @@ export function lastSlideMs(count) {
   if (!count) return LAST_SLIDE_MS;
   const ms = Math.ceil(count / AFTERTHOUGHTS_PER_PAGE) * AFTERTHOUGHT_PAGE_MS;
   return Math.min(60_000, Math.max(LAST_SLIDE_MS, ms));
+}
+
+// How many cards each phone gets to react to: as many as fit the window at
+// about 8 seconds a card, after a minute kept for the thought at the end,
+// never fewer than 8, and never more than there are.
+export function deckSize(groups, reactMs) {
+  return Math.min(groups, Math.max(MIN_DECK, Math.floor((reactMs - AFTERTHOUGHT_RESERVE_MS) / CARD_REACT_MS)));
 }

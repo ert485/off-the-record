@@ -541,9 +541,18 @@ const PHASES = {
   react: (v) => {
     const total = Math.max(v.phones, v.react.done);
     const pct = total ? Math.round((v.react.done / total) * 100) : 0;
-    const pctInfo = info('react-pct', 'Share of connected phones that have finished reacting to every card. “Done” is the phone’s own button.');
+    const pctInfo = info('react-pct', 'Share of connected phones that have reached the end of their deck. “Done” is the phone’s own button.');
     const timeInfo = info('react-time', 'Time left for reactions. The room sees the same countdown. “+1 minute” adds a minute; when time is up or every phone is done, you’ll be asked to move on.');
     const countInfo = info('react-count', 'Every emoji tap from every phone so far, counted once per emoji per card.');
+    // Each phone's deck: the deck size, or every card when there are fewer.
+    const perPhone = Math.min(v.react.deckSize ?? v.react.total, v.react.total);
+    const partDeck = perPhone < v.react.total;
+    const deckInfo = info(
+      'react-deck',
+      partDeck
+        ? `Each phone gets ${perPhone} of the ${v.react.total} cards, picked at random, so everyone can finish with time for a thought at the end. Cards seen by more phones can gather more reactions.`
+        : 'Each phone gets every card, in its own random order. With more cards than fit the time, each phone would get some of them, picked at random.',
+    );
     return {
       now: now(
         `${pct}%`,
@@ -556,6 +565,7 @@ const PHASES = {
       ),
       content: [
         h('div', {}, h('span', { class: 'dim small' }, `${v.react.reactions} reactions so far `), countInfo.button, countInfo.text),
+        h('div', {}, h('span', { class: 'dim small' }, partDeck ? `${perPhone} of ${v.react.total} cards on each phone ` : `All ${v.react.total} cards on each phone `), deckInfo.button, deckInfo.text),
         afterthoughtList('Thoughts from the end of the deck, shown on the last slide', v.react.afterthoughts),
       ],
       lists: allCards(v),

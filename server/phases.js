@@ -21,6 +21,12 @@ export const SUBMIT_MINUTES = 5;
 export const REACT_MINUTES = 5;
 // Reactions still count this long after the room moves on.
 export const REACT_GRACE_MS = 10_000;
+// Each phone's deck fits the reaction window: about 8 seconds a card, with a
+// minute kept for the thought at the end, and never fewer than 8 cards
+// (deckSize in flow.js).
+export const CARD_REACT_MS = 8_000;
+export const AFTERTHOUGHT_RESERVE_MS = 60_000;
+export const MIN_DECK = 8;
 
 // The walk-through runs itself. The last slide gets 20 seconds ("Anything
 // else? Out loud."), or a page of afterthoughts every 10 seconds when there

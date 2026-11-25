@@ -69,6 +69,15 @@ export function seededShuffle(items, seedText) {
   return { items: out, rand };
 }
 
+// A phone's deck: the first `size` cards of its own seeded order (all of
+// them with no size). Each card's place comes from the seed and its own id,
+// so a hidden card never reshuffles the rest: the cards after it move up and
+// the next card in the order fills its slot.
+export function deck(ids, seedText, size) {
+  const rank = new Map(ids.map((id) => [id, seededShuffle([], `${seedText}:${id}`).rand()]));
+  return [...ids].sort((a, b) => rank.get(a) - rank.get(b) || a - b).slice(0, size ?? ids.length);
+}
+
 // replaceChildren that accepts nested arrays and skips empty values.
 export function fill(el, ...children) {
   el.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false && c !== ''));

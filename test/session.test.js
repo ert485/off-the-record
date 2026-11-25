@@ -724,3 +724,90 @@ test('a theme without a haiku shows none on the projector', async () => {
   session.moveCard(1);
   assert.equal('haiku' in session.view('projector').walk.item, false);
 });
+
+// Hex phone ids for a crowd.
+const phone = (i) => i.toString(16).padStart(24, '0');
+
+// A room with `count` distinct cards, each its own group, in reactions.
+async function toReactWith(session, count) {
+  session.advance(); // submit
+  for (let i = 0; i < count; i += 3) {
+    session.submitCards(phone(i + 1), Array.from({ length: Math.min(3, count - i) }, (_, j) => `card ${i + j}`));
+  }
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+}
+
+test('a phone can react to deckSize cards, no more', async () => {
+  const { session } = make();
+  await toReactWith(session, 35);
+  const v = session.view('phone', { cid: A }).react;
+  assert.equal(v.groups.length, 35);
+  assert.equal(v.deckSize, 30); // 5 minutes: (300 - 60) / 8
+  const receipts = v.groups.slice(0, 30).map((g) => session.react(A, g.id, ['🙋']).receipt);
+  assert.throws(() => session.react(A, v.groups[30].id, ['🙋']), /You have reacted to every card in your deck/);
+  // Changing a card already sent still works past the limit.
+  session.react(A, v.groups[0].id, ['🎉'], receipts[0]);
+  assert.deepEqual(session.emojiMix(v.groups[0].id), [['🎉', 1]]);
+  // Another phone has its own deck.
+  session.react(B, v.groups[34].id, ['🙋']);
+  // Fewer cards than the deck size: every card.
+  const small = make().session;
+  await toReact(small);
+  assert.equal(small.view('phone', { cid: A }).react.deckSize, 3);
+});
+
+test("the deck size is fixed when reactions start; +1 minute doesn't change it", async () => {
+  const { session, clock } = make();
+  await toReactWith(session, 35);
+  assert.equal(session.state.deckSize, 30);
+  const f = session.view('facilitator').react;
+  assert.equal(f.deckSize, 30);
+  assert.equal(f.total, 35);
+  clock.tick(4 * 60_000);
+  session.extendReact();
+  assert.equal(session.view('phone', { cid: A }).react.deckSize, 30);
+  // Back from the walk-through keeps it (with a minute added to the window).
+  session.advance(); // walk
+  session.back(); // react
+  assert.equal(session.view('phone', { cid: A }).react.deckSize, 30);
+  assert.equal(session.view('facilitator').react.deckSize, 30);
+  // A session saved before decks had a size gets one when it loads.
+  const saved = JSON.parse(JSON.stringify(session.state));
+  delete saved.deckSize;
+  const loaded = new Session({ state: saved, now: clock.now });
+  assert.equal(loaded.view('phone', { cid: A }).react.deckSize, 30);
+  assert.equal(loaded.view('facilitator').react.deckSize, 30);
+  const groups = loaded.view('phone', { cid: C }).react.groups;
+  for (const g of groups.slice(0, 30)) loaded.react(C, g.id, ['🙋']);
+  assert.throws(() => loaded.react(C, groups[30].id, ['🙋']), /every card in your deck/);
+});
+
+test('a card hidden mid-reaction shrinks the deck without stranding a phone', async () => {
+  // Fewer cards than the deck size: the deck shrinks with the cards.
+  const { session } = make();
+  await toReact(session); // 3 cards, deck of 3
+  const [first, ...rest] = session.view('phone', { cid: A }).react.groups;
+  session.react(A, first.id, ['🙋']);
+  session.hideCard(session.findGroup(first.id).group.cardIds[0], true);
+  const v = session.view('phone', { cid: A }).react;
+  assert.equal(v.groups.length, 2);
+  assert.equal(Math.min(v.deckSize, v.groups.length), 2); // "Card n of 2"
+  // A has spent one send on the hidden card and can still react to both left.
+  for (const g of rest) session.react(A, g.id, ['🙋']);
+  // A phone that hadn't started reacts to the two left, and no more.
+  for (const g of rest) session.react(B, g.id, ['🙋']);
+  assert.throws(() => session.react(B, first.id, ['🙋']), /No such card/);
+
+  // More cards than the deck size: the next card fills the hidden one's slot.
+  const big = make().session;
+  await toReactWith(big, 35);
+  const groups = big.view('phone', { cid: A }).react.groups;
+  for (const g of groups.slice(0, 30)) big.react(A, g.id, ['🙋']);
+  big.hideCard(big.findGroup(groups[0].id).group.cardIds[0], true);
+  // Still a deck of 30 among the 34 left, so A can react to the card that moved up.
+  assert.equal(big.view('phone', { cid: A }).react.groups.length, 34);
+  big.react(A, groups[30].id, ['🙋']);
+  assert.throws(() => big.react(A, groups[31].id, ['🙋']), /every card in your deck/);
+});

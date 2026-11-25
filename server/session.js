@@ -1,8 +1,8 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
 import { randomBytes, randomInt } from 'node:crypto';
-import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
-import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP, lastSlideMs } from './flow.js';
+import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
+import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP, lastSlideMs, deckSize } from './flow.js';
 import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
@@ -43,6 +43,8 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     reactEndsAt: null,
     // When the room moved on from reacting, for the 10-second grace.
     reactClosedAt: null,
+    // How many cards each phone's deck holds, set when reactions start.
+    deckSize: null,
     // Off until the facilitator turns them on.
     nudgesOn: false,
     // Which nudges phones show: all in turn, one label, or none (mix is varied).
@@ -194,6 +196,10 @@ export class Session {
       this.state.removedAfterthoughts ??= {};
       if (this.state.walk) this.state.walk.lastMs ??= LAST_SLIDE_MS;
       for (const client of Object.values(this.state.clients ?? {})) client.afterthoughts ??= 0;
+      // Saved before decks had a size: reactions have started, so size it now.
+      if (this.state.deckSize === undefined) {
+        this.state.deckSize = PHASES.indexOf(this.state.phase) >= PHASES.indexOf('react') ? deckSize(this.visibleGroups().length, REACT_MINUTES * 60_000) : null;
+      }
     }
     if (!this.state.shredded) {
       this.state.demo ??= { step: 0, cardIds: null };
@@ -353,6 +359,9 @@ export class Session {
     if (to === 'react') {
       this.s.reactEndsAt =
         direction === 'forward' ? now + REACT_MINUTES * 60_000 : Math.max(this.s.reactEndsAt ?? 0, now + 60_000);
+      // The deck is sized to the window when reactions start; coming back
+      // from the walk-through (or "+1 minute") keeps it.
+      if (direction === 'forward') this.s.deckSize = deckSize(this.visibleGroups().length, REACT_MINUTES * 60_000);
     }
     if (to === 'submit') {
       this.s.submitEndsAt =
@@ -756,7 +765,7 @@ export class Session {
       if (typeof receipt !== 'string' || this.s.receipts[receipt] !== groupId) fail('Nothing to change');
       this.s.reactions = this.s.reactions.filter((r) => r.r !== receipt);
     } else {
-      if (client.reacted >= this.visibleGroups().length) fail('You have reacted to every card');
+      if (client.reacted >= this.reactLimit()) fail('You have reacted to every card in your deck');
       client.reacted += 1;
       receipt = randomBytes(8).toString('hex');
       this.s.receipts[receipt] = groupId;
@@ -764,6 +773,16 @@ export class Session {
     for (const e of unique) this.s.reactions.push({ g: groupId, e, r: receipt });
     this.changed();
     return { receipt };
+  }
+
+  // How many cards a phone may send first reactions to: its deck, which is
+  // the deck size or every card if there are fewer. A card hidden after
+  // someone reacted to it adds one, since a phone may have spent a send on it
+  // before it left the deck. Counted from receipts, never from the phone.
+  reactLimit() {
+    const visible = new Set(this.visibleGroups().map((g) => g.id));
+    const hiddenReacted = new Set(Object.values(this.s.receipts).filter((g) => g !== AFTERTHOUGHT && !visible.has(g)));
+    return Math.min(this.s.deckSize ?? visible.size, visible.size) + hiddenReacted.size;
   }
 
   // Reactions and thoughts: open while reacting, and for the 10-second grace
@@ -1069,6 +1088,8 @@ export class Session {
         groups: this.visibleGroups().map((g) => ({ id: g.id, texts: this.visibleCardIds(g).map((id) => this.card(id).text) })),
         done: !!c?.reactDone,
         endsAt: s.reactEndsAt,
+        // The phone reacts to the first deckSize cards of its own shuffle.
+        deckSize: s.deckSize,
       };
     }
     return v;
@@ -1226,6 +1247,9 @@ export class Session {
       done: Object.values(s.clients).filter((c) => c.reactDone).length,
       reactions: s.reactions.length,
       endsAt: s.reactEndsAt,
+      // Each phone gets deckSize of the total cards (all of them if fewer).
+      deckSize: s.deckSize,
+      total: this.visibleGroups().length,
       afterthoughts,
     };
     const item = this.currentItem();
