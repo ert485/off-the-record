@@ -126,15 +126,19 @@ What each step shows:
     - Don't steer the tone toward negative feelings. Good, weird and heavy are all welcome: framing before submissions biases what people write.
   - **At the closing, replacing the old "that was me too" cue:**
     - Start with a deep, unhurried thank you, for trusting the room with what people wrote.
-    - Then: "I've run this with coworkers and with my family, and the best part each time was the conversations afterward."
+    - Then the facilitator's own closing thought, in a few sentences. This run's: make good friends along the way. The facilitator has worked with and learned from many good people who stayed in the city and built amazing things, and a city this size makes it impossible not to keep running into them. Everyone in the room has people like that around them too; they just have to find them and connect.
     - Then: "If a card stuck with you, find someone after the next talk and talk about it." When speaking, name the next speaker.
     - Not "at the break": the break between talks is too short for a real conversation. The time for it is after the following talk.
+    - The earlier line about running this with coworkers and family is dropped. The friends thought says the same thing better.
+  - **About people, not against AI.** 2026's weirdness for this crowd is partly AI, and some cards will say so. Don't pile on, and don't frame the talk as against AI: the app itself uses AI where it fits (the grouping and the haiku). If it comes up, one line is enough: "The right tool in the right place still works; tonight was about the people."
   - **Don't ask "who's done a retro?"** It makes people expect the retro their own team runs.
   - **Say up front that it may go quiet** while people write and read, and that this is expected.
   - **Don't read or explain the slides.** When the room laughs or gasps, acknowledge it in a word and move on. Speak mainly to keep things moving, or to wrap up a conversation that's running long.
   - **Don't warn people off inappropriate emojis.** It invites them. If one appears, skip past it.
   - **Remove the cue about asking to stay or go back** (phones lose those buttons in Task 4, no stay/go back).
-- [ ] **Step 1b:** In "Intent and context", the line "The break afterward carries the conversation in person" becomes "The time after the evening's last talk carries the conversation in person (the break between talks is too short)."
+- [ ] **Step 1b:** In "Intent and context":
+  - The line "The break afterward carries the conversation in person" becomes "The time after the evening's last talk carries the conversation in person (the break between talks is too short)."
+  - "About humans, not roles" gains: "and not against AI: the right tool in the right place still works."
 - [ ] **Step 2:** Timing table: change the Intro row to "Spoken over the teaser and demo".
 - [ ] **Step 3: Commit** "Spec: say less from the front".
 
