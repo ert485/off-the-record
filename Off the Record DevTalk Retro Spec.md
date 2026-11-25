@@ -259,7 +259,14 @@ From the practice run, things the facilitator says rather than the app showing. 
 **Ideas for later (good material for the closing "what do you think?" segment)**
 
 - AI-assisted custom emoji creator for inside jokes.
-- Custom image emojis (iPhone Genmoji, Gboard Emoji Kitchen). Desk research only, not yet tested on a phone: Safari 18.2 inserts a Genmoji as an image (a `<picture>` with a HEIC source and a PNG fallback) only into rich-text (`contenteditable`) fields, so the plain emoji `<input>` most likely never receives one. Gboard stickers don't reach web pages in stable Chrome. Before building, run a 5-minute phone test of `<input>`, `<textarea>` and `contenteditable` (what lands in the DOM, which events fire, whether the image can be drawn to a 72×72 canvas). A Genmoji can depict a person, so the facilitator would need a Hide for images.
+- Custom image emojis (iPhone Genmoji, Gboard Emoji Kitchen). One phone test so far (2026-11-25: an iPhone on iOS 18.7, run inside the Claude app's in-app browser, not Safari; Android not tried). What it showed:
+  - Pasting a copied Genmoji reaches all three field types, even the plain `<input>` and `<textarea>`: the `paste` event carries an `image/png` file (480×480, about 160 KB) that a page can read, draw to a 72×72 canvas (not blank, not blocked) and keep. The plain fields themselves stay empty, so today the app silently drops it.
+  - In a `contenteditable` field the Genmoji lands as a plain `<img src="blob:…">` (shown at 160×160), not the `<picture>` with a HEIC source the desk research expected. The blob can be fetched, but its type comes back as `public.png` (an Apple type name, not a MIME type), so check the bytes, not the type.
+  - Copying from the `contenteditable` and pasting into a plain field gives only HTML with that blob URL, no file: a page has to fetch the blob itself.
+  - Not settled: whether tapping a Genmoji on the emoji keyboard (no copy and paste) does anything in each field type; the test logged no keyboard insertions. Rerun that in Safari.
+  - Reading the clipboard on a button tap failed inside the test's sandboxed frame; it isn't needed, since the paste event already carries the image.
+
+  So image emojis are buildable by catching paste, but they'd need image upload, storage and display, and a Hide for images, since a Genmoji can depict a person. Gboard stickers don't reach web pages in stable Chrome (desk research only).
 - Anonymous free-text questions to the facilitator.
 - Making the public repo contributor-friendly so others can run and improve it.
 - A written "state of the room" summary, if a future run wants one.
