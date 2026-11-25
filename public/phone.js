@@ -18,7 +18,7 @@ const MAX_EMOJIS = 22; // the server's cap per card: 16 presets + 6 of your own
 const MAX_OWN = 6; // own-emoji chips shown on a card
 
 const EMOJI_KEYBOARD_HOWTO =
-  'Open your keyboard’s emojis: usually a smiley key (😀 or ☺) by the space bar or above the keys; on an iPhone with several keyboards, the 🌐 key. Then tap Next.';
+  'Open your keyboard’s emojis: tap its smiley key (😀 on iPhone, ☺ on Android), by the space bar or below the keys. Then tap Next.';
 
 const local = {
   get(key, fallback) {
@@ -610,7 +610,7 @@ function reactScreen() {
       body,
       freshLine,
       thoughtBox(),
-      h('p', { class: 'small dim' }, 'While you wait: any keyboard emoji works, not just the 16. Tap “＋ Add your own emoji” on a card (iPhone: 😀 or 🌐 key; Android: ☺ key).'),
+      h('p', { class: 'small dim' }, 'While you wait: any keyboard emoji works, not just the 16. Tap “＋ Add your own emoji” on a card, then the smiley key (😀 or ☺).'),
       h('button', { class: 'quiet', onclick: () => ((finished = false), (index = order().length - 1), show()) }, '◀ Back to the last card'),
     );
     refreshEnd();
