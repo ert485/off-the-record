@@ -265,3 +265,131 @@ test("a hidden card's comments never reach the projector, and the walk moves pas
   session.tick();
   assert.equal(w.index, at + 1);
 });
+
+// ---- hidden stays hidden after the theme is approved ----------------------
+
+const SECRET = 'zebra-secret';
+const NOTE = 'zebra-comment';
+
+// One approved theme, one card per group; the card with SECRET is reacted to
+// with a distinct emoji and carries a comment. Stops in the react phase.
+async function toApprovedReact() {
+  const ctx = make();
+  const { session } = ctx;
+  const t0 = ctx.clock.now();
+  session.startTalk();
+  session.advance(); // join
+  session.advance(); // submit
+  session.submitCards(A, ['card 0', SECRET, 'card 2']);
+  session.submitCards(B, ['card 3']);
+  session.advance(); // cluster
+  await flush();
+  for (const t of session.state.themes) session.approveTheme(t.id, 'Approved theme');
+  session.advance(); // react
+  const groups = session.view('phone', { cid: A }).react.groups;
+  const secretGroup = groups.find((g) => g.texts.includes(SECRET));
+  for (const g of groups) {
+    const secret = g.id === secretGroup.id;
+    session.react(A, g.id, [secret ? '🔥' : '🦆'], undefined, secret ? NOTE : undefined);
+  }
+  const secretCard = session.state.cards.find((c) => c.text === SECRET);
+  return { ...ctx, t0, secretCard, secretGroup };
+}
+
+// Every view a screen can get: both phones and the projector.
+const everyView = (s) => JSON.stringify([s.view('phone', { cid: A }), s.view('phone', { cid: B }), proj(s)]);
+
+function enterWalk(ctx) {
+  ctx.clock.set(ctx.t0 + 15.5 * MIN);
+  ctx.session.advance(); // walk
+}
+
+test("a card hidden after its theme is approved never reaches a phone, the overview's counts or the projector", async () => {
+  const ctx = await toApprovedReact();
+  const { session, secretCard } = ctx;
+  assert.ok(JSON.stringify(session.view('phone', { cid: A })).includes(SECRET));
+  session.hideCard(secretCard.id, true);
+  for (const cid of [A, B]) {
+    const phone = session.view('phone', { cid });
+    assert.equal(JSON.stringify(phone).includes(SECRET), false);
+    assert.equal(phone.react.groups.length, 3);
+  }
+  enterWalk(ctx);
+  const w = session.state.walk;
+  assert.equal(w.stream.length, 5); // overview, 3 cards, last slide
+  const overview = proj(session).walk.item.overview;
+  assert.equal(overview.length, 1);
+  assert.equal(overview[0].cards, 3);
+  for (let i = 0; i < w.stream.length; i++) {
+    session.moveTo(i);
+    assert.equal(everyView(session).includes(SECRET), false);
+    assert.equal(everyView(session).includes(NOTE), false);
+  }
+});
+
+test('hiding the next card while the current one shows skips it when the timer moves on', async () => {
+  const ctx = await toApprovedReact();
+  const { session, clock, secretCard, secretGroup } = ctx;
+  enterWalk(ctx);
+  const w = session.state.walk;
+  const at = w.stream.findIndex((it) => it.groupId === secretGroup.id);
+  assert.ok(at >= 1);
+  session.moveTo(at - 1);
+  const seen = [];
+  const look = () => seen.push(everyView(session));
+  look();
+  session.hideCard(secretCard.id, true);
+  look();
+  clock.set(w.cardEndsAt);
+  session.tick(); // the tick that moves the timer
+  look();
+  session.tick(); // a hidden card, if it were reached, would be passed here
+  look();
+  assert.equal(w.index, at + 1);
+  assert.equal(proj(session).walk.item.hidden, undefined);
+  for (const json of seen) {
+    assert.equal(json.includes(SECRET), false);
+    assert.equal(json.includes(NOTE), false);
+  }
+});
+
+test('a card hidden while it is on the projector disappears at once', async () => {
+  const ctx = await toApprovedReact();
+  const { session, secretCard, secretGroup } = ctx;
+  enterWalk(ctx);
+  const w = session.state.walk;
+  const at = w.stream.findIndex((it) => it.groupId === secretGroup.id);
+  session.moveTo(at);
+  assert.ok(JSON.stringify(proj(session)).includes(SECRET));
+  session.hideCard(secretCard.id, true);
+  const p = proj(session);
+  assert.deepEqual(p.walk.item, { hidden: true });
+  assert.deepEqual(p.walk.comments, { shown: [], more: 0 });
+  assert.equal(JSON.stringify(p).includes(SECRET), false);
+  assert.equal(JSON.stringify(p).includes(NOTE), false);
+  session.tick();
+  assert.equal(w.index, at + 1);
+  assert.equal(everyView(session).includes(SECRET), false);
+});
+
+test("a hidden card's reactions still count in the finale, as emojis only", async () => {
+  const ctx = await toApprovedReact();
+  const { session, clock, secretCard } = ctx;
+  session.hideCard(secretCard.id, true);
+  enterWalk(ctx);
+  const total = session.state.reactions.length;
+  assert.equal(total, 4);
+  clock.set(session.state.walk.endsAt - 20_000);
+  session.tick();
+  clock.tick(20_000);
+  session.tick();
+  session.advance({ from: 'walk' });
+  const p = proj(session);
+  assert.equal(p.phase, 'finale');
+  assert.equal(p.finale.sequence.length, total);
+  assert.ok(p.finale.sequence.includes('🔥'));
+  const json = JSON.stringify(p);
+  assert.equal(json.includes(SECRET), false);
+  assert.equal(json.includes(NOTE), false);
+  assert.equal(JSON.stringify(session.view('phone', { cid: A })).includes(SECRET), false);
+});
