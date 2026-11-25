@@ -328,6 +328,43 @@ function thoughtRow(t) {
   return itemRow(t, 'afterthought', modButton('Remove', () => act('removeAfterthought', { id: t.id })));
 }
 
+// The walk-through's Hide on the card on screen takes it off the projector at
+// once, and the walk-through moves on, so its Undo is offered where the card
+// was, for 20 seconds. Kept on this screen only: nothing reaches the
+// projector or the phones. Only the last Hide can be undone this way (the
+// card lists' Show still unhides any card).
+const UNDO_HIDE_MS = 20_000;
+let walkHidden = null; // { id, text, until, undone }
+
+function hideInWalk(card) {
+  walkHidden = { id: card.id, text: card.text, until: Date.now() + UNDO_HIDE_MS, undone: false };
+  setTimeout(render, UNDO_HIDE_MS + 50);
+  act('hideCard', { id: card.id, hidden: true });
+}
+
+// "Hidden: “…” Undo" while that card is hidden. Undo shows it again and, if
+// the walk-through has moved past it, goes back to it. The line then stays a
+// moment as plain text, so a double tap lands on nothing.
+function undoHideLine(v) {
+  const u = walkHidden;
+  if (!u || Date.now() > u.until) return '';
+  const card = v.cards?.find((c) => c.id === u.id);
+  if (!card || (!card.hidden && !u.undone)) return '';
+  const quote = `“${u.text.length > 60 ? `${u.text.slice(0, 59).trimEnd()}…` : u.text}”`;
+  if (u.undone) return h('div', { class: 'undo-hide row' }, h('span', { class: 'grow small dim' }, `Shown again: ${quote}`));
+  const undo = async () => {
+    const until = u.until;
+    Object.assign(u, { undone: true, until: Date.now() + 2000 });
+    setTimeout(render, 2050);
+    render();
+    if (!(await act('undoWalkHide', { id: u.id }))) {
+      Object.assign(u, { undone: false, until });
+      render();
+    }
+  };
+  return h('div', { class: 'undo-hide row' }, h('span', { class: 'grow small' }, `Hidden: ${quote}`), h('button', { class: 'small-btn', onclick: undo }, 'Undo'));
+}
+
 // "Mark the rest reviewed", at the top of the lists: one tap for every card
 // and thought the check found fine or never checked.
 function reviewBar(v) {
@@ -696,12 +733,14 @@ const PHASES = {
                 item?.haiku ? h('div', { class: 'dim small' }, item.haiku) : '',
                 h('div', { class: 'row', style: { alignItems: 'flex-start' } },
                   h('div', { class: 'current grow' }, item?.hidden ? '(hidden)' : (item?.text ?? 'No cards')),
-                  shown ? modButton('Hide', () => act('hideCard', { id: shown.id, hidden: true })) : ''),
+                  shown ? modButton('Hide', () => hideInWalk(shown)) : ''),
                 item?.similar || item?.moreInTheme
                   ? h('div', { class: 'dim small' }, [item.similar && `+${item.similar} similar`, item.moreInTheme && `+${item.moreInTheme} more like this`].filter(Boolean).join(' · '))
                   : '',
                 mixLine(item?.mix),
               ],
+        // Below the card, so the Hide button above it never moves under a finger.
+        undoHideLine(v),
         lastSlide ? '' : h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
         // In the projector's order (oldest first, as its pages turn), not the review order.
         lastSlide ? afterthoughtList('On the projector now, 4 to a page', [...w.afterthoughts].sort((a, b) => a.id - b.id)) : '',

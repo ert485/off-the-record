@@ -30,6 +30,7 @@ section.panel h3 { margin: 0; font-size: 15px; color: var(--text-dim); font-weig
 .theme { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .theme.approved { border-color: var(--ok); }
 .current { font-size: 22px; line-height: 1.35; background: var(--bg-sunk); border-radius: var(--radius); padding: 14px; overflow-wrap: anywhere; }
+.undo-hide { border: 1px dashed var(--line); border-radius: var(--radius); padding: 8px 12px; overflow-wrap: anywhere; }
 .mixline { font-family: var(--emoji); font-size: 22px; }
 .walk-nav { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
 .walk-nav button { min-height: 64px; font-size: 18px; }
