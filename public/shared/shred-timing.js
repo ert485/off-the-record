@@ -14,7 +14,7 @@ export const SHEET_MS = 2600; // each sheet's share when there are only a few
 export const EASE = 0.3; // how much slower the first and last sheets go than the middle ones
 export const SETTLE_MS = 1100; // the last strips land, then the fade starts
 export const FADE_MS = 1800;
-export const BLANK_MS = 1600; // the beat of silence on black, then the closing fades in
+export const BLANK_MS = 1600; // the beat of silence on black, then the closing fades in (the old year is ash)
 
 // Cards go through in at most 6 sheets, so the shred takes about the same
 // time whatever the card count. Returns the cards grouped into sheets.

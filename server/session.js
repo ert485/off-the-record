@@ -36,8 +36,9 @@ const fail = (message) => {
 
 export function freshState(now, talkMinutes = TALK_MINUTES) {
   return {
-    // Random per session. Phones compare it with the one their notes were
-    // written in, and wipe notes left over from a session they missed the end of.
+    // Random per session (one time, one meeting: never reused). Phones compare
+    // it with the one their notes were written in, and wipe notes left over
+    // from a session they missed the end of.
     sessionId: randomBytes(8).toString('hex'),
     phase: 'teaser',
     phaseStartedAt: now,
@@ -585,6 +586,8 @@ export class Session {
   hideCard(id, hidden) {
     const card = this.card(id);
     if (!card) fail('No such card');
+    // Quietly, like Alcinous stopping the bard's song: the projector just
+    // stops showing it, and nobody in the room is told why.
     card.hidden = !!hidden;
     // A card hidden before clustering was never grouped (or sent to the AI).
     // If it is shown again later, give it a group of its own. While people are

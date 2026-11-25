@@ -1,5 +1,6 @@
 // Groups submitted cards into themes with Claude Haiku. Only the card text
 // and a random card id are sent: nothing about who wrote it.
+// The room's cahier, sorted by grievance rather than by parish.
 import Anthropic from '@anthropic-ai/sdk';
 
 export const MODEL = 'claude-haiku-5-5';
