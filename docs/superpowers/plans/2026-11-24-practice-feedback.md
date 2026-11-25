@@ -124,7 +124,12 @@ What each step shows:
     - Make it a safe place for genuine thoughts.
     - Point at the struck "shred" on the teaser. It doesn't mean tearing anything apart; it means letting it go, released into the wind. Nothing feeds a backlog or an action item due in January.
     - Don't steer the tone toward negative feelings. Good, weird and heavy are all welcome: framing before submissions biases what people write.
-  - **At the closing:** "I've run this with coworkers and with my family, and the best part each time was the conversations after." Then: "If a card hit you, find someone at the break and tell them 'that was me too.'"
+  - **At the closing, replacing the old "that was me too" cue:**
+    - Start with a deep, unhurried thank you, for trusting the room with what people wrote.
+    - Then: "I've run this with coworkers and with my family, and the best part each time was the conversations afterward."
+    - Then: "If a card stuck with you, find someone after the next talk and talk about it." When speaking, name the next speaker.
+    - Not "at the break": the break between talks is too short for a real conversation. The time for it is after the following talk.
+- [ ] **Step 1b:** In "Intent and context", the line "The break afterward carries the conversation in person" becomes "The time after the evening's last talk carries the conversation in person (the break between talks is too short)."
   - **Don't ask "who's done a retro?"** It makes people expect the retro their own team runs.
   - **Say up front that it may go quiet** while people write and read, and that this is expected.
   - **Don't read or explain the slides.** When the room laughs or gasps, acknowledge it in a word and move on. Speak mainly to keep things moving, or to wrap up a conversation that's running long.
