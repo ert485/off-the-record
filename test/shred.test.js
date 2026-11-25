@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const TOKEN = 'test-token-' + randomBytes(4).toString('hex');
 const MARKER = 'MARKER' + randomBytes(8).toString('hex');
+const TAKEN = 'TAKEN' + randomBytes(8).toString('hex');
 const PHONES = ['a'.repeat(24), 'b'.repeat(24), 'c'.repeat(24)];
 
 const freePort = () =>
@@ -127,9 +128,21 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   await run('advance'); // demo
   await run('advance'); // join
   await run('advance'); // submit
+  const receipts = [];
   for (const [i, cid] of PHONES.entries()) {
-    await post('submit', { cid, texts: [`card ${i} ${MARKER}`, `another ${i} ${MARKER}`] });
+    receipts.push(...(await post('submit', { cid, texts: [`card ${i} ${MARKER}`, `another ${i} ${MARKER}`] })).receipts);
   }
+  // One card is shared, then taken back while submissions are open: it is
+  // deleted from the database at once, not only at the shred.
+  const [takenBack] = (await post('submit', { cid: PHONES[0], texts: [`taken back ${TAKEN}`] })).receipts;
+  receipts.push(takenBack);
+  assert.ok(JSON.stringify(await facilitatorView()).includes(TAKEN), 'control: the card arrived');
+  assert.ok(filesContaining(filesUnder(dataDir), takenBack).length > 0, 'control: its receipt is in the database');
+  await post('submit', { cid: PHONES[0], texts: [], withdraw: [takenBack] });
+  assert.equal(JSON.stringify(await facilitatorView()).includes(TAKEN), false, 'a card taken back is gone from every view');
+  assert.deepEqual(filesContaining(filesUnder(dataDir), TAKEN), [], 'a card taken back is gone from the database');
+  assert.deepEqual(filesContaining(filesUnder(dataDir), takenBack), [], 'and so is its receipt');
+  assert.equal(receipts.length, PHONES.length * 2 + 1);
   await run('advance'); // cluster
   let f;
   do f = await facilitatorView();
@@ -179,6 +192,8 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
 
   assert.deepEqual(readdirSync(dataDir), [], 'data directory is empty');
   assert.deepEqual(filesContaining(scanned(), MARKER), [], 'no file contains a card, thought or theme');
+  for (const r of receipts) assert.deepEqual(filesContaining(scanned(), r), [], 'no file holds a card receipt');
+  assert.deepEqual(filesContaining(scanned(), TAKEN), [], 'nor the card taken back');
   // The writing count was only ever in memory: no file holds when anyone typed, and it is gone.
   assert.deepEqual(filesContaining([...filesUnder(dataDir), ...filesUnder(tmp), ...filesUnder(home)], 'typedAt'), [], 'no data file holds when a phone typed');
   assert.equal((await post('typing', { cid: PHONES[0] })).ok, true, 'typing after the shred is ignored, not an error');
@@ -186,7 +201,9 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   assert.equal(output.includes(MARKER), false, 'server output contains no content');
   assert.equal(/\b\d{1,3}(\.\d{1,3}){3}\b|::1|::ffff:/.test(output), false, 'server output contains no IP address');
   for (const q of [`role=facilitator&t=${encodeURIComponent(TOKEN)}`, 'role=projector', `role=phone&cid=${PHONES[0]}`]) {
-    assert.equal(JSON.stringify(await view(q)).includes(MARKER), false, `${q} view is clean`);
+    const seen = JSON.stringify(await view(q));
+    assert.equal(seen.includes(MARKER), false, `${q} view is clean`);
+    assert.equal(receipts.some((r) => seen.includes(r)), false, `${q} view holds no receipt`);
   }
   assert.equal(JSON.stringify(await view('role=projector')).includes('🦆'), false, 'reactions are gone too');
 

@@ -73,6 +73,9 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     // Receipt -> card (or AFTERTHOUGHT), so a phone can change its reactions
     // to that card, or its thought.
     receipts: {},
+    // Receipt -> card id, so a phone can take back a card it shared while
+    // sharing is open. Random, never tied to a phone, never in any view.
+    cardReceipts: {},
     walk: { stream: [], index: 0, cardStartedAt: null, cardEndsAt: null, endsAt: null, lastMs: LAST_SLIDE_MS, paused: false, done: false },
     // The one thought each phone may add at the end of its deck, shown on the
     // last slide. { id, text, r }: no phone id. r is its receipt, so sending
@@ -209,6 +212,8 @@ export class Session {
       delete this.state.removedComments;
       this.state.afterthoughts ??= [];
       this.state.removedAfterthoughts ??= {};
+      // Saved before shared cards could be taken back: those have no receipt.
+      this.state.cardReceipts ??= {};
       if (this.state.walk) this.state.walk.lastMs ??= LAST_SLIDE_MS;
       for (const client of Object.values(this.state.clients ?? {})) client.afterthoughts ??= 0;
       // Saved before decks had a size: reactions have started, so size it now.
@@ -457,20 +462,69 @@ export class Session {
 
   // ---- submissions ------------------------------------------------------
 
-  submitCards(cid, texts) {
-    if (!SHARING_PHASES.includes(this.s.phase)) fail('Submissions are closed');
+  // Shares cards, takes cards back (by their receipts), or both at once, so a
+  // phone can swap one of its 3 for another note. Everything is checked
+  // before anything changes. Each new card gets a random receipt, returned in
+  // the order sent; the receipt maps to the card only, never to the phone.
+  submitCards(cid, texts, withdraw = []) {
+    if (!SHARING_PHASES.includes(this.s.phase)) {
+      fail(PHASES.indexOf(this.s.phase) > PHASES.indexOf('submit') ? "Grouping has started: shared cards can't be taken back now" : 'Submissions are closed');
+    }
     const client = this.client(cid);
-    if (!Array.isArray(texts) || texts.length === 0) fail('Nothing to submit');
+    if (!Array.isArray(texts) || !Array.isArray(withdraw)) fail('Nothing to submit');
+    if (texts.length === 0 && withdraw.length === 0) fail('Nothing to submit');
     const clean = texts.map((t) => (typeof t === 'string' ? t.trim() : ''));
     if (clean.some((t) => t.length === 0 || t.length > LIMITS.cardMax)) fail(`Cards are 1 to ${LIMITS.cardMax} characters`);
-    if (client.cards + clean.length > LIMITS.cardsPerPerson) fail(`Up to ${LIMITS.cardsPerPerson} cards each`);
-    for (const text of clean) {
-      this.addCard(text);
-    }
-    client.cards += clean.length;
+    const live = (r) => typeof r === 'string' && Object.hasOwn(this.s.cardReceipts, r) && this.card(this.s.cardReceipts[r]);
+    if (!withdraw.every(live) || new Set(withdraw).size !== withdraw.length || withdraw.length > client.cards) fail('Nothing to take back');
+    if (client.cards - withdraw.length + clean.length > LIMITS.cardsPerPerson) fail(`Up to ${LIMITS.cardsPerPerson} cards at a time: take one back first`);
+    for (const r of withdraw) this.removeCard(this.s.cardReceipts[r]);
+    const receipts = clean.map((text) => {
+      const receipt = randomBytes(8).toString('hex');
+      this.s.cardReceipts[receipt] = this.addCard(text);
+      return receipt;
+    });
+    client.cards += clean.length - withdraw.length;
     this.changed();
     // Nudges are for Submit: a card shared at Join waits for the next one.
     if (this.s.phase === 'submit') this.scheduleNudge();
+    return { receipts };
+  }
+
+  // Deletes a card (not just hiding it), and everything about it: its
+  // receipt, its place in a group (a group left empty goes, and so does a
+  // theme left with no groups), and its place in a late-card placement.
+  removeCard(id) {
+    this.s.cards = this.s.cards.filter((c) => c.id !== id);
+    for (const [r, cardId] of Object.entries(this.s.cardReceipts)) if (cardId === id) delete this.s.cardReceipts[r];
+    this.pruneThemes();
+    const late = this.s.clustering.late;
+    if (!late) return;
+    Object.assign(late, this.livePlacement(late));
+    // Its flag was the only one: nothing is left to choose on, so the rest are
+    // placed, as when nothing is flagged.
+    if (late.status === 'flagged' && !late.flags.length) {
+      this.placeLate(late);
+      late.status = 'done';
+    }
+  }
+
+  // Drops ids whose card no longer exists from the groups, then the groups
+  // and themes left empty.
+  pruneThemes() {
+    for (const theme of this.s.themes) {
+      for (const g of theme.groups) g.cardIds = g.cardIds.filter((id) => this.card(id));
+      theme.groups = theme.groups.filter((g) => g.cardIds.length);
+    }
+    this.s.themes = this.s.themes.filter((t) => t.groups.length);
+  }
+
+  // A placement with only cards that still exist (one taken back is dropped).
+  livePlacement({ placements, flags }) {
+    return {
+      placements: placements.filter((p) => this.card(p.cardId)),
+      flags: flags.map((f) => ({ ...f, cardIds: f.cardIds.filter((id) => this.card(id)) })).filter((f) => f.cardIds.length),
+    };
   }
 
   // A card with a random id, kept in id order rather than arrival order, so
@@ -631,6 +685,8 @@ export class Session {
       approved: false,
       groups: t.groups.map((cardIds) => ({ id: this.newId(), cardIds })),
     }));
+    // A card taken back while the AI was grouping doesn't come back.
+    this.pruneThemes();
     this.s.clustering = { status, error, key, local, early: this.s.clustering.early, late: null };
     // Cards that came in while it ran (after the warning) are placed now.
     if (this.s.phase === 'cluster') this.continueGrouping();
@@ -665,8 +721,10 @@ export class Session {
 
   // Nothing flagged: placed at once, names, haiku and approvals kept.
   // Anything flagged: held until the facilitator keeps or regroups.
-  applyPlacement(run, { placements, flags }) {
+  applyPlacement(run, result) {
     if (run !== this.clusterRun || this.shredded) return;
+    // A card taken back while the call ran is dropped from its result.
+    const { placements, flags } = this.livePlacement(result);
     const late = { status: flags.length ? 'flagged' : 'done', placements, flags };
     if (!flags.length) this.placeLate(late);
     this.s.clustering.late = late;

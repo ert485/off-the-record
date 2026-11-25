@@ -38,6 +38,8 @@ ul.plain { padding-left: 18px; margin: 0; display: grid; gap: 6px; }
 .note.picked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .note .check { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); flex: none; margin-top: 1px; }
 .note.picked .check { background: var(--accent); border-color: var(--accent); }
+/* "Shared" on a shared card in the pick step: never squeezed by a long card. */
+.note .tag { flex: none; }
 .toast { background: color-mix(in srgb, var(--ok) 18%, transparent); border: 1px solid var(--ok); border-radius: var(--radius); padding: 10px 14px; font-size: 15px; }
 .timer { font-size: 14px; color: var(--warn); }
 

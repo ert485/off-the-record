@@ -1104,3 +1104,144 @@ test('the writing count is memory only: never in the saved state, gone at the sh
   assert.equal(session.activity.size, 0);
   assert.equal(session.view('facilitator').writing, undefined);
 });
+
+// ---- taking back and swapping shared cards --------------------------------
+
+const texts = (session) => session.state.cards.map((c) => c.text).sort();
+
+test('a phone can take back a shared card while submissions are open, and share another in its place', () => {
+  const { session } = make();
+  session.advance(); // submit
+  const { receipts } = session.submitCards(A, ['one', 'two']);
+  assert.equal(receipts.length, 2);
+  for (const r of receipts) assert.match(r, /^[0-9a-f]{16}$/);
+  assert.notEqual(receipts[0], receipts[1]);
+  // Receipts are kept apart from the cards, and carry no phone id.
+  assert.equal(session.state.cardReceipts[receipts[0]], session.state.cards.find((c) => c.text === 'one').id);
+  assert.equal(JSON.stringify(session.state.cardReceipts).includes(A), false);
+  assert.equal(JSON.stringify(session.state.cards).includes(receipts[0]), false);
+  // Take one back: the card is deleted, not hidden, and the count goes down.
+  assert.deepEqual(session.submitCards(A, [], [receipts[0]]), { receipts: [] });
+  assert.deepEqual(texts(session), ['two']);
+  assert.equal(session.state.clients[A].cards, 1);
+  assert.equal(receipts[0] in session.state.cardReceipts, false);
+  assert.equal(session.view('phone', { cid: A }).submit.submitted, 1);
+  // Its place is free again.
+  const again = session.submitCards(A, ['three', 'four']);
+  assert.equal(again.receipts.length, 2);
+  assert.deepEqual(texts(session), ['four', 'three', 'two']);
+  assert.equal(session.state.clients[A].cards, 3);
+});
+
+test('taking back and sharing happen together: with 3 shared, swapping 1 for 1 leaves 3', () => {
+  const { session } = make();
+  session.advance(); // submit
+  const { receipts } = session.submitCards(A, ['one', 'two', 'three']);
+  assert.throws(() => session.submitCards(A, ['four']), { message: 'Up to 3 cards at a time: take one back first' });
+  const swap = session.submitCards(A, ['four'], [receipts[1]]);
+  assert.equal(swap.receipts.length, 1);
+  assert.deepEqual(texts(session), ['four', 'one', 'three']);
+  assert.equal(session.state.clients[A].cards, 3);
+  assert.equal(session.state.cardReceipts[swap.receipts[0]], session.state.cards.find((c) => c.text === 'four').id);
+  // Two for two; the receipts come back in the order the cards were sent.
+  const two = session.submitCards(A, ['five', 'six'], [receipts[0], receipts[2]]);
+  assert.deepEqual(texts(session), ['five', 'four', 'six']);
+  assert.equal(session.state.cardReceipts[two.receipts[0]], session.state.cards.find((c) => c.text === 'five').id);
+  assert.equal(session.state.cardReceipts[two.receipts[1]], session.state.cards.find((c) => c.text === 'six').id);
+  assert.equal(Object.keys(session.state.cardReceipts).length, 3);
+});
+
+test('a swap that would leave more than 3 is refused and changes nothing', () => {
+  const { session } = make();
+  session.advance(); // submit
+  const { receipts } = session.submitCards(A, ['one', 'two', 'three']);
+  const before = JSON.stringify(session.state);
+  assert.throws(() => session.submitCards(A, ['four', 'five'], [receipts[0]]), { message: 'Up to 3 cards at a time: take one back first' });
+  // Everything is checked before anything changes: a bad card or a bad receipt fails the whole call.
+  assert.throws(() => session.submitCards(A, ['x'.repeat(201)], [receipts[0]]), /1 to 200/);
+  assert.throws(() => session.submitCards(A, ['four'], [receipts[0], 'feedfacefeedface']), { message: 'Nothing to take back' });
+  assert.throws(() => session.submitCards(A, ['four', 'five'], [receipts[0], receipts[0]]), { message: 'Nothing to take back' });
+  assert.throws(() => session.submitCards(A, [], []), /Nothing to submit/);
+  assert.equal(JSON.stringify(session.state), before);
+});
+
+test('a card can be taken back after the time is up, until grouping starts, but not after', async () => {
+  const { session, clock } = make();
+  const early = session.submitCards(A, ['shared at join', 'second']).receipts;
+  session.submitCards(A, [], [early[1]]); // at Join
+  session.advance(); // submit
+  clock.tick(6 * 60_000); // the 5 minutes are over; the facilitator hasn't confirmed
+  session.tick();
+  await flush();
+  assert.equal(session.state.phase, 'submit');
+  assert.equal(session.view('facilitator').move.to, 'cluster');
+  const late = session.submitCards(B, ['after time', 'kept']).receipts;
+  session.submitCards(B, [], [late[0]]);
+  assert.deepEqual(texts(session), ['kept', 'shared at join']);
+  session.advance(); // cluster: grouping has started
+  await flush();
+  const before = JSON.stringify(session.state);
+  const started = { message: "Grouping has started: shared cards can't be taken back now" };
+  assert.throws(() => session.submitCards(B, [], [late[1]]), started);
+  assert.throws(() => session.submitCards(A, ['new'], [early[0]]), started);
+  assert.equal(JSON.stringify(session.state), before);
+  session.advance(); // react
+  assert.throws(() => session.submitCards(B, [], [late[1]]), started);
+  // Back to submissions: open again.
+  session.back();
+  session.back();
+  assert.equal(session.state.phase, 'submit');
+  session.submitCards(B, [], [late[1]]);
+  assert.deepEqual(texts(session), ['shared at join']);
+});
+
+test('a receipt takes back only its own card, once', () => {
+  const { session } = make();
+  session.advance(); // submit
+  const a = session.submitCards(A, ['mine one', 'mine two']).receipts;
+  session.submitCards(B, ['theirs']);
+  session.submitCards(A, [], [a[0]]);
+  assert.deepEqual(texts(session), ['mine two', 'theirs']);
+  for (const bad of [a[0], '__proto__', 'constructor', 42, null]) {
+    assert.throws(() => session.submitCards(A, [], [bad]), { message: 'Nothing to take back' });
+  }
+  assert.deepEqual(texts(session), ['mine two', 'theirs']);
+  assert.equal(session.state.clients[A].cards, 1);
+  assert.equal(session.state.clients[B].cards, 1);
+});
+
+test("the demo's cards have no receipt, so no phone can take them back", () => {
+  const session = new Session({
+    now: () => 1_000_000,
+    clusterCards: async () => ({ themes: [] }),
+    demo: { teaser: { title: 't', lines: [] }, notes: [{ text: 'demo shared', share: true }] },
+  });
+  session.advance(); // demo
+  session.advance(); // join: the demo's card joins
+  assert.deepEqual(texts(session), ['demo shared']);
+  assert.deepEqual(session.state.cardReceipts, {});
+});
+
+test('receipts never reach the phone, projector or facilitator views', async () => {
+  const { session } = make();
+  session.advance(); // submit
+  const receipts = [...session.submitCards(A, ['one', 'two']).receipts, ...session.submitCards(B, ['three', 'four']).receipts];
+  receipts.push(...session.submitCards(B, ['five'], [receipts[3]]).receipts);
+  const views = [];
+  const look = () => {
+    for (const cid of [A, B, C]) views.push(session.view('phone', { cid }));
+    views.push(session.view('projector'), session.view('facilitator'));
+  };
+  look();
+  session.advance(); // cluster
+  await flush();
+  look();
+  session.advance(); // react
+  look();
+  session.advance(); // walk
+  look();
+  const all = JSON.stringify(views);
+  assert.ok(all.includes('three'), 'control: the views carry cards');
+  for (const r of receipts) assert.equal(all.includes(r), false);
+  assert.equal(all.includes('cardReceipts'), false);
+});

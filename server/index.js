@@ -107,7 +107,8 @@ function openStream(req, res, url) {
 // ---- actions ------------------------------------------------------------
 
 const PHONE_ACTIONS = {
-  submit: (b) => session.submitCards(b.cid, b.texts),
+  // Shares cards, takes them back by receipt, or both (a swap).
+  submit: (b) => session.submitCards(b.cid, b.texts ?? [], b.withdraw ?? []),
   react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt),
   reactDone: (b) => session.reactDone(b.cid),
   afterthought: (b) => session.afterthought(b.cid, b.text, b.receipt),
