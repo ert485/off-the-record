@@ -336,7 +336,7 @@ function nudgeStatus(submit) {
 // Prompts for when the room goes quiet. Facilitator only; never projected.
 const PROMPTS = [
   'Does this one land for anyone?',
-  'Anyone want to add to this, out loud or anonymously?',
+  'Anyone want to add to this, out loud?',
   'What do you notice in the emoji mix?',
   'Has anyone felt the opposite?',
   'Is this something people talk about at work, or not?',

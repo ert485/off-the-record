@@ -261,9 +261,13 @@ test('a session saved with comments loads, and the comments are dropped', async 
   delete saved.afterthoughts;
   delete saved.removedAfterthoughts;
   delete saved.walk.lastMs;
+  for (const c of Object.values(saved.clients)) delete c.afterthoughts;
+  assert.ok(Object.keys(saved.clients).length >= 2);
   const copy = new Session({ now: clock.now, clusterCards: async () => ({ themes: [] }), state: saved });
   assert.equal(JSON.stringify(copy.state).includes('an old comment'), false);
   assert.equal('removedComments' in copy.state, false);
+  // Every saved phone gets a thought count on load, not only those that act again.
+  for (const c of Object.values(copy.state.clients)) assert.equal(c.afterthoughts, 0);
   copy.afterthought(A, 'still works');
   assert.deepEqual(copy.state.afterthoughts.map((t) => t.text), ['still works']);
   copy.advance(); // walk

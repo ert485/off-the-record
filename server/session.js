@@ -193,6 +193,7 @@ export class Session {
       this.state.afterthoughts ??= [];
       this.state.removedAfterthoughts ??= {};
       if (this.state.walk) this.state.walk.lastMs ??= LAST_SLIDE_MS;
+      for (const client of Object.values(this.state.clients ?? {})) client.afterthoughts ??= 0;
     }
     if (!this.state.shredded) {
       this.state.demo ??= { step: 0, cardIds: null };
@@ -294,9 +295,7 @@ export class Session {
     // Hex only, as phones make them. This also keeps out names like
     // "__proto__" or "constructor", which every plain object already has.
     if (typeof cid !== 'string' || !/^[0-9a-f]{16,64}$/.test(cid)) fail('Missing phone id');
-    const client = (this.s.clients[cid] ??= { cards: 0, reacted: 0, reactDone: false, afterthoughts: 0 });
-    client.afterthoughts ??= 0; // saved before thoughts existed
-    return client;
+    return (this.s.clients[cid] ??= { cards: 0, reacted: 0, reactDone: false, afterthoughts: 0 });
   }
 
   newId() {
@@ -849,17 +848,21 @@ export class Session {
     this.s.walk.cardEndsAt = now + cardMs(this.s.walk, now);
   }
 
-  // The last slide's time follows the thoughts: one sent in the grace window,
-  // or one the facilitator removed, changes it. The slide already showing
-  // keeps its clock until it is shown again.
+  // The reserve for the last slide follows the thoughts: one sent in the grace
+  // window, or one the facilitator removed, changes it, but only while the
+  // walk-through's time isn't up yet. After that, the reserve decides which
+  // cards were shown late (held, then resumed for a full share), so it stays
+  // put until the last slide is shown (itemMs).
   refreshLastMs() {
-    if (this.s.phase === 'walk') this.s.walk.lastMs = lastSlideMs(this.s.afterthoughts.length);
+    const w = this.s.walk;
+    if (this.s.phase === 'walk' && this.now() < w.endsAt - w.lastMs) w.lastMs = lastSlideMs(this.s.afterthoughts.length);
   }
 
-  // How long the current item runs: the last slide its own time, a card its share.
+  // How long the current item runs: the last slide its own time (worked out
+  // again from the thoughts it shows), a card its share.
   itemMs(w, now) {
     if (!w.stream[w.index].last) return cardMs(w, now);
-    this.refreshLastMs();
+    w.lastMs = lastSlideMs(this.s.afterthoughts.length);
     return w.lastMs;
   }
 

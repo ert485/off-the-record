@@ -461,7 +461,7 @@ function reactScreen() {
     function write() {
       const sent = local.get('afterthought', null);
       const had = !!sent?.text;
-      const input = h('textarea', { rows: 3, maxLength: AFTERTHOUGHT_MAX, placeholder: 'Optional. Shown on the last slide, with no name.', 'aria-label': 'Your thought' });
+      const input = h('textarea', { rows: 3, maxLength: AFTERTHOUGHT_MAX, placeholder: 'Optional. For the last slide, with no name.', 'aria-label': 'Your thought' });
       input.value = local.get('afterthoughtDraft', null) ?? sent?.text ?? '';
       const counter = h('div', { class: 'counter' });
       const hint = h('div');
@@ -495,7 +495,7 @@ function reactScreen() {
       const text = local.get('afterthought', null)?.text;
       const reopen = () => (local.set('afterthoughtDone', false), render());
       return [
-        lookUp('Look up', text ? 'Thank you. Your thought is in: it shows on the last slide, with no name.' : 'That was every card. Thank you. Waiting for everyone else to finish.').el,
+        lookUp('Look up', text ? 'Thank you. Your thought is in, with no name. It’s for the last slide.' : 'That was every card. Thank you. Waiting for everyone else to finish.').el,
         text ? h('div', { class: 'note sent' }, h('span', { class: 'tick' }, '✓'), h('div', { class: 'text' }, text)) : '',
         h('button', { class: 'quiet', onclick: reopen }, text ? 'Change your thought' : 'Add a thought after all'),
       ];

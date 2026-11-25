@@ -308,6 +308,69 @@ test('a thought sent in the grace window still gets its time on the last slide',
   assert.equal(proj(session).walk.afterthoughts.length, 9);
 });
 
+test('removing a thought before time is up shrinks the last slide\'s reserve, and the cards get the difference', async () => {
+  const { session, clock } = await toWalk({ cards: 4, thoughts: 9 });
+  const w = session.state.walk;
+  assert.equal(w.lastMs, 30_000);
+  session.removeAfterthought(fac(session).walk.afterthoughts[0].id);
+  assert.equal(w.lastMs, 20_000);
+  assert.equal(fac(session).walk.cardMs, (w.endsAt - 20_000 - clock.now()) / 5);
+  // Time now runs out 20 seconds before the end, not 30.
+  clock.set(w.endsAt - 30_000);
+  session.tick();
+  assert.equal(proj(session).walk.item.last, undefined);
+  clock.set(w.endsAt - 20_000);
+  session.tick();
+  assert.equal(proj(session).walk.item.last, true);
+  assert.equal(w.cardEndsAt, w.endsAt);
+});
+
+test('removing a thought after time is up never cuts short a held card the facilitator resumed', async () => {
+  const { session, clock } = await toWalk({ cards: 4, thoughts: 9 });
+  const w = session.state.walk;
+  const last = w.stream.length - 1;
+  assert.equal(w.lastMs, 30_000);
+  clock.set(w.endsAt - 30_000);
+  session.tick(); // time is up: the last slide
+  assert.equal(w.index, last);
+  clock.tick(3_000);
+  session.moveCard(-1); // held
+  assert.equal(w.paused, true);
+  clock.tick(4_000);
+  session.pauseWalk(false); // a fresh share, at least 15 seconds
+  const cardEnds = w.cardEndsAt;
+  assert.ok(cardEnds >= clock.now() + 15_000);
+  session.removeAfterthought(fac(session).walk.afterthoughts[0].id); // 9 thoughts to 8
+  for (let i = 0; i < 14; i++) {
+    clock.tick(1_000);
+    session.tick();
+  }
+  assert.equal(w.index, last - 1, 'the resumed card keeps its full share');
+  clock.set(cardEnds);
+  session.tick();
+  assert.equal(w.index, last);
+  // Shown again, the last slide's time comes from the 8 thoughts left.
+  assert.equal(w.lastMs, 20_000);
+  assert.equal(w.cardEndsAt - w.cardStartedAt, 20_000);
+});
+
+test("the last slide's time is worked out again when it is shown", async () => {
+  const { session, clock } = await toWalk({ cards: 4, thoughts: 9 });
+  const w = session.state.walk;
+  const last = w.stream.length - 1;
+  clock.set(w.endsAt - 30_000);
+  session.tick();
+  assert.equal(w.cardEndsAt - w.cardStartedAt, 30_000);
+  session.moveCard(-1); // held
+  session.removeAfterthought(fac(session).walk.afterthoughts[0].id);
+  assert.equal(w.lastMs, 30_000, 'time is up: the reserve stays until the last slide is shown');
+  session.moveCard(1);
+  assert.equal(w.index, last);
+  assert.equal(w.lastMs, 20_000);
+  assert.equal(w.cardEndsAt - w.cardStartedAt, 20_000);
+  assert.equal(proj(session).walk.afterthoughts.length, 8);
+});
+
 // ---- hidden stays hidden after the theme is approved ----------------------
 
 const SECRET = 'zebra-secret';
