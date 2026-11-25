@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Act on the feedback from a colleague who went through the practice run, and on the facilitator's notes after talking it through. The main changes: say less from the front, make "shred" read as letting go rather than tearing apart, react with emojis only (16 presets instead of 8) and write one thought at the end of the deck, a deck sized to the time, no stay/go back buttons on phones, a quiet count of people writing, writing that opens at Join, and better tools for keeping harsh cards off the screen.
+**Goal:** Act on the feedback from a colleague who went through the practice run, and on the facilitator's notes after talking it through. The main changes: say less from the front, make "shred" read as letting go rather than tearing apart, react with emojis only (16 presets instead of 8) and write one thought at the end of the deck, a deck sized to the time, no stay/go back buttons on phones, a quiet count of people writing, writing that opens at Join, taking back or swapping a shared card while submissions are open, and better tools for keeping harsh cards off the screen.
 
 **Architecture:** Same as the Nov 22 and Nov 23 plans (`docs/superpowers/plans/2026-11-22-demo-and-haiku-themes.md`, `docs/superpowers/plans/2026-11-23-demo-polish.md`). Rules live in `server/session.js`, pure helpers in `server/flow.js`, timers are timestamps advanced by `tick()` (every second), and three screens get per-role views over SSE.
 
@@ -23,14 +23,15 @@ The feedback, in short:
 - **The demo example comment could read as cruel.** A cute put-down still makes one person feel bad, even anonymously.
 - **Let the room's reactions set the pace,** not buttons on phones.
 - **Post the demo as a trailer** on the afternoon of the talk, as a reminder and a nudge.
+- **No regrets on sending** (the facilitator's own note). Sharing a card you then wish you hadn't shouldn't be final while the window is still open.
 
 ## Priority and cut line
 
 The talk is the evening of Wednesday, November 25. Work in this order and stop wherever time runs out; every task leaves the app working.
 
 - **Before the trailer (about 1 pm Nov 25):** Task 1 (16 presets), Task 2 (teaser and demo), Task 3 (the spoken script, docs only), Task 4 (record the trailer).
-- **Before the talk:** Task 5 (no stay/go back), Task 6 (hidden stays hidden), Task 7 (emojis only, one thought at the end), Task 8 (deck sized to the time), Task 9 (count of people writing), Task 10 (writing opens at Join), Task 11 (harshness check and reviewed cards).
-- **Only if there's time:** Task 12 (credits roll), Task 13 (custom image emojis, spike first).
+- **Before the talk:** Task 5 (no stay/go back), Task 6 (hidden stays hidden), Task 7 (emojis only, one thought at the end), Task 8 (deck sized to the time), Task 9 (count of people writing), Task 10 (writing opens at Join), Task 11 (take back or swap a shared card), Task 12 (harshness check and reviewed cards).
+- **Only if there's time:** Task 13 (credits roll), Task 14 (custom image emojis, spike first).
 
 ## Global Constraints
 
@@ -55,7 +56,7 @@ Also:
 1. **Someone mid-sentence when the facilitator moves from Join to Submit.** Expected: the keyboard stays up, the text stays, and there's no flash or buzz. Pinned in Task 10.
 2. **An afterthought typed but not sent when the room moves on.** Expected: it isn't sent automatically. The facilitator saw "N still writing a thought" before moving on, and the draft is wiped with the notes. Pinned in Tasks 7 and 9.
 3. **A card hidden after its theme was approved, while it is the next card and the timer is about to move.** Expected: it is never projected and never reaches a phone. Pinned in Task 6.
-4. **No API key, or the harshness check fails.** Expected: the walk-through never stalls. Unchecked cards can be marked reviewed in one tap, and the hold only stops on cards nobody has reviewed. Pinned in Task 11.
+4. **No API key, or the harshness check fails.** Expected: the walk-through never stalls. Unchecked cards can be marked reviewed in one tap, and the hold only stops on cards nobody has reviewed. Pinned in Task 12.
 5. **Fewer cards than the deck size, or a card hidden mid-reaction.** Expected: everyone sees every card. The count never reads "Card 9 of 8", and nobody gets stuck. Pinned in Task 8.
 
 ---
@@ -294,7 +295,55 @@ The facilitator's note asks that people can start writing as soon as everyone si
 
 ---
 
-### Task 11: A harshness check, reviewed cards, and a hold before unreviewed ones
+### Task 11: Take back or swap a shared card while submissions are open
+
+Your shared cards are your picks, up to 3 at a time, until the room moves on to grouping. You can take one back, or swap it for another note. A taken-back card is deleted from the server, and its text returns to your private notes, so nothing you wrote is lost.
+
+Swaps are explicit, never automatic: to share a fourth note, you uncheck one of your three first. If a new share silently replaced an older card, it could make the wrong one disappear, which breaks the spec's rule that no action makes something silently disappear.
+
+**Files:** `server/session.js`, `server/index.js`, `public/phone.js`, `public/phone.css`, `test/session.test.js`, `test/late.test.js`, `test/shred.test.js`, spec (Session flow, step 2; "Nothing a person does is lost"; Privacy and the shred; view table).
+
+**Interfaces (produces):**
+- `submitCards(cid, texts: string[], withdraw: string[] = []) → { receipts: string[] }`:
+  - It returns one random receipt per new card, in the order sent. A call may take back cards, share cards, or do both at once.
+  - It is atomic: everything is checked before anything changes.
+  - Allowed in `join` and `submit`, including after the time is up and before the facilitator confirms grouping. In any other phase it fails with `Grouping has started: shared cards can't be taken back now`.
+  - `client.cards − withdraw.length + texts.length` must stay at most 3, or it fails with `Up to 3 cards at a time: take one back first`.
+  - A receipt that isn't live fails with `Nothing to take back`, and nothing changes.
+- `s.cardReceipts: { [receipt]: cardId }`. Receipts are random and never tied to a phone. The server only learns that the phone sending a receipt holds it, at the moment it sends it, and never stores that. Receipts never appear in any view.
+- `removeCard(id)`: deletes the card (not just hiding it) and prunes its id from every group. A group left empty goes, and so does a theme left with no groups. Its harshness entry (Task 12, the harshness check) goes with it. `client.cards` goes down by the number taken back.
+- If the AI grouping or the late-card quick call is running when a card is taken back, `applyClusters` and `placeLate` drop any id whose card no longer exists, so a taken-back card never comes back in their result.
+- Phone:
+  - The "Already shared" list becomes `sent: [{ text, receipt }]` in `sessionStorage`. Old string entries can't be taken back and show without the button.
+  - Each shared card gets a "Take back" button while the window is open. It sends `{ withdraw: [receipt] }`, puts the text back at the top of the private notes, and says "Taken back. It won't be shown. It's back in your notes."
+  - The pick step lists your shared cards first, checked and labelled "Shared", then your notes. Checking is limited to 3 in all. At 3, a note's check is disabled, with the hint "Uncheck a shared card to swap it for this one."
+  - The button says what will happen: "Share 2 cards", "Take back 1", or "Share 1, take back 1".
+  - Once grouping starts, the list is read-only, with the line "Grouping has started: shared cards stay as they are. The facilitator can still hide any card."
+- Honesty: if the early grouping (at the 1-minute warning) or a quick check already ran, the card's text was already sent to Anthropic. The phone never says "deleted everywhere", only "It won't be shown". The spec's Privacy section says this in one line.
+
+- [ ] **Step 1: Failing tests:**
+  - `a phone can take back a shared card while submissions are open, and share another in its place`
+  - `taking back and sharing happen together: with 3 shared, swapping 1 for 1 leaves 3`
+  - `a swap that would leave more than 3 is refused and changes nothing`
+  - `a card can be taken back after the time is up, until grouping starts, but not after`
+  - `a receipt takes back only its own card, once`
+  - `a card taken back after the early grouping leaves its group; an emptied group and theme go` (late)
+  - `a card taken back while the AI is grouping doesn't come back in the result` (late, with a deferred stub)
+  - `receipts never reach the phone, projector or facilitator views`
+  - The shred test takes back one card mid-session and checks that its text and every receipt are gone.
+- [ ] **Step 2: Run, see them fail.** `npm test`
+- [ ] **Step 3: Implement the server.**
+- [ ] **Step 4: Implement the phone.**
+- [ ] **Step 5: Run.** `npm test` passes.
+- [ ] **Step 6: Check headlessly** on a 375×667 phone:
+  - Share 3, take one back: its text is first in the notes.
+  - Swap a shared card for a note in the pick step: still 3 shared.
+  - Move the room to grouping: the buttons go, and the read-only line shows.
+- [ ] **Step 7: Spec, commit** "Take back or swap a shared card until grouping starts".
+
+---
+
+### Task 12: A harshness check, reviewed cards, and a hold before unreviewed ones
 
 **Files:** `server/moderation.js` (new), `server/session.js`, `server/index.js`, `public/facilitate.js`, `public/facilitate.css`, `public/projector.js` (the trust fine print), `test/moderation.test.js` (new), `test/session.test.js`, `test/walk.test.js`, `test/shred.test.js`, spec (Facilitation logic; Privacy, the bullet on Anthropic; Trust disclosure; view table).
 
@@ -332,7 +381,7 @@ The facilitator's note asks that people can start writing as soon as everyone si
 
 ---
 
-### Task 12 (only if there's time): Credits roll on the closing screen
+### Task 13 (only if there's time): Credits roll on the closing screen
 
 The thanks and credits play while the feedback QR code shows. The photos are taken just before the event, so they must never reach the server or a public page.
 
@@ -349,7 +398,7 @@ The thanks and credits play while the feedback QR code shows. The photos are tak
 
 ---
 
-### Task 13 (only if there's time): Custom image emojis, spike first
+### Task 14 (only if there's time): Custom image emojis, spike first
 
 - [ ] **Step 1: Spike, at most 30 minutes, on real phones.**
   - On an iPhone (iOS 18.2 or later, Safari), insert a Genmoji into (a) the current `<input>` and (b) a `contenteditable` div. Record what arrives: an `<img>` or `<picture>` in the DOM, a `paste` event with an image `File`, or nothing.
@@ -377,6 +426,6 @@ The thanks and credits play while the feedback QR code shows. The photos are tak
 
 - [ ] The facilitator confirms the 8 new presets and their labels (Task 1) and the teaser copy (Task 2, Step 7).
 - [ ] Rewatch the recording of the practice run with the new flow in mind.
-- [ ] A solo run on two phones with the new flow (writing at Join, emojis only, a thought at the end, the last slide, the hold) before redeploying.
+- [ ] A solo run on two phones with the new flow (writing at Join, taking back and swapping a card, emojis only, a thought at the end, the last slide, the hold) before redeploying.
 - [ ] Redeploy with `deploy/deploy.sh <ip>` once the live server is on the teaser (check the projector stream's `phase` first). Confirm the server log has no `demo: local file invalid`.
 - [ ] Post the trailer (Task 4) after 1 pm on Nov 25.
