@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Session } from '../server/session.js';
-import { PLAN } from '../server/phases.js';
+import { PLAN, LAST_SLIDE_MS, AFTERTHOUGHTS_PER_PAGE, AFTERTHOUGHT_PAGE_MS, CARD_REACT_MS, AFTERTHOUGHT_RESERVE_MS, MIN_DECK } from '../server/phases.js';
+import { lastSlideMs, deckSize } from '../server/flow.js';
+import { deck, deckEnd } from '../public/shared/client.js';
 import { finaleTimeline, arrivalMs } from '../public/shared/finale-timing.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 
@@ -326,4 +328,71 @@ test('a deadline passing is broadcast even when nothing else happens', async () 
   session.advance(); // walk
   session.advance(); // finale
   expectPrompt('Ready to shred?', session.state.phaseStartedAt + finaleTimeline(session.state.reactions.length).doneAt);
+});
+
+test('lastSlideMs: 20 s with none, 10 s a page of 4, at most 60 s', () => {
+  assert.equal(AFTERTHOUGHTS_PER_PAGE, 4);
+  assert.equal(AFTERTHOUGHT_PAGE_MS, 10_000);
+  assert.equal(lastSlideMs(0), LAST_SLIDE_MS);
+  assert.equal(LAST_SLIDE_MS, 20_000);
+  // One or two pages still get the 20 seconds.
+  assert.equal(lastSlideMs(1), 20_000);
+  assert.equal(lastSlideMs(8), 20_000);
+  assert.equal(lastSlideMs(9), 30_000);
+  assert.equal(lastSlideMs(12), 30_000);
+  assert.equal(lastSlideMs(13), 40_000);
+  assert.equal(lastSlideMs(21), 60_000);
+  assert.equal(lastSlideMs(100), 60_000);
+});
+
+test('deckSize: 5 minutes and 60 cards gives 30; 10 cards gives 10; a 1-minute window gives 8', () => {
+  assert.equal(CARD_REACT_MS, 8_000);
+  assert.equal(AFTERTHOUGHT_RESERVE_MS, 60_000);
+  assert.equal(MIN_DECK, 8);
+  assert.equal(deckSize(60, 5 * MIN), 30);
+  assert.equal(deckSize(10, 5 * MIN), 10);
+  assert.equal(deckSize(60, 1 * MIN), 8);
+  // Never more cards than there are.
+  assert.equal(deckSize(5, 1 * MIN), 5);
+  assert.equal(deckSize(0, 5 * MIN), 0);
+});
+
+test("a phone's deck is its own first cards; hiding one moves the next card up, never reshuffles", () => {
+  const ids = Array.from({ length: 40 }, (_, i) => i + 1);
+  const mine = deck(ids, `${A}:react`, 30);
+  assert.equal(mine.length, 30);
+  assert.equal(new Set(mine).size, 30);
+  // The same phone gets the same deck on a reload; another phone gets its own.
+  assert.deepEqual(deck(ids, `${A}:react`, 30), mine);
+  assert.notDeepEqual(deck(ids, `${B}:react`, 30), mine);
+  // The whole order, sliced: the deck is its first 30 cards.
+  assert.deepEqual(deck(ids, `${A}:react`).slice(0, 30), mine);
+  // Hide a card in the deck: the rest keep their order, and the next card fills the slot.
+  const hidden = mine[4];
+  const after = deck(ids.filter((id) => id !== hidden), `${A}:react`, 30);
+  const next = deck(ids, `${A}:react`)[30];
+  assert.deepEqual(after, [...mine.filter((id) => id !== hidden), next]);
+  // A card the phone reacted to never leaves its deck: new cards that rank
+  // higher take only the slots left.
+  const reacted = new Set(deck(ids, `${A}:react`).slice(35, 40));
+  const kept = deck(ids, `${A}:react`, 30, reacted);
+  assert.equal(kept.length, 30);
+  assert.ok([...reacted].every((id) => kept.includes(id)));
+  assert.deepEqual(kept.filter((id) => !reacted.has(id)), mine.slice(0, 25));
+  // In the deck's own order.
+  const order = deck(ids, `${A}:react`);
+  assert.deepEqual(kept, order.filter((id) => kept.includes(id)));
+  // Fewer cards than the deck size: every card, once.
+  assert.deepEqual([...deck(ids.slice(0, 5), `${A}:react`, 30)].sort((a, b) => a - b), [1, 2, 3, 4, 5]);
+});
+
+test('the end of a deck: its first unseen card, and "every card" only when it is', () => {
+  // Every card, all seen.
+  assert.deepEqual(deckEnd([3, 1, 2], 3, new Set([1, 2, 3])), { unseen: null, everyCard: true });
+  // All seen, but the deck is only some of the cards.
+  assert.deepEqual(deckEnd([3, 1, 2], 4, new Set([1, 2, 3])), { unseen: null, everyCard: false });
+  // A card in the deck not yet seen (unhidden, or came in late): the first one, in deck order.
+  assert.deepEqual(deckEnd([3, 1, 2, 4], 4, new Set([3, 2])), { unseen: 1, everyCard: false });
+  // An empty deck has nothing left to see.
+  assert.deepEqual(deckEnd([], 0, new Set()), { unseen: null, everyCard: true });
 });

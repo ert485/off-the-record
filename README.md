@@ -6,17 +6,17 @@ A live, anonymous, phone-based retro for a room of about 40 people, ending with 
 
 Three views on one small server:
 
-- **Phone** (`/`): private notes that never leave the phone, then pick up to 3 to share as cards; react to one card at a time with emojis and an optional comment; during the walk-through, "look up", with light taps (stay, go back). Before Join, phones see the teaser, then "Starting soon".
-- **Projector** (`/projector`): the scripted demo on a drawn phone, join QR and trust disclosure, each theme as a folder tab with its haiku, the current card with its emoji mix and comments, a draining bar for the walk-through's pace, the emotional fingerprint, and the shredder.
+- **Phone** (`/`): private notes that never leave the phone, then pick up to 3 to share as cards; react to one card at a time with emojis, then add one thought at the end of the deck if you like; during the walk-through, "look up", with nothing to tap. Before Join, phones see the teaser, then "Starting soon".
+- **Projector** (`/projector`): the scripted demo on a drawn phone, join QR and trust disclosure, each theme as a folder tab with its haiku, the current card with its emoji mix, the last slide's afterthoughts, a draining bar for the walk-through's pace, the emotional fingerprint, and the shredder.
 - **Facilitator** (`/facilitate?t=<token>`): everything, plus every control: stepping through the demo, the talk clock, a "Ready for ...?" prompt to confirm each move, and pause, back and next in the walk-through. Works on several devices at once.
 
-The flow runs on a 25-minute talk clock: demo, join, submit, grouping (starts at the 1-minute warning), react and comment, a self-running walk-through that ends on "Anything else? Out loud.", the finale, the shred, and the closing.
+The flow runs on a 25-minute talk clock: demo, join, submit, grouping (starts at the 1-minute warning), react (emojis, then one thought at the end), a self-running walk-through that ends on the afterthoughts or "Anything else? Out loud.", the finale, the shred, and the closing.
 
 ## Privacy, and how to check it
 
 - No logins, no names. Cards are stored with no author and no timestamp. Phones are known only by a random id, with counts against it.
 - Private notes stay in the phone's tab (sessionStorage) and are wiped on close or shred.
-- Only card text goes to Anthropic (Claude Haiku 5.5) for grouping: `server/cluster.js`.
+- Only card and thought text goes to Anthropic (Claude Haiku 5.5): cards for grouping (`server/cluster.js`) and, while nudges are on, for picking which writing prompt phones show (`server/nudges.js`); cards and thoughts for a check for harsh wording that only the facilitator sees (`server/moderation.js`).
 - No request logs anywhere: the app prints nothing about requests (`server/index.js`), Caddy discards all logging (`deploy/Caddyfile`), the system journal is kept in memory only (`deploy/provision.sh`).
 - The shred deletes the database and every file in the data directory (`server/db.js`). `test/shred.test.js` runs a whole session, shreds, and checks no file, log line or screen still holds anything, and that the server printed no IP address.
 
@@ -30,12 +30,12 @@ npm run dev          # facilitator token is "dev"
 npm test
 ```
 
-Open `http://localhost:3000/` (phone), `/projector`, and `/facilitate?t=dev`. Without `ANTHROPIC_API_KEY` the cards are grouped locally, one card per group.
+Open `http://localhost:3000/` (phone), `/projector`, and `/facilitate?t=dev`. Without `ANTHROPIC_API_KEY` the cards are grouped locally, one card per group, and nothing is checked for harsh wording (every card reads "not checked"; "Mark the rest reviewed" clears them in one tap).
 
 | Env var | Meaning |
 | --- | --- |
 | `FACILITATOR_TOKEN` | Required. The secret in the facilitator URL. |
-| `ANTHROPIC_API_KEY` | For grouping with Claude Haiku. |
+| `ANTHROPIC_API_KEY` | For grouping, and the harshness check, with Claude Haiku. |
 | `PUBLIC_URL` | What the QR code points to. |
 | `DATA_DIR` | Where the one SQLite file lives (default `./data`). |
 | `REPO_URL` | Shown on the projector. |

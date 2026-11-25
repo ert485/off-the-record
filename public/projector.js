@@ -2,6 +2,7 @@
 import { subscribe, fill, h, formatClock, serverNow } from './shared/client.js';
 import { finaleTimeline, arrivalMs, sampleEvery, POOL_MS } from './shared/finale-timing.js';
 import { PRESETS } from './shared/emoji.js';
+import { struckParts } from './shared/struck.js';
 import { cardSheets, shredTimeline, PRELUDE_MS, FADE_MS } from './shared/shred-timing.js';
 
 const app = document.getElementById('app');
@@ -18,6 +19,13 @@ document.body.append(waiting);
 // hidden once it runs out, while the app waits on the facilitator, and on the teaser.
 function tickSection() {
   const left = latest?.section && !latest.waiting && latest.phase !== 'teaser' ? latest.section.endsAt - serverNow() : 0;
+  // Writing and reacting show the same time large in the middle of the screen instead.
+  const big = document.getElementById('big-clock');
+  if (big) {
+    section.hidden = true;
+    big.textContent = left > 0 ? formatClock(left) : '';
+    return;
+  }
   section.hidden = left <= 0;
   if (left > 0) section.textContent = `${formatClock(left)} left for this part`;
 }
@@ -56,9 +64,9 @@ const SCREENS = {
   teaser: teaserScreen,
   demo: demoScreen,
   join: joinScreen,
-  submit: () => message('On your phone'),
+  submit: timerScreen,
   cluster: () => message('Grouping the cards…'),
-  react: () => message('On your phone'),
+  react: timerScreen,
   walk: walkScreen,
   finale: finaleScreen,
   shred: shredScreen,
@@ -76,8 +84,28 @@ const SCREENS = {
   }),
 };
 
+// ---- submit and react: the time left, and quietly how many are writing ------
+// The clock is the section timer (tickSection fills it, and leaves it empty
+// once time is up or while waiting on the facilitator). Below it, only a
+// count of phones that typed lately, and nothing when there are none.
+
+function writingText(n) {
+  return n > 0 ? `${n} ${n === 1 ? 'person' : 'people'} writing` : '';
+}
+
+function timerScreen() {
+  const count = h('div', { class: 'writing-count' });
+  return {
+    el: h('div', { class: 'center' }, h('div', {}, h('div', { class: 'huge clock', id: 'big-clock' }), count)),
+    update(v) {
+      count.textContent = writingText(v.writing ?? 0);
+    },
+  };
+}
+
 // ---- teaser: before anything else, while the room fills ----------------------
-// The title large, its lines below, centred. Nothing from the demo.
+// The title large, its lines below, centred. Nothing from the demo. ~~words~~
+// in a line show struck through, still readable.
 
 function teaserScreen() {
   const title = h('div', { class: 'huge' });
@@ -86,7 +114,7 @@ function teaserScreen() {
     el: h('div', { class: 'center teaser' }, h('div', {}, title, lines)),
     update(v) {
       title.textContent = v.teaser?.title ?? 'Off the Record';
-      fill(lines, (v.teaser?.lines ?? []).map((line) => h('div', { class: 'sub' }, line)));
+      fill(lines, (v.teaser?.lines ?? []).map((line) => h('div', { class: 'sub' }, struckParts(line).map((p) => (p.struck ? h('s', { class: 'struck' }, p.text) : p.text)))));
     },
   };
 }
@@ -107,10 +135,11 @@ const DEMO_CAPTIONS = [
   'Write private notes. They stay on your phone for now.',
   'Pick up to 3 to share.',
   'The cards are grouped into themes.',
-  'React, and add a comment if you like.',
+  'React with emojis. At the end, add a thought if you like.',
   'Then we look at them together.',
 ];
 const DEMO_PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
+const DEMO_PLACEHOLDER = 'Write freely. Notes stay on this phone until you choose to share them.';
 const PHONE_W = 420; // the drawn phone's size in its own pixels, scaled to fit
 const PHONE_H = 780;
 
@@ -125,18 +154,10 @@ function demoScreen() {
   const main = h('div', { class: 'demo-main' }, h('div', { class: 'demo-phone-wrap' }, phone), h('div', { class: 'demo-side' }, caption));
   const revealTop = h('div', { class: 'top demo-top' });
   const reveal = h('div', { class: 'walk demo-reveal', hidden: true });
-  // The reveal fits the screen as a crowded walk-through card does. Fewer
-  // comments hide the rest (rather than redraw them), so the ones on screen
-  // keep their entrance when a font load or resize fits it again.
-  const revealComments = () => [...reveal.querySelectorAll('.comments .comment')];
+  // The reveal fits the screen as a crowded walk-through card does (it has nothing to drop).
   const under = underCard(
     reveal,
-    crowdFit(reveal, () => revealComments().length, (n) => {
-      const all = revealComments();
-      all.forEach((c, i) => (c.hidden = i >= n));
-      const more = reveal.querySelector('.comments-more');
-      if (more) more.textContent = n < all.length ? `+${all.length - n} more` : '';
-    }),
+    crowdFit(reveal, () => 0, () => {}),
   );
   const el = h('div', { class: 'demo' }, main, reveal);
   const title = message('Off the Record').el; // when there is no demo content
@@ -145,108 +166,134 @@ function demoScreen() {
   fit();
   addEventListener('resize', fit);
 
+  // The first shared note: the card the group, react and reveal steps show.
   const sharedText = (d) => d.notes.find((n) => n.share).text;
   const cardText = (text) => h('div', { class: 'react-card' }, text);
+  const notesHead = (attrs) => h('p', attrs, 'Private notes (only on this phone)');
 
-  // Step 1: the notepad with its private notes.
+  // Step 1: the prompt and an empty writing box, then the private notes
+  // arrive one at a time, as if written (from 2.5 s, 0.9 s apart).
   function notesStep(d) {
     fill(
       body,
       h('h2', { class: 'pop' }, DEMO_PROMPT),
-      h('p', { class: 'small faint pop', style: '--d:0.15s' }, 'Private notes (only on this phone)'),
-      d.notes.map((n, i) => h('div', { class: 'note pop', style: `--d:${0.3 + i * 0.45}s` }, h('div', { class: 'text' }, n.text))),
+      h('div', { class: 'dtextarea empty pop', style: '--d:0.15s' }, DEMO_PLACEHOLDER),
+      notesHead({ class: 'small faint pop', style: '--d:2.5s' }),
+      d.notes.map((n, i) => h('div', { class: 'note pop', style: `--d:${2.5 + i * 0.9}s` }, h('div', { class: 'text' }, n.text))),
     );
   }
 
-  // Step 2: one note is picked, Share goes live and is tapped, and the note
-  // folds into a plain sealed envelope (nothing written on it) that slides up
-  // out of the phone. Ends on what the phone says after sharing; the card's
-  // text is never shown in this step. Over by about 9 s of the step's 14 s.
+  // Step 2: the shared notes are checked one by one (0.8 s apart), the Share
+  // button counts them, goes live and is tapped, and the picked notes fold
+  // together into one plain sealed envelope (nothing written on it) that
+  // slides up out of the phone. Ends on what the phone says after sharing,
+  // with the unshared notes still listed; no card's text is shown in this
+  // step. Over by about 10 s of the step's 16 s.
   function pickStep(d, animate) {
     const shared = () =>
       fill(
         body,
-        h('div', { class: 'dtoast pop' }, 'Shared. You can still share 2 more.'),
-        h('p', { class: 'small faint pop', style: '--d:0.3s' }, 'Private notes (only on this phone)'),
+        h('div', { class: 'dtoast pop' }, 'Shared.'),
+        d.notes.some((n) => !n.share) && notesHead({ class: 'small faint pop', style: '--d:0.3s' }),
         d.notes.filter((n) => !n.share).map((n, i) => h('div', { class: 'note pop', style: `--d:${0.5 + i * 0.25}s` }, h('div', { class: 'text' }, n.text))),
       );
     if (!animate) return shared();
-    const share = h('button', { class: 'primary dshare pop', style: `--d:${d.notes.length * 0.15}s`, disabled: true }, h('span', { class: 'dtouch' }), 'Share 1 card');
+    const label = h('span', {}, 'Share 1 card');
+    const share = h('button', { class: 'primary dshare pop', style: `--d:${d.notes.length * 0.15}s`, disabled: true }, h('span', { class: 'dtouch' }), label);
     const rows = d.notes.map((n, i) => h('div', { class: 'note pickable pop', style: `--d:${i * 0.15}s` }, h('span', { class: 'check' }), h('span', { class: 'text' }, n.text)));
-    const note = rows[d.notes.findIndex((n) => n.share)];
+    const picks = rows.filter((_, i) => d.notes[i].share);
     const env = { w: 200, h: 124 };
     const envelope = h('div', { class: 'denv' }, h('div', { class: 'denv-flap' }), h('div', { class: 'denv-seal' }));
     fill(body, rows, share);
+    // The entrances are over; drop them so the transitions below own transform and opacity.
+    later(() => [...rows, share].forEach((el) => el.classList.remove('pop')), 1400);
+    picks.forEach((note, i) =>
+      later(() => {
+        note.classList.add('picked');
+        share.disabled = false;
+        label.textContent = i > 0 ? `Share ${i + 1} cards` : 'Share 1 card';
+      }, 1500 + i * 800),
+    );
+    let at = 1500 + (picks.length - 1) * 800 + 1100;
+    later(() => share.classList.add('press'), at);
     later(() => {
-      // The entrances are over; drop them so the transitions below own transform and opacity.
-      [...rows, share].forEach((el) => el.classList.remove('pop'));
-      note.classList.add('picked');
-    }, 1500);
-    later(() => (share.disabled = false), 2500);
-    later(() => share.classList.add('press'), 3600);
+      // The rest of the list steps back; the picked notes turn to blank paper.
+      [...rows.filter((r) => !picks.includes(r)), share].forEach((el) => el.classList.add('away'));
+      picks.forEach((note) => note.classList.add('blank'));
+    }, (at += 700));
     later(() => {
-      // The rest of the list steps back; the note turns to blank paper.
-      [...rows.filter((r) => r !== note), share].forEach((el) => el.classList.add('away'));
-      note.classList.add('blank');
-    }, 4300);
-    later(() => {
-      // It folds down to the envelope's size as it moves to the middle of the
-      // screen, so the envelope has a long way to fly.
-      const x = note.offsetLeft + note.offsetWidth / 2;
-      const y = note.offsetTop + note.offsetHeight / 2;
+      // They fold down to the envelope's size as they move together to the
+      // middle of the screen, so the envelope has a long way to fly.
       const cx = body.clientWidth / 2;
       const cy = body.clientHeight * 0.42;
-      note.style.transform = `translate(${cx - x}px, ${cy - y}px) scale(${env.w / note.offsetWidth}, ${env.h / note.offsetHeight})`;
+      for (const note of picks) {
+        const x = note.offsetLeft + note.offsetWidth / 2;
+        const y = note.offsetTop + note.offsetHeight / 2;
+        note.style.transform = `translate(${cx - x}px, ${cy - y}px) scale(${env.w / note.offsetWidth}, ${env.h / note.offsetHeight})`;
+      }
       Object.assign(envelope.style, { left: `${cx - env.w / 2}px`, top: `${cy - env.h / 2}px` });
       body.append(envelope);
-    }, 4700);
+    }, (at += 400));
     later(() => {
       envelope.classList.add('shown');
-      note.classList.add('gone');
-    }, 5300);
-    later(() => envelope.classList.add('sealed'), 5700); // the flap closes, then the seal
-    later(() => (envelope.style.transform = `translateY(${-(envelope.offsetTop + env.h + 60)}px) scale(0.85)`), 6800);
-    later(shared, 8100);
+      picks.forEach((note) => note.classList.add('gone'));
+    }, (at += 600));
+    later(() => envelope.classList.add('sealed'), (at += 400)); // the flap closes, then the seal
+    later(() => (envelope.style.transform = `translateY(${-(envelope.offsetTop + env.h + 60)}px) scale(0.85)`), (at += 1100));
+    later(shared, at + 1300);
   }
 
-  // Step 3: the card under its folder tab, with the theme name and haiku.
-  function groupStep(d) {
-    const tab = h('div', { class: 'dtab' }, d.theme.name);
+  // Step 3: the first shared note arrives alone in a plain folder. From 2.5 s
+  // the folder's tab name appears a few characters at a time, then the haiku
+  // one segment at a time (0.9 s apart); all settled by about 9 s of the
+  // step's 16 s.
+  function groupStep(d, animate) {
+    const tab = h('div', { class: 'dtab' });
+    const name = (text) => (tab.textContent = text || ' '); // an empty tab keeps its height
     const haiku = d.theme.haiku ? h('div', { class: 'dhaiku' }, haikuParts(d.theme.haiku)) : null;
+    const segs = haiku ? [...haiku.querySelectorAll('.hseg')] : [];
+    // Hidden before they're first drawn, so they don't fade out on arrival.
+    if (animate) segs.forEach((seg) => seg.classList.add('later'));
     fill(body, h('div', { class: 'dfolder' }, tab, h('div', { class: 'dfolder-card' }, sharedText(d))), haiku);
     if (haiku) {
       fitHaiku(haiku);
       document.fonts?.ready.then(() => haiku.isConnected && fitHaiku(haiku));
     }
+    if (!animate) return name(d.theme.name);
+    name('');
+    // Two characters every 60 ms: even a 60-character name is in within 2 seconds.
+    const chars = Array.from(d.theme.name);
+    let at = 2500;
+    for (let upto = 2; upto - 2 < chars.length; upto += 2, at += 60) {
+      const text = chars.slice(0, upto).join('');
+      later(() => name(text), at);
+    }
+    at += 600;
+    // A haiku with many segments brings them closer together, so the last is in by about 8.4 s.
+    const gap = Math.min(900, (8400 - at) / Math.max(1, segs.length - 1));
+    segs.forEach((seg, i) => later(() => seg.classList.remove('later'), at + i * gap));
   }
 
-  // Step 4: presets tapped one by one, the keyboard emoji added, the comment typed.
+  // Step 4: presets tapped one by one, then the keyboard emoji added. No
+  // comment box: a thought comes at the end, not on each card.
   function reactStep(d, animate) {
     const r = d.react;
     const buttons = PRESETS.map(({ e, label }) => h('button', {}, h('span', { class: 'e' }, e), h('span', { class: 'l' }, label)));
     const taps = r.presets.map((e) => buttons[PRESETS.findIndex((p) => p.e === e)]).filter(Boolean);
     const chips = h('div', { class: 'row wrap' });
     const own = h('button', { class: 'chip on' }, r.own);
-    const typed = h('div', { class: 'dtextarea' });
-    const draw = (text) => {
-      typed.textContent = text || 'Add a comment (optional)';
-      typed.classList.toggle('empty', !text);
-    };
     fill(
       body,
       cardText(sharedText(d)),
       h('div', { class: 'emoji-grid' }, buttons),
       h('div', { class: 'row wrap custom-row' }, h('button', { class: 'add-own' }, '＋ Add your own emoji'), chips),
-      typed,
       h('div', { class: 'row' }, h('button', { class: 'grow' }, '◀ Previous'), h('button', { class: 'primary grow' }, 'Next')),
     );
     if (!animate) {
       taps.forEach((b) => b.classList.add('on'));
       chips.append(own);
-      draw(r.comment);
       return;
     }
-    draw('');
     let at = 700;
     for (const b of taps) {
       later(() => b.classList.add('on', 'tap'), at);
@@ -256,40 +303,23 @@ function demoScreen() {
       own.classList.add('pop');
       chips.append(own);
     }, at);
-    at += 900;
-    // The comment appears a few characters at a time, in about 1.7 seconds.
-    const chars = Array.from(r.comment);
-    const tick = 60;
-    const per = Math.max(1, Math.ceil(chars.length / (1700 / tick)));
-    for (let n = 1; n * per - per < chars.length; n++) {
-      const upto = Math.min(n * per, chars.length);
-      later(() => draw(chars.slice(0, upto).join('')), at + n * tick);
-    }
   }
 
   // Step 5: the card full size, as in the walk-through (no bar, no position),
-  // fitted to the screen the same way.
-  function revealStep(d, animate) {
+  // fitted to the screen the same way: its emoji mix and the haiku, no comments.
+  function revealStep(d) {
     const text = sharedText(d);
     const mix = [...(d.reveal.mix ?? [])].sort((a, b) => b[1] - a[1]);
-    const comments = (d.reveal.comments ?? []).slice(0, 5);
     const card = h('div', { class: 'card' }, h('div', { class: 'card-text' }, text));
     card.style.fontSize = crowdedCardSize(text);
     const mixEl = h('div', { class: 'mix' }, ...mixRow(mix));
     [...mixEl.children].forEach((c, i) => c.style.setProperty('--d', `${0.9 + i * 0.25}s`));
-    const list = h('div', { class: 'comments' }, comments.map((c, i) => h('div', { class: 'comment', style: `--d:${1.8 + i * 0.5}s` }, c)));
     fill(
       reveal,
       revealTop,
       h('div', { class: 'stage-card' }, h('div', { class: 'folder-card' }, h('div', { class: 'tab' }, d.theme.name), card), h('div', { class: 'more' })),
       mixEl,
-      h(
-        'div',
-        { class: 'under' },
-        list,
-        h('div', { class: 'comments-more', style: `--d:${1.8 + comments.length * 0.5}s` }),
-        h('div', { class: 'haiku', style: `--d:${2 + comments.length * 0.5}s` }, haikuParts(d.theme.haiku)),
-      ),
+      h('div', { class: 'under' }, h('div', { class: 'haiku', style: '--d:1.8s' }, haikuParts(d.theme.haiku))),
       h('div', { class: 'bottom' }),
     );
     under.layout();
@@ -367,8 +397,8 @@ function joinScreen() {
         'p',
         { class: 'disclosure' },
         'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. ',
-        'Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. ',
-        'I see cards and comments before they’re shown and can remove any of them to prevent abuse. ',
+        'Submitted cards and thoughts go to Anthropic (Claude Haiku) for grouping, picking writing prompts and a check for harsh wording; they don’t train on them and delete them within 30 days. ',
+        'I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. ',
         'Everything on our server is shredded tonight. Code: ',
         repo,
       ),
@@ -389,10 +419,12 @@ function joinScreen() {
 
 // A crowded walk-through card steps --crowd down from 1 to CROWD_FLOOR by
 // CROWD_STEP (crowdFit). The card text never goes under
-// CARD_FLOOR; the comments' and haiku's floors are in projector.css.
+// CARD_FLOOR; the afterthoughts' and haiku's floors are in projector.css.
 const CROWD_STEP = 0.05;
 const CROWD_FLOOR = 0.5;
 const CARD_FLOOR = '2.6vw';
+// The last slide shows this many afterthoughts a page (AFTERTHOUGHTS_PER_PAGE in server/phases.js).
+const AFTERTHOUGHTS_PER_PAGE = 4;
 
 function cardFontSize(text) {
   const n = text.length;
@@ -407,11 +439,12 @@ function crowdedCardSize(text) {
 // A crowded card fits the screen (the walk-through's, and the demo's reveal,
 // which uses the same layout): everything from the card to the .bottom row
 // ends above the walk's bottom padding (kept for the waiting line). Start at
-// the normal sizes with every comment; while it overflows, step --crowd down
-// (the card text, comments, haiku and the gaps all scale by it, each only to
-// its floor); if it still overflows at CROWD_FLOOR, show fewer comments,
-// dropping the newest into "+N more" (show(n) draws the first n of count()).
-// The haiku sits under the comments, so it is never what's cut. Bounded: one
+// the normal sizes with every item (the last slide's page of afterthoughts;
+// a card has none); while it overflows, step --crowd down (the card text,
+// afterthoughts, haiku and the gaps all scale by it, each only to its floor);
+// if it still overflows at CROWD_FLOOR, show fewer items,
+// dropping the last into "+N more" (show(n) draws the first n of count()).
+// The haiku sits below them, so it is never what's cut. Bounded: one
 // measure per step. Returns the fit that underCard runs.
 function crowdFit(walk, count, show) {
   return (layout) => {
@@ -489,7 +522,7 @@ function mixRow(mix) {
 // Lays out what sits under the card. The emoji mix stays one row: when it is
 // wider than its space (up to 12 big emojis), the whole row shrinks to fit
 // instead of wrapping (no room for a second row) or running under the corner
-// QR. The comments column starts at the card's left edge, wherever the centred
+// QR. The column under the card starts at its left edge, wherever the centred
 // card lands; offsetLeft is the laid-out position, so the demo's entrance
 // animations (transforms) don't skew it. Re-run when the card or screen
 // resizes, and whenever a font finishes loading (the emoji font loads only once
@@ -556,31 +589,58 @@ function walkScreen() {
   const folder = h('div', { class: 'folder-card' }, tab, card);
   const more = h('div', { class: 'more' });
   const mix = h('div', { class: 'mix' });
-  const comments = h('div', { class: 'comments' });
-  const commentsMore = h('div', { class: 'comments-more' });
   const haiku = h('div', { class: 'haiku' });
-  const counts = h('div', { class: 'counts' });
-  const controls = h('div', { class: 'controls-line' }, 'From your phone you can ask to stay, or to go back a card.');
+  // The last slide's afterthoughts, a page at a time, in the comment list's style.
+  const thoughtList = h('div', { class: 'comments' });
+  const thoughtsMore = h('div', { class: 'comments-more' });
+  const thoughtsBox = h('div', { class: 'afterthoughts', hidden: true }, thoughtList, thoughtsMore);
   const el = h(
     'div',
     { class: 'walk' },
     h('div', { class: 'top' }, position),
-    h('div', { class: 'stage-card' }, folder, more),
+    h('div', { class: 'stage-card' }, folder, thoughtsBox, more),
     mix,
-    h('div', { class: 'under' }, comments, commentsMore, haiku),
-    h('div', { class: 'bottom' }, h('div', { class: 'grow' }, controls), counts),
+    h('div', { class: 'under' }, haiku),
+    h('div', { class: 'bottom' }),
   );
-  let said = { shown: [], more: 0 }; // this card's comments, oldest first
+  let thoughts = []; // every afterthought, oldest first (the last slide only)
+  let page = 0;
+  let pageIndex = null; // the walk item the page belongs to
+  let onPage = []; // the thoughts on this page
+  let drawn = null; // what's drawn, so a re-fit doesn't replay the fade
 
-  // The first n comments; the rest join the server's "+N more".
-  function drawComments(n) {
-    fill(comments, ...said.shown.slice(0, n).map((c) => h('div', { class: 'comment' }, c.text)));
-    const more = said.more + said.shown.length - n;
-    commentsMore.textContent = more > 0 ? `+${more} more` : '';
+  const pages = () => Math.ceil(thoughts.length / AFTERTHOUGHTS_PER_PAGE);
+  // Every projector works out the same page from the server's clock: the
+  // slide's time split evenly between its pages. A pause (or the end of the
+  // walk-through) holds the page that was showing.
+  function pageNow(w) {
+    if (pageIndex !== w.index) page = 0;
+    pageIndex = w.index;
+    const n = pages();
+    if (n <= 1) return 0;
+    if (w.paused || w.cardEndsAt === null || w.cardStartedAt === null) return Math.min(page, n - 1);
+    const pageMs = (w.cardEndsAt - w.cardStartedAt) / n;
+    return Math.floor(Math.max(0, serverNow() - w.cardStartedAt) / pageMs) % n;
   }
 
-  // A crowded card fits the screen, down to the counts row (crowdFit).
-  const under = underCard(el, crowdFit(el, () => said.shown.length, drawComments));
+  // The first n thoughts on this page; any that can't fit are counted.
+  function drawThoughts(n) {
+    const key = JSON.stringify([page, n, onPage]);
+    if (key === drawn) return;
+    drawn = key;
+    fill(thoughtList, onPage.slice(0, n).map((t) => h('div', { class: 'comment' }, t.text)));
+    thoughtsMore.textContent = onPage.length > n ? `+${onPage.length - n} more` : '';
+  }
+
+  function showPage(p) {
+    page = p;
+    onPage = thoughts.slice(p * AFTERTHOUGHTS_PER_PAGE, (p + 1) * AFTERTHOUGHTS_PER_PAGE);
+    const n = pages();
+    more.textContent = n > 1 ? `${p + 1} / ${n}` : '';
+  }
+
+  // A crowded card (or a full page of thoughts) fits the screen, down to the bottom row (crowdFit).
+  const under = underCard(el, crowdFit(el, () => onPage.length, drawThoughts));
   let view = null;
   let barWidth = null; // the last width seen while the card was running
   let barIndex = null; // the card that width belongs to
@@ -610,6 +670,11 @@ function walkScreen() {
   }
   function loop() {
     drawBar();
+    const w = view?.walk;
+    if (w?.item?.last && thoughts.length && pageNow(w) !== page) {
+      showPage(pageNow(w));
+      under.layout();
+    }
     frame = requestAnimationFrame(loop);
   }
   frame = requestAnimationFrame(loop);
@@ -624,6 +689,9 @@ function walkScreen() {
       const last = !!item?.last;
       el.classList.toggle('is-overview', overview);
       el.classList.toggle('is-last', last);
+      // The server sends the thoughts on the last slide only.
+      thoughts = last ? (w.afterthoughts ?? []) : [];
+      thoughtsBox.hidden = thoughts.length === 0;
       position.textContent = w.total > 2 && !overview && !last ? `${w.index} / ${w.total - 2}` : '';
       if (overview) {
         fill(folder, h('div', { class: 'overview-title' }, 'Themes'), drawer(item.overview));
@@ -636,9 +704,10 @@ function walkScreen() {
         folder.classList.remove('plain');
         folder.classList.toggle('last', last);
         folder.hidden = !!item?.hidden;
-        const body = last ? 'Anything else? Out loud.' : item && !item.hidden ? item.text : '';
+        const titled = last && thoughts.length > 0;
+        const body = titled ? 'Afterthoughts' : last ? 'Anything else? Out loud.' : item && !item.hidden ? item.text : '';
         text.textContent = body;
-        card.style.fontSize = last ? '6vw' : crowdedCardSize(body);
+        card.style.fontSize = titled ? 'max(2.6vw, calc(4vw * var(--crowd, 1)))' : last ? '6vw' : crowdedCardSize(body);
         const theme = !last && item?.theme ? item.theme : '';
         tab.textContent = theme;
         tab.hidden = !theme;
@@ -648,13 +717,11 @@ function walkScreen() {
         more.textContent = bits.join(' · ');
         fill(mix, ...mixRow(item?.mix));
       }
-      // Comments no longer arrive live: the server sends a stable few (none for a hidden card).
-      // under.layout() below draws as many of them as fit.
-      said = item?.hidden ? { shown: [], more: 0 } : w.comments;
+      // The page of thoughts (none off the last slide); under.layout() below
+      // draws as many as fit.
+      if (thoughts.length) showPage(pageNow(w));
+      else onPage = [];
       fill(haiku, !overview && !last && item?.haiku ? haikuParts(item.haiku) : []);
-      const chip = (n, label) => h('span', { class: n ? '' : 'zero' }, `${label} ${n}`);
-      fill(counts, ...(last || overview ? [] : [chip(w.stay, 'Stay'), chip(w.back, 'Go back')]));
-      controls.hidden = last;
       drawBar();
       under.layout();
     },
@@ -871,7 +938,7 @@ function deletePrelude(animate) {
     'div',
     { class: 'del-dialog' },
     h('div', { class: 'del-title' }, 'Delete everything?'),
-    h('div', { class: 'del-body' }, 'Every card, reaction and comment, from the server. This can’t be undone.'),
+    h('div', { class: 'del-body' }, 'Every card, reaction and thought, from the server. This can’t be undone.'),
     h('div', { class: 'del-actions' }, h('span', { class: 'del-cancel' }, 'Cancel'), button),
   );
   const cursor = h('div', { class: 'cursor' });

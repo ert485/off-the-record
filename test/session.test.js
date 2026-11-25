@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Session, normalizeClusters, cleanHaiku, SKIPPED } from '../server/session.js';
 import { paceMinutes, PHASES, PLAN } from '../server/phases.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
+import { deck, deckEnd } from '../public/shared/client.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbbbbbbbbbbbbbb';
@@ -79,9 +80,10 @@ test('the shred needs a confirm and cannot be undone', async () => {
 });
 
 test('submissions: up to 3 cards each, only while open, no author stored', () => {
-  const { session } = make();
+  const { session } = make({ atDemo: true });
   assert.throws(() => session.submitCards(A, ['early']), /closed/);
-  session.advance();
+  session.advance(); // join
+  session.advance(); // submit
   session.submitCards(A, ['a', 'b']);
   assert.throws(() => session.submitCards(A, ['c', 'd']), /Up to 3/);
   session.submitCards(A, ['c']);
@@ -91,6 +93,43 @@ test('submissions: up to 3 cards each, only while open, no author stored', () =>
   for (const card of session.state.cards) assert.deepEqual(Object.keys(card).sort(), ['hidden', 'id', 'text']);
   assert.equal(JSON.stringify(session.state.clients).includes('"a"'), false);
   assert.equal(session.view('phone', { cid: A }).submit.submitted, 3);
+});
+
+test('cards can be shared from Join', async () => {
+  const sent = [];
+  const { session, clock } = make({ cluster: async (cards) => (sent.push(...cards.map((c) => c.text)), { themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }) });
+  assert.equal(session.state.phase, 'join');
+  session.submitCards(A, ['early one', 'early two']);
+  assert.equal(session.view('phone', { cid: A }).submit.submitted, 2);
+  assert.equal(session.state.submitEndsAt, null, 'the 5 minutes start at Submit, not Join');
+  // Nothing timed runs at Join: no early grouping, however long it lasts.
+  clock.tick(10 * 60_000);
+  session.tick();
+  assert.equal(session.state.clustering.status, 'idle');
+  session.advance(); // submit
+  assert.equal(session.state.submitEndsAt, clock.now() + 5 * 60_000);
+  // The 3 cards each span Join and Submit.
+  session.submitCards(A, ['in submit']);
+  assert.throws(() => session.submitCards(A, ['a fourth']), /Up to 3/);
+  // The early grouping still comes at the 1-minute warning, and includes the Join cards.
+  clock.tick(4 * 60_000);
+  session.tick();
+  await flush();
+  assert.equal(session.state.clustering.early, true);
+  assert.deepEqual(sent.sort(), ['early one', 'early two', 'in submit']);
+});
+
+test("the phone view in Join carries the notepad's fields, with no timer and no nudge", () => {
+  const { session } = make();
+  session.setNudges(true);
+  const v = session.view('phone', { cid: A });
+  assert.deepEqual(Object.keys(v).sort(), ['now', 'phase', 'role', 'session', 'submit']);
+  assert.deepEqual(v.submit, { endsAt: null, submitted: 0, max: 3, nudgesOn: false, nudge: null });
+  session.advance(); // submit: the timer and the nudges start here
+  const s = session.view('phone', { cid: A }).submit;
+  assert.equal(typeof s.endsAt, 'number');
+  assert.equal(s.nudgesOn, true);
+  assert.ok(s.nudge.texts.length > 0);
 });
 
 test('extend adds a minute to the submission window', () => {
@@ -167,28 +206,54 @@ test('reactions are pooled per group and capped at one pass', async () => {
   assert.equal(groups.length, 3);
   session.react(A, groups[0].id, ['🙋', '🫂', '🙋']);
   session.react(A, groups[1].id, ['🦆']);
-  session.react(A, groups[2].id, [], null, 'no emoji for this one');
+  session.react(A, groups[2].id, ['🎉']);
   assert.throws(() => session.react(A, groups[0].id, ['😂']), /every card/);
   assert.throws(() => session.react(B, groups[0].id, ['hello']), /emojis only/);
   session.reactDone(A);
-  assert.equal(session.state.reactions.length, 3);
+  assert.equal(session.state.reactions.length, 4);
   assert.equal(session.view('facilitator').react.done, 1);
 });
 
-test('walk-through: cards move, signals reset per card, stay and back counted', async () => {
+test('walk-through: cards move, and nothing counts stay or go back', async () => {
   const { session } = make();
   await toReact(session);
   session.advance();
   assert.equal(session.state.phase, 'walk');
-  session.signal(A, 'stay', true);
-  session.signal(B, 'back', true);
-  const p = session.view('projector');
-  assert.equal(p.walk.stay, 1);
-  assert.equal(p.walk.back, 1);
   session.moveCard(1);
-  assert.equal(session.view('projector').walk.stay, 0);
   session.moveCard(-1);
   assert.throws(() => session.moveCard(-1), /first card/);
+  for (const role of ['projector', 'facilitator']) {
+    const w = session.view(role).walk;
+    assert.equal('stay' in w, false);
+    assert.equal('back' in w, false);
+  }
+});
+
+test('there is no signal action', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.advance();
+  assert.equal(session.signal, undefined);
+  assert.equal('signals' in session.state.walk, false);
+});
+
+test("the phone's walk view has no stay or go back", async () => {
+  const { session } = make();
+  await toReact(session);
+  session.advance();
+  assert.equal(session.view('phone', { cid: A }).walk, undefined);
+});
+
+test('a saved state from before still loads, without its signals', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.advance();
+  const saved = JSON.parse(JSON.stringify(session.state));
+  saved.walk.signals = { stay: { [A]: 1 }, back: {} };
+  const loaded = new Session({ state: saved, now: () => 1_000_000 });
+  assert.equal('signals' in loaded.state.walk, false);
+  loaded.moveCard(1);
+  assert.equal(loaded.view('projector').walk.index, 1);
 });
 
 test('hidden cards leave the stream and the reaction stack', async () => {
@@ -204,163 +269,171 @@ test('hidden cards leave the stream and the reaction stack', async () => {
   assert.equal(JSON.stringify(session.view('projector')).includes(card.text), false);
 });
 
-// Seven phones, hex ids like the real ones.
-const PHONES = Array.from({ length: 7 }, (_, i) => String(i).repeat(24));
-
-test('a comment is sent with a card\'s reactions and stored with no author', async () => {
+test('a reaction carries emojis only', async () => {
   const { session } = make();
   await toReact(session);
   const g = session.view('phone', { cid: A }).react.groups[0].id;
-  session.react(A, g, ['🙋'], null, '  ha ');
-  const { comments } = session.state;
-  assert.equal(comments.length, 1);
-  assert.deepEqual(Object.keys(comments[0]), ['id', 'g', 'text', 'r']);
-  assert.equal(comments[0].text, 'ha');
-  assert.equal(JSON.stringify(comments).includes(A), false);
-});
-
-test('sending again with the receipt replaces the reactions and the comment', async () => {
-  const { session } = make();
-  await toReact(session);
-  const g = session.view('phone', { cid: A }).react.groups[0].id;
-  const { receipt } = session.react(A, g, ['🙋'], null, 'first');
-  session.react(A, g, ['🦆'], receipt, 'new');
-  assert.deepEqual(session.state.comments.map((c) => c.text), ['new']);
-  assert.deepEqual(session.state.reactions.map((r) => r.e), ['🦆']);
-  session.react(A, g, ['🫂'], receipt, '');
-  assert.equal(session.state.comments.length, 0);
-  assert.deepEqual(session.state.reactions.map((r) => r.e), ['🫂']);
-});
-
-test('a comment alone counts as a send; nothing at all does not', async () => {
-  const { session } = make();
-  await toReact(session);
-  const g = session.view('phone', { cid: A }).react.groups[0].id;
-  session.react(A, g, [], null, 'x');
-  assert.equal(session.state.comments.length, 1);
-  assert.throws(() => session.react(B, g, [], null, ''), /Pick an emoji or write a comment/);
-  assert.throws(() => session.react(B, g, []), /Pick an emoji or write a comment/);
-});
-
-test('an empty resend with the receipt clears the card\'s reactions and comment', async () => {
-  const { session } = make();
-  await toReact(session);
-  const g = session.view('phone', { cid: A }).react.groups[0].id;
-  const { receipt } = session.react(A, g, ['🙋'], null, 'hi');
-  session.react(A, g, [], receipt, '');
+  assert.throws(() => session.react(A, g, []), /^Error: Pick an emoji$/);
+  // Anything sent beside the emojis is ignored, not stored.
+  const { receipt } = session.react(A, g, ['🙋'], null, 'a stray comment');
+  assert.equal(JSON.stringify(session.state).includes('a stray comment'), false);
+  for (const r of session.state.reactions) assert.deepEqual(Object.keys(r).sort(), ['e', 'g', 'r']);
+  assert.equal('comments' in session.state, false);
+  assert.equal('removedComments' in session.state, false);
+  assert.equal(session.removeComment, undefined);
+  // An empty list with the receipt clears the card's reactions.
+  session.react(A, g, [], receipt);
   assert.equal(session.state.reactions.length, 0);
-  assert.equal(session.state.comments.length, 0);
   assert.equal(session.state.clients[A].reacted, 1);
-  assert.throws(() => session.react(A, g, [], 'feedfacefeedface', ''), /Nothing to change/);
+  assert.throws(() => session.react(A, g, [], 'feedfacefeedface'), /Nothing to change/);
+  session.advance(); // walk
+  assert.equal('comments' in session.view('facilitator'), false);
+  assert.equal('comments' in session.view('projector').walk, false);
 });
 
-test('a removed comment stays removed when the phone resends', async () => {
+test('a session saved with comments loads, and the comments are dropped', async () => {
+  const { session, clock } = make();
+  await toReact(session);
+  const saved = JSON.parse(JSON.stringify(session.state));
+  saved.comments = [{ id: 99, g: 1, text: 'an old comment', r: 'feedfacefeedface' }];
+  saved.removedComments = { feedfacefeedface: 1 };
+  delete saved.afterthoughts;
+  delete saved.removedAfterthoughts;
+  delete saved.walk.lastMs;
+  for (const c of Object.values(saved.clients)) delete c.afterthoughts;
+  assert.ok(Object.keys(saved.clients).length >= 2);
+  const copy = new Session({ now: clock.now, clusterCards: async () => ({ themes: [] }), state: saved });
+  assert.equal(JSON.stringify(copy.state).includes('an old comment'), false);
+  assert.equal('removedComments' in copy.state, false);
+  // Every saved phone gets a thought count on load, not only those that act again.
+  for (const c of Object.values(copy.state.clients)) assert.equal(c.afterthoughts, 0);
+  copy.afterthought(A, 'still works');
+  assert.deepEqual(copy.state.afterthoughts.map((t) => t.text), ['still works']);
+  copy.advance(); // walk
+  assert.ok(copy.state.walk.lastMs > 0);
+});
+
+test('a phone can add one thought at the end and change it with its receipt', async () => {
   const { session } = make();
   await toReact(session);
+  const { receipt } = session.afterthought(A, '  a thought  ');
+  assert.equal(typeof receipt, 'string');
+  assert.deepEqual(session.state.afterthoughts.map((t) => t.text), ['a thought']);
+  assert.deepEqual(Object.keys(session.state.afterthoughts[0]), ['id', 'text', 'r']);
+  assert.equal(JSON.stringify(session.state.afterthoughts).includes(A), false);
+  assert.equal(session.state.clients[A].afterthoughts, 1);
+  assert.throws(() => session.afterthought(A, 'another'), /You've already added a thought: change it instead/);
+  session.afterthought(B, 'from B');
+  // Changing it keeps its place.
+  session.afterthought(A, 'changed', receipt);
+  assert.deepEqual(session.view('facilitator').react.afterthoughts.map((t) => t.text), ['changed', 'from B']);
+  assert.equal(session.state.clients[A].afterthoughts, 1);
+  assert.throws(() => session.afterthought(A, 'x'.repeat(201), receipt), /up to 200/);
+  session.afterthought(A, 'x'.repeat(200), receipt);
+  assert.throws(() => session.afterthought(C, 'x', 'feedfacefeedface'), /Nothing to change/);
+  assert.throws(() => session.afterthought(C, '   '), /Write a thought/);
+  // A card's receipt can't change a thought, nor a thought's a card.
   const g = session.view('phone', { cid: A }).react.groups[0].id;
-  const { receipt } = session.react(A, g, ['🙋'], null, 'mean');
-  session.removeComment(session.state.comments[0].id);
-  session.react(A, g, ['🦆'], receipt, 'mean again');
-  assert.equal(session.state.comments.length, 0);
-  assert.deepEqual(session.state.reactions.map((r) => r.e), ['🦆']);
-  assert.equal(JSON.stringify(session.state.removedComments).includes(A), false);
+  const { receipt: cardReceipt } = session.react(C, g, ['🙋']);
+  assert.throws(() => session.afterthought(C, 'x', cardReceipt), /Nothing to change/);
+  assert.throws(() => session.react(C, g, ['🙋'], receipt), /Nothing to change/);
 });
 
-test('comments are capped like cards', async () => {
+test('an empty thought with its receipt clears it', async () => {
   const { session } = make();
   await toReact(session);
-  const g = session.view('phone', { cid: A }).react.groups[0].id;
-  assert.throws(() => session.react(A, g, ['🙋'], null, 'x'.repeat(201)), /up to 200/);
-  session.react(A, g, ['🙋'], null, 'x'.repeat(200));
+  const { receipt } = session.afterthought(A, 'second thoughts');
+  session.afterthought(A, '', receipt);
+  assert.deepEqual(session.state.afterthoughts, []);
+  assert.throws(() => session.afterthought(A, 'a new one'), /already added a thought/);
+  // The receipt still works: the phone can write it again.
+  session.afterthought(A, 'back again', receipt);
+  assert.deepEqual(session.state.afterthoughts.map((t) => t.text), ['back again']);
 });
 
-async function sevenComments() {
-  const made = make();
-  const { session } = made;
-  await toReact(session);
-  const groups = session.view('phone', { cid: A }).react.groups;
-  const stream = groups.map((g) => g.id);
-  PHONES.forEach((cid, i) => session.react(cid, stream[0], ['🙋'], null, `comment ${i}`));
-  session.advance(); // walk, on the overview
-  const idOf = (groupId) => session.state.walk.stream.findIndex((it) => it.groupId === groupId);
-  while (session.state.walk.index < idOf(stream[0])) session.moveCard(1);
-  return made;
-}
-
-test('the projector shows up to 5 comments, the rest counted', async () => {
-  const { session } = await sevenComments();
-  const one = session.view('projector').walk.comments;
-  assert.equal(one.shown.length, 5);
-  assert.equal(one.more, 2);
-  assert.deepEqual(session.view('projector').walk.comments, one);
-  assert.equal(JSON.stringify(session.view('phone', { cid: A })).includes('comment 0'), false);
-});
-
-test('comments show oldest first; the newest are the ones counted in +N more', async () => {
-  const { session } = await sevenComments();
-  const { shown, more } = session.view('projector').walk.comments;
-  assert.deepEqual(shown.map((c) => c.text), [0, 1, 2, 3, 4].map((i) => `comment ${i}`));
-  assert.equal(more, 2);
-  const all = session.view('facilitator').comments.current;
-  assert.deepEqual(all.map((c) => c.text), [0, 1, 2, 3, 4, 5, 6].map((i) => `comment ${i}`));
-});
-
-test('editing a comment keeps its place', async () => {
+test("a removed thought can't come back with its receipt", async () => {
   const { session } = make();
   await toReact(session);
-  const g = session.view('phone', { cid: A }).react.groups[0].id;
-  const { receipt } = session.react(A, g, ['🙋'], null, 'first');
-  session.react(B, g, ['🙋'], null, 'second');
-  session.react(A, g, ['🙋'], receipt, 'first, edited');
-  assert.deepEqual(session.allCommentsFor(g).map((c) => c.text), ['first, edited', 'second']);
-  // A comment added on a later resend goes to the end.
-  const { receipt: rb } = session.react(C, g, ['🙋']);
-  session.react(C, g, ['🙋'], rb, 'late');
-  assert.deepEqual(session.allCommentsFor(g).map((c) => c.text), ['first, edited', 'second', 'late']);
+  const { receipt } = session.afterthought(A, 'mean');
+  const [t] = session.view('facilitator').react.afterthoughts;
+  session.removeAfterthought(t.id);
+  assert.deepEqual(session.state.afterthoughts, []);
+  assert.throws(() => session.removeAfterthought(t.id), /No such thought/);
+  assert.deepEqual(session.afterthought(A, 'mean again', receipt), { receipt });
+  assert.deepEqual(session.state.afterthoughts, []);
+  assert.equal(JSON.stringify(session.state.removedAfterthoughts).includes(A), false);
 });
 
-test('the emoji limit says how many to remove', async () => {
+test('thoughts are closed outside reactions, except the 10-second grace', async () => {
+  const { session, clock } = make();
+  session.advance(); // submit
+  assert.throws(() => session.afterthought(A, 'too early'), /Thoughts are closed/);
+  session.submitCards(A, ['one']);
+  session.advance(); // cluster
+  await flush();
+  assert.throws(() => session.afterthought(A, 'too early'), /Thoughts are closed/);
+  session.advance(); // react
+  const { receipt } = session.afterthought(A, 'in time');
+  session.advance(); // walk
+  clock.tick(9000);
+  session.afterthought(B, 'just in time');
+  session.afterthought(A, 'changed in time', receipt);
+  clock.tick(2000);
+  assert.throws(() => session.afterthought(C, 'too late'), /Thoughts are closed/);
+  assert.throws(() => session.afterthought(A, 'too late', receipt), /Thoughts are closed/);
+  assert.deepEqual(session.state.afterthoughts.map((t) => t.text).sort(), ['changed in time', 'just in time']);
+});
+
+test('phones never receive thoughts', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.afterthought(A, 'zebra thought');
+  const phones = () => JSON.stringify([session.view('phone', { cid: A }), session.view('phone', { cid: B })]);
+  assert.equal(phones().includes('zebra'), false);
+  session.advance(); // walk
+  const w = session.state.walk;
+  for (let i = 0; i < w.stream.length; i++) {
+    session.moveTo(i);
+    assert.equal(phones().includes('zebra'), false);
+  }
+  assert.ok(JSON.stringify(session.view('projector')).includes('zebra'), 'control: the last slide shows it');
+});
+
+test("the projector gets the thoughts' text only, on the last slide", async () => {
+  const { session } = make();
+  await toReact(session);
+  session.afterthought(A, 'first thought');
+  session.afterthought(B, 'second thought');
+  session.advance(); // walk
+  const w = session.state.walk;
+  const last = w.stream.length - 1;
+  for (let i = 0; i < last; i++) {
+    session.moveTo(i);
+    const p = session.view('projector');
+    assert.equal('afterthoughts' in p.walk, false);
+    assert.equal(JSON.stringify(p).includes('thought'), false);
+  }
+  session.moveTo(last);
+  const p = session.view('projector');
+  assert.deepEqual(p.walk.afterthoughts, [{ text: 'first thought' }, { text: 'second thought' }]);
+  // The facilitator sees them with their ids, to remove one, and their
+  // harshness check and reviewed mark (never their receipts).
+  const f = session.view('facilitator').walk.afterthoughts;
+  assert.deepEqual(f.map((t) => t.text), ['first thought', 'second thought']);
+  for (const t of f) assert.deepEqual(Object.keys(t).sort(), ['harsh', 'id', 'reviewed', 'text']);
+  session.removeAfterthought(f[0].id);
+  assert.deepEqual(session.view('projector').walk.afterthoughts, [{ text: 'second thought' }]);
+});
+
+test('the emoji limit is 22: 16 presets plus 6 of your own', async () => {
   const { session } = make();
   await toReact(session);
   const g = session.view('phone', { cid: A }).react.groups[0].id;
   const many = (n) => Array.from({ length: n }, (_, i) => String.fromCodePoint(0x1f600 + i));
-  session.react(A, g, many(14));
-  assert.throws(() => session.react(B, g, many(15)), /Up to 14 emojis on a card: remove 1$/);
-  assert.throws(() => session.react(B, g, many(17)), /remove 3$/);
+  session.react(A, g, many(22));
+  assert.throws(() => session.react(B, g, many(23)), /Up to 22 emojis on a card: remove 1$/);
+  assert.throws(() => session.react(B, g, many(25)), /remove 3$/);
 });
-
-test('the facilitator sees every comment on the current and next card, and can remove one', async () => {
-  const { session } = await sevenComments();
-  const f = session.view('facilitator').comments;
-  assert.equal(f.current.length, 7);
-  assert.deepEqual(f.next, []);
-  const gone = f.current[0];
-  session.removeComment(gone.id);
-  assert.equal(JSON.stringify(session.view('projector')).includes(gone.text), false);
-  assert.equal(session.view('facilitator').comments.current.length, 6);
-});
-
-test('the facilitator also sees comments on the next card', async () => {
-  const { session } = await toReactAndComment();
-  const f = session.view('facilitator').comments;
-  assert.deepEqual(f.current, []);
-  assert.equal(f.next.length, 1);
-});
-
-async function toReactAndComment() {
-  const made = make();
-  const { session } = made;
-  await toReact(session);
-  const g = session.view('phone', { cid: A }).react.groups[0].id;
-  session.react(A, g, [], null, 'for later');
-  session.advance(); // walk, on the overview
-  while (session.currentItem().groupId !== g && session.state.walk.index < session.state.walk.stream.length - 1) {
-    const next = session.state.walk.stream[session.state.walk.index + 1];
-    if (next.groupId === g) break;
-    session.moveCard(1);
-  }
-  return made;
-}
 
 test('the anonymous pause and move on are gone', async () => {
   const { session } = make();
@@ -368,7 +441,6 @@ test('the anonymous pause and move on are gone', async () => {
   session.advance();
   assert.equal(session.requestPause, undefined);
   assert.equal(session.acceptPause, undefined);
-  assert.throws(() => session.signal(A, 'moveOn', true), /Unknown signal/);
 });
 
 test('finale gets the reaction sequence, nothing else', async () => {
@@ -693,10 +765,792 @@ test('a theme without a haiku shows none on the projector', async () => {
   assert.equal('haiku' in session.view('projector').walk.item, false);
 });
 
-test("the projector's comments carry text only", async () => {
-  const { session } = await sevenComments();
-  const { shown } = session.view('projector').walk.comments;
-  assert.equal(shown.length, 5);
-  for (const c of shown) assert.deepEqual(Object.keys(c), ['text']);
-  assert.deepEqual(Object.keys(session.view('facilitator').comments.current[0]).includes('id'), true);
+// Hex phone ids for a crowd.
+const phone = (i) => i.toString(16).padStart(24, '0');
+
+// A room with `count` distinct cards, each its own group, in reactions.
+async function toReactWith(session, count) {
+  session.advance(); // submit
+  for (let i = 0; i < count; i += 3) {
+    session.submitCards(phone(i + 1), Array.from({ length: Math.min(3, count - i) }, (_, j) => `card ${i + j}`));
+  }
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+}
+
+test('a phone can react to deckSize cards, no more', async () => {
+  const { session } = make();
+  await toReactWith(session, 35);
+  const v = session.view('phone', { cid: A }).react;
+  assert.equal(v.groups.length, 35);
+  assert.equal(v.deckSize, 30); // 5 minutes: (300 - 60) / 8
+  const receipts = v.groups.slice(0, 30).map((g) => session.react(A, g.id, ['🙋']).receipt);
+  assert.throws(() => session.react(A, v.groups[30].id, ['🙋']), /You have reacted to every card in your deck/);
+  // Changing a card already sent still works past the limit.
+  session.react(A, v.groups[0].id, ['🎉'], receipts[0]);
+  assert.deepEqual(session.emojiMix(v.groups[0].id), [['🎉', 1]]);
+  // Another phone's sends count against its own deck, not A's.
+  assert.match(session.react(B, v.groups[34].id, ['🙋']).receipt, /^[0-9a-f]{16}$/);
+  assert.deepEqual(session.emojiMix(v.groups[34].id), [['🙋', 1]]);
+  assert.equal(session.state.clients[B].reacted, 1);
+  // Fewer cards than the deck size: every card.
+  const small = make().session;
+  await toReact(small);
+  assert.equal(small.view('phone', { cid: A }).react.deckSize, 3);
+});
+
+test("the deck size is fixed when reactions start; +1 minute doesn't change it", async () => {
+  const { session, clock } = make();
+  await toReactWith(session, 35);
+  assert.equal(session.state.deckSize, 30);
+  const f = session.view('facilitator').react;
+  assert.equal(f.deckSize, 30);
+  assert.equal(f.total, 35);
+  clock.tick(4 * 60_000);
+  session.extendReact();
+  assert.equal(session.view('phone', { cid: A }).react.deckSize, 30);
+  // Back from the walk-through keeps it (with a minute added to the window).
+  session.advance(); // walk
+  session.back(); // react
+  assert.equal(session.view('phone', { cid: A }).react.deckSize, 30);
+  assert.equal(session.view('facilitator').react.deckSize, 30);
+  // A session saved before decks had a size gets one when it loads.
+  const saved = JSON.parse(JSON.stringify(session.state));
+  delete saved.deckSize;
+  const loaded = new Session({ state: saved, now: clock.now });
+  assert.equal(loaded.view('phone', { cid: A }).react.deckSize, 30);
+  assert.equal(loaded.view('facilitator').react.deckSize, 30);
+  const groups = loaded.view('phone', { cid: C }).react.groups;
+  for (const g of groups.slice(0, 30)) loaded.react(C, g.id, ['🙋']);
+  assert.throws(() => loaded.react(C, groups[30].id, ['🙋']), /every card in your deck/);
+});
+
+test('a card hidden mid-reaction shrinks the deck without stranding a phone', async () => {
+  // Fewer cards than the deck size: the deck shrinks with the cards.
+  const { session } = make();
+  await toReact(session); // 3 cards, deck of 3
+  const [first, ...rest] = session.view('phone', { cid: A }).react.groups;
+  session.react(A, first.id, ['🙋']);
+  session.hideCard(session.findGroup(first.id).group.cardIds[0], true);
+  const v = session.view('phone', { cid: A }).react;
+  assert.equal(v.groups.length, 2);
+  // A's deck, as the phone works it out: "Card n of 2".
+  const aDeck = deck(v.groups.map((g) => g.id), 'seed-a', v.deckSize, new Set([first.id]));
+  assert.deepEqual([...aDeck].sort((x, y) => x - y), rest.map((g) => g.id).sort((x, y) => x - y));
+  // A has spent one send on the hidden card and can still react to both left.
+  for (const g of rest) session.react(A, g.id, ['🙋']);
+  // A phone that hadn't started reacts to the two left, and no more.
+  for (const g of rest) session.react(B, g.id, ['🙋']);
+  assert.throws(() => session.react(B, first.id, ['🙋']), /No such card/);
+
+  // More cards than the deck size: the next card fills the hidden one's slot.
+  const big = make().session;
+  await toReactWith(big, 35);
+  const groups = big.view('phone', { cid: A }).react.groups;
+  for (const g of groups.slice(0, 30)) big.react(A, g.id, ['🙋']);
+  big.hideCard(big.findGroup(groups[0].id).group.cardIds[0], true);
+  // Still a deck of 30 among the 34 left, so A can react to the card that moved up.
+  const after = big.view('phone', { cid: A }).react;
+  assert.equal(after.groups.length, 34);
+  assert.equal(after.deckSize, 30);
+  big.react(A, groups[30].id, ['🙋']);
+  assert.throws(() => big.react(A, groups[31].id, ['🙋']), /every card in your deck/);
+});
+
+// A phone working through its deck the way phone.js does: its own deck from
+// the visible cards and the cards it has reacted to, one first send per card.
+function reactThroughDeck(session, cid, seed, reacted, max = Infinity) {
+  const v = session.view('phone', { cid }).react;
+  const mine = deck(v.groups.map((g) => g.id), seed, v.deckSize, reacted);
+  let refused = 0;
+  for (const id of mine) {
+    if (reacted.has(id) || reacted.size >= max) continue;
+    try {
+      session.react(cid, id, ['🙋']);
+      reacted.add(id);
+    } catch {
+      refused += 1;
+    }
+  }
+  return { deck: mine, refused };
+}
+
+test('late cards never push a reacted card out of a deck, so no send is refused', async () => {
+  const { session } = make();
+  await toReactWith(session, 35);
+  const phones = Array.from({ length: 40 }, (_, i) => ({ cid: phone(1000 + i), seed: `seed-${i}`, reacted: new Set() }));
+  for (const p of phones) reactThroughDeck(session, p.cid, p.seed, p.reacted, 25);
+  assert.ok(phones.every((p) => p.reacted.size === 25));
+  session.back(); // cluster
+  session.back(); // submit
+  session.submitCards(phone(500), ['late 1', 'late 2', 'late 3']);
+  session.submitCards(phone(501), ['late 4', 'late 5', 'late 6']);
+  session.submitCards(phone(502), ['late 7', 'late 8']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  assert.equal(session.view('phone', { cid: A }).react.groups.length, 43);
+  for (const p of phones) {
+    const { deck: mine, refused } = reactThroughDeck(session, p.cid, p.seed, p.reacted);
+    assert.equal(refused, 0);
+    assert.equal(mine.length, 30);
+    // Every card the phone reacted to is still in its deck.
+    assert.equal(p.reacted.size, 30);
+    assert.ok([...p.reacted].every((id) => mine.includes(id)));
+  }
+});
+
+test('a card unhidden mid-reaction joins every deck when there is time for it', async () => {
+  const { session } = make();
+  session.advance(); // submit
+  for (let i = 0; i < 10; i += 3) session.submitCards(phone(i + 1), Array.from({ length: Math.min(3, 10 - i) }, (_, j) => `card ${i + j}`));
+  session.advance(); // cluster
+  await flush();
+  const hidden = session.state.cards[0].id;
+  session.hideCard(hidden, true);
+  session.advance(); // react
+  assert.equal(session.view('phone', { cid: A }).react.deckSize, 9);
+  assert.equal(session.view('facilitator').react.deckSize, 9);
+  session.hideCard(hidden, false);
+  const v = session.view('phone', { cid: A }).react;
+  assert.equal(v.groups.length, 10);
+  assert.equal(v.deckSize, 10);
+  assert.equal(session.view('facilitator').react.deckSize, 10);
+  for (let i = 0; i < 5; i++) {
+    const p = { cid: phone(2000 + i), seed: `seed-${i}`, reacted: new Set() };
+    const { deck: mine, refused } = reactThroughDeck(session, p.cid, p.seed, p.reacted);
+    assert.equal(mine.length, 10);
+    assert.equal(refused, 0);
+  }
+});
+
+// A phone moving through its deck the way phone.js does: Next from the card
+// it last showed (the place is kept by card), and past the end, the first
+// card in its deck it hasn't seen, before finishing; Next from such a card
+// goes on to the next one not seen, or the end.
+function navigate(session, p, maxSteps = 50) {
+  for (let n = 0; n < maxSteps; n++) {
+    const v = session.view('phone', { cid: p.cid }).react;
+    const ids = deck(v.groups.map((g) => g.id), p.seed, v.deckSize, p.reacted);
+    let next = p.shown === null ? 0 : p.catchingUp ? ids.length : ids.indexOf(p.shown) + 1;
+    if (next >= ids.length) {
+      const end = deckEnd(ids, v.groups.length, p.seen);
+      if (end.unseen === null) return { finished: true, everyCard: end.everyCard };
+      next = ids.indexOf(end.unseen);
+      p.catchingUp = true;
+    }
+    p.shown = ids[next];
+    p.seen.add(p.shown);
+    if (!p.reacted.has(p.shown)) {
+      session.react(p.cid, p.shown, ['🙋']);
+      p.reacted.add(p.shown);
+    }
+  }
+  return { finished: false };
+}
+
+test('a card unhidden behind a phone is still reached before the end of its deck', async () => {
+  const { session } = make();
+  session.advance(); // submit
+  for (let i = 0; i < 10; i += 3) session.submitCards(phone(i + 1), Array.from({ length: Math.min(3, 10 - i) }, (_, j) => `card ${i + j}`));
+  session.advance(); // cluster
+  await flush();
+  const card = session.state.cards[0];
+  session.hideCard(card.id, true);
+  session.advance(); // react
+  const groupId = session.state.themes.flatMap((t) => t.groups).find((g) => g.cardIds.includes(card.id)).id;
+  const phones = Array.from({ length: 20 }, (_, i) => ({ cid: phone(3000 + i), seed: `seed-${i}`, reacted: new Set(), seen: new Set(), shown: null }));
+  for (const p of phones) navigate(session, p, 5);
+  session.hideCard(card.id, false);
+  // For some phones the card lands behind where they are.
+  const behind = phones.filter((p) => {
+    const ids = deck(session.view('phone', { cid: p.cid }).react.groups.map((g) => g.id), p.seed, 10, p.reacted);
+    return ids.indexOf(groupId) < ids.indexOf(p.shown);
+  });
+  assert.ok(behind.length > 0);
+  for (const p of phones) {
+    const end = navigate(session, p);
+    assert.deepEqual(end, { finished: true, everyCard: true });
+    assert.equal(p.seen.size, 10);
+    assert.ok(p.seen.has(groupId));
+  }
+});
+
+test('finishing is reset when reactions start again from grouping, kept when coming back from the walk-through', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.reactDone(A);
+  session.advance(); // walk
+  session.back(); // react
+  assert.equal(session.state.clients[A].reactDone, true);
+  assert.equal(session.view('phone', { cid: A }).react.done, true);
+  session.back(); // cluster
+  session.back(); // submit
+  session.submitCards(C, ['late']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  assert.equal(session.state.clients[A].reactDone, false);
+  assert.equal(session.view('phone', { cid: A }).react.done, false);
+  assert.equal(session.view('facilitator').react.done, 0);
+});
+
+// ---- the quiet count of people writing ------------------------------------
+
+test('writing counts phones that typed in the last 20 seconds', () => {
+  const { session, clock, changes } = make();
+  session.advance(); // submit
+  session.typing(A);
+  clock.tick(15_000);
+  session.typing(B);
+  assert.equal(session.view('projector').writing, 2);
+  assert.equal(session.view('facilitator').writing, 2);
+  clock.tick(6_000); // A's last keystroke is now 21 seconds old
+  assert.equal(session.view('projector').writing, 1);
+  session.typing(B);
+  session.typing(B); // the same phone twice is still one person
+  assert.equal(session.view('projector').writing, 1);
+  // Not a phase that counts, a bad id, or text smuggled in: nothing recorded, no error.
+  assert.throws(() => session.typing('nope'), /Missing phone id/);
+  assert.throws(() => session.typing('__proto__'), /Missing phone id/);
+  session.typing(C, 'secret text');
+  assert.deepEqual(Object.keys(session.activity.get(C)).sort(), ['typedAt', 'unsent']);
+  assert.equal(JSON.stringify([...session.activity]).includes('secret'), false);
+  // Join: the notepad is open and typing counts, but no screen shows the count
+  // until Submit, and nothing is broadcast for it.
+  session.back();
+  clock.tick(30_000);
+  session.tick();
+  const before = changes();
+  session.typing(A);
+  session.tick();
+  assert.equal(changes(), before, 'nothing shown, nothing broadcast');
+  assert.equal(session.view('projector').writing, undefined);
+  assert.equal(session.view('facilitator').writing, undefined);
+  session.advance(); // submit
+  assert.equal(session.view('projector').writing, 1, 'typing at Join counts once the room reaches Submit');
+});
+
+test('the count falls on its own, broadcast by tick', () => {
+  const { session, clock, changes } = make();
+  session.advance(); // submit
+  session.typing(A);
+  const before = changes();
+  session.tick();
+  assert.equal(changes(), before, 'nothing changed, nothing broadcast');
+  clock.tick(21_000);
+  session.tick();
+  assert.equal(changes(), before + 1, 'the count fell, so one broadcast');
+  assert.equal(session.view('projector').writing, 0);
+  session.tick();
+  assert.equal(changes(), before + 1);
+  assert.equal(session.activity.size, 0, 'old entries are dropped');
+});
+
+test('unsent thoughts are counted for the facilitator only', async () => {
+  const { session, clock, changes } = make();
+  await toReact(session);
+  session.unsent(A, true);
+  session.unsent(B, true);
+  session.unsent(B, true);
+  assert.equal(session.view('facilitator').unsent, 2);
+  assert.equal(session.view('projector').unsent, undefined);
+  assert.equal(session.view('phone', { cid: A }).unsent, undefined);
+  assert.equal(session.view('phone', { cid: A }).writing, undefined);
+  clock.tick(60_000);
+  session.tick();
+  assert.equal(session.view('facilitator').unsent, 2, 'an unsent thought outlasts the typing window');
+  const before = changes();
+  session.unsent(A, false);
+  assert.equal(session.view('facilitator').unsent, 1);
+  assert.equal(changes(), before + 1);
+  session.advance(); // walk: the room moved on
+  assert.equal(session.view('facilitator').unsent, undefined);
+  session.back();
+  assert.equal(session.view('facilitator').unsent, 0, 'leaving react forgets who was unsent');
+  session.unsent(C, true);
+  session.advance();
+  session.unsent(C, true); // not react: ignored
+  assert.equal(session.activity.get(C)?.unsent ?? false, false);
+});
+
+test('phones never receive the writing count', async () => {
+  const { session } = make();
+  session.advance();
+  session.typing(A);
+  assert.equal(JSON.stringify(session.view('phone', { cid: A })).includes('writing'), false);
+  await flush();
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.typing(A);
+  session.unsent(A, true);
+  const v = session.view('phone', { cid: A });
+  assert.equal('writing' in v || 'unsent' in v || 'writing' in (v.react ?? {}) || 'unsent' in (v.react ?? {}), false);
+});
+
+test('the writing count is memory only: never in the saved state, gone at the shred and the reset', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.typing(A);
+  session.unsent(B, true);
+  const saved = JSON.stringify(session.state);
+  assert.equal(/typedAt|activity|unsent/.test(saved), false, 'nothing about typing is in the persisted state');
+  session.advance();
+  session.advance();
+  session.advance({ confirm: true });
+  assert.equal(session.activity.size, 0);
+  session.reset();
+  assert.equal(session.activity.size, 0);
+  assert.equal(session.view('facilitator').writing, undefined);
+});
+
+// ---- taking back and swapping shared cards --------------------------------
+
+const texts = (session) => session.state.cards.map((c) => c.text).sort();
+
+test('a phone can take back a shared card while submissions are open, and share another in its place', () => {
+  const { session } = make();
+  session.advance(); // submit
+  const { receipts } = session.submitCards(A, ['one', 'two']);
+  assert.equal(receipts.length, 2);
+  for (const r of receipts) assert.match(r, /^[0-9a-f]{16}$/);
+  assert.notEqual(receipts[0], receipts[1]);
+  // Receipts are kept apart from the cards, and carry no phone id.
+  assert.equal(session.state.cardReceipts[receipts[0]], session.state.cards.find((c) => c.text === 'one').id);
+  assert.equal(JSON.stringify(session.state.cardReceipts).includes(A), false);
+  assert.equal(JSON.stringify(session.state.cards).includes(receipts[0]), false);
+  // Take one back: the card is deleted, not hidden, and the count goes down.
+  assert.deepEqual(session.submitCards(A, [], [receipts[0]]), { receipts: [] });
+  assert.deepEqual(texts(session), ['two']);
+  assert.equal(session.state.clients[A].cards, 1);
+  assert.equal(receipts[0] in session.state.cardReceipts, false);
+  assert.equal(session.view('phone', { cid: A }).submit.submitted, 1);
+  // Its place is free again.
+  const again = session.submitCards(A, ['three', 'four']);
+  assert.equal(again.receipts.length, 2);
+  assert.deepEqual(texts(session), ['four', 'three', 'two']);
+  assert.equal(session.state.clients[A].cards, 3);
+});
+
+test('taking back and sharing happen together: with 3 shared, swapping 1 for 1 leaves 3', () => {
+  const { session } = make();
+  session.advance(); // submit
+  const { receipts } = session.submitCards(A, ['one', 'two', 'three']);
+  assert.throws(() => session.submitCards(A, ['four']), { message: 'Up to 3 cards at a time: take one back first' });
+  const swap = session.submitCards(A, ['four'], [receipts[1]]);
+  assert.equal(swap.receipts.length, 1);
+  assert.deepEqual(texts(session), ['four', 'one', 'three']);
+  assert.equal(session.state.clients[A].cards, 3);
+  assert.equal(session.state.cardReceipts[swap.receipts[0]], session.state.cards.find((c) => c.text === 'four').id);
+  // Two for two; the receipts come back in the order the cards were sent.
+  const two = session.submitCards(A, ['five', 'six'], [receipts[0], receipts[2]]);
+  assert.deepEqual(texts(session), ['five', 'four', 'six']);
+  assert.equal(session.state.cardReceipts[two.receipts[0]], session.state.cards.find((c) => c.text === 'five').id);
+  assert.equal(session.state.cardReceipts[two.receipts[1]], session.state.cards.find((c) => c.text === 'six').id);
+  assert.equal(Object.keys(session.state.cardReceipts).length, 3);
+});
+
+test('a swap that would leave more than 3 is refused and changes nothing', () => {
+  const { session } = make();
+  session.advance(); // submit
+  const { receipts } = session.submitCards(A, ['one', 'two', 'three']);
+  const before = JSON.stringify(session.state);
+  assert.throws(() => session.submitCards(A, ['four', 'five'], [receipts[0]]), { message: 'Up to 3 cards at a time: take one back first' });
+  // Everything is checked before anything changes: a bad card or a bad receipt fails the whole call.
+  assert.throws(() => session.submitCards(A, ['x'.repeat(201)], [receipts[0]]), /1 to 200/);
+  assert.throws(() => session.submitCards(A, ['four'], [receipts[0], 'feedfacefeedface']), { message: 'Nothing to take back' });
+  assert.throws(() => session.submitCards(A, ['four', 'five'], [receipts[0], receipts[0]]), { message: 'Nothing to take back' });
+  assert.throws(() => session.submitCards(A, [], []), /Nothing to submit/);
+  assert.equal(JSON.stringify(session.state), before);
+});
+
+test('a card can be taken back after the time is up, until grouping starts, but not after', async () => {
+  const { session, clock } = make();
+  const early = session.submitCards(A, ['shared at join', 'second']).receipts;
+  session.submitCards(A, [], [early[1]]); // at Join
+  session.advance(); // submit
+  clock.tick(6 * 60_000); // the 5 minutes are over; the facilitator hasn't confirmed
+  session.tick();
+  await flush();
+  assert.equal(session.state.phase, 'submit');
+  assert.equal(session.view('facilitator').move.to, 'cluster');
+  const late = session.submitCards(B, ['after time', 'kept']).receipts;
+  session.submitCards(B, [], [late[0]]);
+  assert.deepEqual(texts(session), ['kept', 'shared at join']);
+  session.advance(); // cluster: grouping has started
+  await flush();
+  const before = JSON.stringify(session.state);
+  const started = { message: "Grouping has started: shared cards can't be taken back now" };
+  assert.throws(() => session.submitCards(B, [], [late[1]]), started);
+  assert.throws(() => session.submitCards(A, ['new'], [early[0]]), started);
+  // A share alone isn't taking anything back: it is told sharing is closed.
+  assert.throws(() => session.submitCards(A, ['new']), { message: 'Submissions are closed' });
+  assert.equal(JSON.stringify(session.state), before);
+  session.advance(); // react
+  assert.throws(() => session.submitCards(B, [], [late[1]]), started);
+  // Back to submissions: open again.
+  session.back();
+  session.back();
+  assert.equal(session.state.phase, 'submit');
+  session.submitCards(B, [], [late[1]]);
+  assert.deepEqual(texts(session), ['shared at join']);
+});
+
+test('a receipt takes back only its own card, once', () => {
+  const { session } = make();
+  session.advance(); // submit
+  const a = session.submitCards(A, ['mine one', 'mine two']).receipts;
+  session.submitCards(B, ['theirs']);
+  session.submitCards(A, [], [a[0]]);
+  assert.deepEqual(texts(session), ['mine two', 'theirs']);
+  for (const bad of [a[0], '__proto__', 'constructor', 42, null]) {
+    assert.throws(() => session.submitCards(A, [], [bad]), { message: 'Nothing to take back' });
+  }
+  assert.deepEqual(texts(session), ['mine two', 'theirs']);
+  assert.equal(session.state.clients[A].cards, 1);
+  assert.equal(session.state.clients[B].cards, 1);
+});
+
+test("the saved receipts don't show the order cards arrived in, or which a phone sent together", () => {
+  const { session } = make();
+  session.advance(); // submit
+  // Interleaved: A, B, A, C, B, then a swap by A.
+  const a1 = session.submitCards(A, ['a1', 'a2']).receipts;
+  session.submitCards(B, ['b1']);
+  session.submitCards(A, ['a3'], [a1[0]]);
+  session.submitCards(C, ['c1', 'c2', 'c3']);
+  session.submitCards(B, ['b2']);
+  // As saved: the receipts sorted, whatever order they came in.
+  const saved = JSON.parse(JSON.stringify(session.state)).cardReceipts;
+  const keys = Object.keys(saved);
+  assert.equal(keys.length, 7);
+  assert.deepEqual(keys, [...keys].sort());
+  // So the card ids follow the receipts' order, not the cards'.
+  const receiptOf = new Map(Object.entries(saved).map(([r, id]) => [id, r]));
+  const byReceipt = session.state.cards.map((c) => c.id).sort((x, y) => (receiptOf.get(x) < receiptOf.get(y) ? -1 : 1));
+  assert.deepEqual(Object.values(saved), byReceipt);
+  // A reload keeps them in that order.
+  const reloaded = new Session({ state: JSON.parse(JSON.stringify(session.state)), now: () => 1, clusterCards: async () => ({ themes: [] }) });
+  assert.deepEqual(Object.keys(reloaded.state.cardReceipts), keys);
+});
+
+test("the demo's cards have no receipt, so no phone can take them back", () => {
+  const session = new Session({
+    now: () => 1_000_000,
+    clusterCards: async () => ({ themes: [] }),
+    demo: { teaser: { title: 't', lines: [] }, notes: [{ text: 'demo shared', share: true }] },
+  });
+  session.advance(); // demo
+  session.advance(); // join: the demo's card joins
+  assert.deepEqual(texts(session), ['demo shared']);
+  assert.deepEqual(session.state.cardReceipts, {});
+});
+
+test('receipts never reach the phone, projector or facilitator views', async () => {
+  const { session } = make();
+  session.advance(); // submit
+  const receipts = [...session.submitCards(A, ['one', 'two']).receipts, ...session.submitCards(B, ['three', 'four']).receipts];
+  receipts.push(...session.submitCards(B, ['five'], [receipts[3]]).receipts);
+  const views = [];
+  const look = () => {
+    for (const cid of [A, B, C]) views.push(session.view('phone', { cid }));
+    views.push(session.view('projector'), session.view('facilitator'));
+  };
+  look();
+  session.advance(); // cluster
+  await flush();
+  look();
+  session.advance(); // react
+  look();
+  session.advance(); // walk
+  look();
+  const all = JSON.stringify(views);
+  assert.ok(all.includes('three'), 'control: the views carry cards');
+  for (const r of receipts) assert.equal(all.includes(r), false);
+  assert.equal(all.includes('cardReceipts'), false);
+});
+
+// ---- the harshness check and reviewed marks --------------------------------
+
+// A session at Submit with a stand-in harshness check: `levels` maps a card
+// or thought's text to its answer; text not in it is left out of the answer.
+function makeChecked(levels = {}, { fail = false } = {}) {
+  let t = 1_000_000;
+  const clock = { now: () => t, tick: (ms) => (t += ms) };
+  const calls = [];
+  const logged = [];
+  const session = new Session({
+    now: clock.now,
+    clusterCards: async (cards) => ({ themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }),
+    checkHarshness: async (items) => {
+      calls.push(items);
+      if (fail) throw new Error('timed out');
+      return new Map(items.filter((i) => levels[i.text]).map((i) => [i.id, levels[i.text]]));
+    },
+    log: (line) => logged.push(line),
+    shredAnimationMs: 10,
+  });
+  session.advance(); // demo
+  session.advance(); // join
+  session.advance(); // submit
+  return { session, clock, calls, logged };
+}
+
+const tickFor = (session, clock, ms) => {
+  for (let i = 0; i < ms / 1000; i++) {
+    clock.tick(1000);
+    session.tick();
+  }
+};
+
+test('cards are checked once things are quiet for 5 seconds; levels reach the facilitator only', async () => {
+  const levels = {
+    fine: { level: 0, reason: '' },
+    edgy: { level: 1, reason: 'A sharp jab REASON-EDGY' },
+    cruel: { level: 2, reason: 'Puts down a team REASON-CRUEL' },
+    'a thought': { level: 1, reason: 'Edgy thought REASON-THOUGHT' },
+  };
+  const { session, clock, calls } = makeChecked(levels);
+  session.submitCards(A, ['fine', 'edgy']);
+  tickFor(session, clock, 4000);
+  session.submitCards(B, ['cruel', 'hidden one']);
+  session.hideCard(session.state.cards.find((c) => c.text === 'hidden one').id, true);
+  tickFor(session, clock, 4000);
+  await flush();
+  assert.equal(calls.length, 0, 'not while cards keep coming');
+  tickFor(session, clock, 1000);
+  await flush();
+  assert.equal(calls.length, 1, 'once there have been 5 seconds with nothing new');
+  assert.deepEqual(calls[0].map((i) => i.text).sort(), ['cruel', 'edgy', 'fine'], 'every unchecked visible card, in one call; never a hidden one');
+  await flush();
+
+  const f = session.view('facilitator');
+  const by = (text) => f.cards.find((c) => c.text === text);
+  assert.deepEqual(by('fine').harsh, { level: 0, reason: '' });
+  assert.deepEqual(by('edgy').harsh, { level: 1, reason: 'A sharp jab REASON-EDGY' });
+  assert.deepEqual(by('cruel').harsh, { level: 2, reason: 'Puts down a team REASON-CRUEL' });
+  assert.equal(by('hidden one').harsh, null);
+  assert.equal(by('fine').reviewed, false);
+
+  // Nothing new: nothing is sent again.
+  tickFor(session, clock, 10_000);
+  await flush();
+  assert.equal(calls.length, 1);
+
+  // A thought is checked the same way, on its own (the cards are already checked).
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.afterthought(C, 'a thought');
+  tickFor(session, clock, 5000);
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].map((i) => i.text), ['a thought']);
+  await flush();
+  assert.deepEqual(session.view('facilitator').react.afterthoughts[0].harsh, { level: 1, reason: 'Edgy thought REASON-THOUGHT' });
+
+  // Phones and the projector never see a level, a reason or a reviewed mark.
+  for (const v of [session.view('phone', { cid: A }), session.view('projector')]) {
+    const json = JSON.stringify(v);
+    for (const word of ['harsh', 'REASON-', 'reviewed', 'held']) assert.equal(json.includes(word), false, `${v.role} gets no ${word}`);
+  }
+  session.advance(); // walk
+  while (!session.state.walk.stream[session.state.walk.index].last) session.moveCard(1);
+  for (const v of [session.view('phone', { cid: A }), session.view('projector')]) {
+    const json = JSON.stringify(v);
+    for (const word of ['harsh', 'REASON-', 'reviewed']) assert.equal(json.includes(word), false, `${v.role} gets no ${word} on the last slide`);
+  }
+});
+
+test('a failed harshness check leaves the cards unchecked, logs a fixed line, and blocks nothing', async () => {
+  const { session, clock, calls, logged } = makeChecked({}, { fail: true });
+  session.submitCards(A, ['SECRET-TEXT card']);
+  tickFor(session, clock, 5000);
+  await flush();
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(logged, ['moderation: check failed']);
+  assert.equal(session.view('facilitator').cards[0].harsh, null);
+  session.advance(); // cluster: nothing waits on the check
+  assert.equal(session.state.phase, 'cluster');
+});
+
+test('"Mark the rest reviewed" skips edgy and harsh items and includes unchecked ones', async () => {
+  const levels = {
+    fine: { level: 0, reason: '' },
+    edgy: { level: 1, reason: 'jab' },
+    cruel: { level: 2, reason: 'put-down' },
+    'fine thought': { level: 0, reason: '' },
+    'cruel thought': { level: 2, reason: 'put-down' },
+  };
+  const { session, clock } = makeChecked(levels);
+  session.submitCards(A, ['fine', 'edgy', 'cruel']);
+  session.submitCards(B, ['never answered', 'hidden']);
+  session.hideCard(session.state.cards.find((c) => c.text === 'hidden').id, true);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.afterthought(A, 'fine thought');
+  session.afterthought(B, 'cruel thought');
+  session.afterthought(C, 'unanswered thought');
+  tickFor(session, clock, 5000);
+  await flush();
+
+  // Sorted for the facilitator: unreviewed first, then harshest first (unchecked above fine), hidden last.
+  const order = () => session.view('facilitator').cards.map((c) => c.text);
+  assert.deepEqual(order(), ['cruel', 'edgy', 'never answered', 'fine', 'hidden']);
+  session.review('card', session.state.cards.find((c) => c.text === 'cruel').id, true);
+  assert.deepEqual(order(), ['edgy', 'never answered', 'fine', 'cruel', 'hidden']);
+  session.review('card', session.state.cards.find((c) => c.text === 'cruel').id, false);
+
+  // The button shows only when it would mark something: fine or unchecked items.
+  assert.deepEqual(session.view('facilitator').review, { checking: true, left: 7, rest: 4 });
+  session.reviewRest();
+  const f = session.view('facilitator');
+  assert.deepEqual(f.review, { checking: true, left: 3, rest: 0 }, 'only edgy and harsh are left: no button');
+  const reviewed = Object.fromEntries(f.cards.map((c) => [c.text, c.reviewed]));
+  assert.deepEqual(reviewed, { fine: true, 'never answered': true, edgy: false, cruel: false, hidden: false });
+  const thoughts = Object.fromEntries(f.react.afterthoughts.map((t) => [t.text, t.reviewed]));
+  assert.deepEqual(thoughts, { 'fine thought': true, 'unanswered thought': true, 'cruel thought': false });
+  assert.deepEqual(f.react.afterthoughts.map((t) => t.text)[0], 'cruel thought', 'the unreviewed thought comes first');
+
+  // Each can be marked by itself; a changed thought needs checking and reviewing again.
+  const cruelThought = session.state.afterthoughts.find((t) => t.text === 'cruel thought');
+  session.review('afterthought', cruelThought.id, true);
+  assert.equal(session.view('facilitator').react.afterthoughts.find((t) => t.text === 'cruel thought').reviewed, true);
+  session.afterthought(B, 'cruel thought, edited', cruelThought.r);
+  const edited = session.view('facilitator').react.afterthoughts.find((t) => t.text === 'cruel thought, edited');
+  assert.equal(edited.reviewed, false);
+  assert.equal(edited.harsh, null);
+  assert.throws(() => session.review('card', 12345, true), /No such card/);
+  assert.throws(() => session.review('afterthought', 12345, true), /No such thought/);
+});
+
+test('a card taken back while it is being checked is gone, answer and all; the rest get theirs', async () => {
+  let answer;
+  const { session, clock, calls } = makeChecked();
+  session.checkHarshness = (items) => {
+    calls.push(items);
+    return new Promise((resolve) => (answer = () => resolve(new Map(items.map((i) => [i.id, { level: 1, reason: 'look' }])))));
+  };
+  const receipts = session.submitCards(A, ['kept', 'taken back']).receipts;
+  tickFor(session, clock, 5000);
+  await flush();
+  assert.equal(calls.length, 1);
+  session.submitCards(A, [], [receipts[1]]);
+  answer();
+  await flush();
+  const f = session.view('facilitator');
+  assert.deepEqual(f.cards.map((c) => [c.text, c.harsh?.level]), [['kept', 1]]);
+  assert.equal(JSON.stringify(session.state).includes('taken back'), false);
+});
+
+test('a thought removed while it is being checked stays gone; its answer is dropped', async () => {
+  let answer;
+  const { session, clock, calls } = makeChecked();
+  session.checkHarshness = (items) => {
+    calls.push(items);
+    return new Promise((resolve) => (answer = () => resolve(new Map(items.map((i) => [i.id, { level: 2, reason: 'REASON-GONE' }])))));
+  };
+  session.submitCards(A, ['a card']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  tickFor(session, clock, 5000);
+  await flush();
+  answer(); // the card's check
+  await flush();
+  session.afterthought(B, 'a thought to remove');
+  tickFor(session, clock, 5000);
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].map((i) => i.text), ['a thought to remove']);
+  session.removeAfterthought(session.state.afterthoughts[0].id);
+  answer();
+  await flush();
+  assert.deepEqual(session.state.afterthoughts, []);
+  assert.deepEqual(session.view('facilitator').react.afterthoughts, []);
+  assert.equal(JSON.stringify(session.state.afterthoughts).includes('REASON-GONE'), false);
+  assert.equal(session.view('facilitator').review.left, 1, 'only the card is left to review');
+});
+
+// ---- harshness check batching ------------------------------------------------
+
+const cidN = (n) => String(n).padStart(24, '0');
+
+test('the harshness check fires at most 15 seconds after the first pending item, even while items keep arriving', async () => {
+  const { session, clock, calls } = makeChecked();
+  session.submitCards(cidN(1), ['first']);
+  for (let i = 2; i <= 5; i++) {
+    tickFor(session, clock, 3000);
+    session.submitCards(cidN(i), [`more ${i}`]);
+  }
+  await flush();
+  assert.equal(calls.length, 0, 'still being debounced at 12 s');
+  tickFor(session, clock, 3000); // 15 s since the first; a quiet 5 s would have been 17
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].length, 5);
+});
+
+test('a big check goes in calls of at most 30 items', async () => {
+  const { session, clock, calls } = makeChecked();
+  for (let i = 1; i <= 70; i++) session.submitCards(cidN(i), [`card ${i}`]);
+  tickFor(session, clock, 5000);
+  await flush();
+  await flush();
+  await flush();
+  await flush();
+  assert.deepEqual(calls.map((c) => c.length), [30, 30, 10]);
+});
+
+test('a card hidden or taken back while an earlier batch is in flight is never sent in a later one', async () => {
+  let answer;
+  const { session, clock, calls } = makeChecked();
+  session.checkHarshness = (items) => {
+    calls.push(items);
+    return new Promise((resolve) => (answer = () => resolve(new Map(items.map((i) => [i.id, { level: 1, reason: 'look' }])))));
+  };
+  const receipts = {};
+  for (let i = 1; i <= 40; i++) receipts[i] = session.submitCards(cidN(i), [`card ${i}`]).receipts[0];
+  tickFor(session, clock, 5000);
+  await flush();
+  assert.deepEqual(calls.map((c) => c.length), [30]);
+  // Card order isn't submission order, so pick the two victims from batch 2.
+  const inFirst = new Set(calls[0].map((i) => i.text));
+  const second = Array.from({ length: 40 }, (_, i) => `card ${i + 1}`).filter((t) => !inFirst.has(t));
+  assert.equal(second.length, 10);
+  const [hiddenText, takenText] = second;
+  session.hideCard(session.state.cards.find((c) => c.text === hiddenText).id, true);
+  session.submitCards(cidN(Number(takenText.slice(5))), [], [receipts[Number(takenText.slice(5))]]);
+  answer();
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].map((i) => i.text).sort(), second.slice(2).sort());
+  answer();
+  await flush();
+  const f = session.view('facilitator');
+  assert.equal(f.cards.find((c) => c.text === hiddenText).harsh, null, 'hidden: no result stored');
+  assert.equal(f.cards.find((c) => c.text === second[2]).harsh.level, 1, 'the rest of batch 2 still gets its answer');
+  assert.equal(f.cards.find((c) => c.text === takenText), undefined);
+});
+
+test('a failed harshness check is retried once, not more', async () => {
+  const { session, clock, calls, logged } = makeChecked({}, { fail: true });
+  session.submitCards(A, ['one card']);
+  tickFor(session, clock, 5000);
+  await flush();
+  await flush();
+  assert.equal(calls.length, 1);
+  tickFor(session, clock, 5000);
+  await flush();
+  await flush();
+  assert.equal(calls.length, 2, 'retried after the quiet time');
+  tickFor(session, clock, 30000);
+  await flush();
+  assert.equal(calls.length, 2, 'a second failure is left alone');
+  assert.deepEqual(logged, ['moderation: check failed', 'moderation: check failed']);
+  assert.equal(session.view('facilitator').cards[0].harsh, null);
 });

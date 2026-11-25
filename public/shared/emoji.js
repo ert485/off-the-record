@@ -1,6 +1,6 @@
 // Shared by the phones and the server.
 
-// The 8 preset reactions. Any emoji from the phone keyboard is also allowed.
+// The 16 preset reactions. Any emoji from the phone keyboard is also allowed.
 export const PRESETS = [
   { e: '🙋', label: 'me too' },
   { e: '🫂', label: 'sending care' },
@@ -10,6 +10,14 @@ export const PRESETS = [
   { e: '😤', label: 'frustrated' },
   { e: '😰', label: 'anxious' },
   { e: '🎉', label: 'glad for you' },
+  { e: '🔥', label: 'this is fine' },
+  { e: '🤯', label: 'mind blown' },
+  { e: '🫠', label: 'melting' },
+  { e: '😮‍💨', label: 'relief' },
+  { e: '💪', label: 'proud of you' },
+  { e: '❤️', label: 'love this' },
+  { e: '🙏', label: 'grateful' },
+  { e: '👀', label: 'noticed that' },
 ];
 
 const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });

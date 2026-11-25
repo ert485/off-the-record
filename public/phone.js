@@ -3,15 +3,17 @@
 // reaches the phone or the tab closes. A phone that was offline at the shred
 // wipes them as soon as it reconnects to a later session; the phone also says
 // that closing the tab is the sure way.
-import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle } from './shared/client.js';
+import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle, deck, deckEnd } from './shared/client.js';
 import { PRESETS, firstEmoji } from './shared/emoji.js';
 import { loadChecker, HINT } from './shared/identifier-check.js';
+import { struckParts } from './shared/struck.js';
 
 const PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
+const AFTERTHOUGHT_MAX = 200; // the server's cap on the one thought at the end of the deck
 // Every keyboard puts its emojis somewhere slightly different.
-const MAX_EMOJIS = 14; // the server's cap per card: 8 presets + 6 of your own
+const MAX_EMOJIS = 22; // the server's cap per card: 16 presets + 6 of your own
 const MAX_OWN = 6; // own-emoji chips shown on a card
 
 const EMOJI_KEYBOARD_HOWTO =
@@ -44,6 +46,19 @@ function newId() {
 let cid = local.get('cid');
 if (!cid) local.set('cid', (cid = newId()));
 
+// The seed for this phone's deck: random, made and kept on the phone, never
+// sent, and wiped with the notes, so the server can't work out which cards a
+// phone's deck holds. Kept in memory only if storage doesn't work.
+let deckSeedMemo = null;
+function deckSeed() {
+  let seed = local.get('deckSeed', null);
+  if (!seed) {
+    local.set('deckSeed', newId());
+    seed = local.get('deckSeed', null) ?? (deckSeedMemo ??= newId());
+  }
+  return seed;
+}
+
 let check = () => [];
 loadChecker().then((c) => (check = c));
 
@@ -51,8 +66,13 @@ const app = document.getElementById('app');
 const flash = document.getElementById('flash');
 const status = document.getElementById('status');
 let screen = null;
-let screenPhase = null;
+let screenKeyNow = null;
 let screenSession = null;
+
+// Join and Submit are one screen, the notepad: the room moving from one to the
+// other updates it in place (no rebuild, no buzz, no flash), so someone
+// mid-sentence keeps their text, their focus and their keyboard.
+const screenKey = (phase) => (phase === 'join' || phase === 'submit' ? 'write' : phase);
 
 // Phase change: vibrate where the browser allows it (Android), and flash the
 // screen everywhere (iPhones don't support web vibration).
@@ -71,18 +91,40 @@ subscribe(
     const notesFrom = local.get('session', null);
     if (notesFrom && view.session && notesFrom !== view.session) local.clear();
     if (view.session) local.set('session', view.session);
-    if (view.phase !== screenPhase || view.session !== screenSession) {
+    const key = screenKey(view.phase);
+    if (key !== screenKeyNow || view.session !== screenSession) {
       screenSession = view.session;
-      if (screenPhase !== null) buzz();
+      if (screenKeyNow !== null) buzz();
       screen?.destroy?.();
-      screenPhase = view.phase;
-      screen = SCREENS[view.phase](view);
+      screenKeyNow = key;
+      screen = SCREENS[key](view);
       fill(app, screen.el);
     }
     screen.update?.(view);
   },
   (online) => status.classList.toggle('offline', !online),
 );
+
+// Tells the server this phone is typing, so the room can see people are
+// writing. At most once every 5 seconds, and never with any text. Fire and
+// forget: a dropped one only means a slightly lower count.
+const TYPING_EVERY_MS = 5_000;
+let lastTypingAt = 0;
+function sayTyping() {
+  const t = Date.now();
+  if (t - lastTypingAt < TYPING_EVERY_MS) return;
+  lastTypingAt = t;
+  post('typing', { cid }).catch(() => {});
+}
+
+// Tells the server, only when it changes, whether this phone holds a thought it
+// has typed but not sent (so the facilitator can wait for it). No text.
+let unsentSaid = false;
+function sayUnsent(on) {
+  if (on === unsentSaid) return;
+  unsentSaid = on;
+  post('unsent', { cid, on }).catch(() => (unsentSaid = !on));
+}
 
 function showError(container, err) {
   const msg = h('p', { class: 'hint' }, err.message);
@@ -108,32 +150,14 @@ const SCREENS = {
       'div',
       { class: 'teaser' },
       h('h1', {}, view.teaser.title),
-      view.teaser.lines.map((line) => h('p', {}, line)),
+      // ~~words~~ in a line show struck through, still readable.
+      view.teaser.lines.map((line) => h('p', {}, struckParts(line).map((p) => (p.struck ? h('s', { class: 'struck' }, p.text) : p.text)))),
     ),
   }),
   demo: () => lookUp('Starting soon', 'Look up: the facilitator is showing how this works.'),
-  join: () => ({
-    el: h(
-      'div',
-      { class: 'stack' },
-      h('h1', {}, 'Off the Record'),
-      h('p', {}, "You're in."),
-      h(
-        'ul',
-        { class: 'plain dim' },
-        h('li', {}, "It's anonymous: no login, no names."),
-        h('li', {}, 'Notes you don’t share never leave this phone.'),
-        h('li', {}, 'Everything on our server is shredded tonight.'),
-        h('li', {}, 'You can always speak aloud instead.'),
-      ),
-      // A first tap lets Android vibrate on later phase changes (browsers
-      // block vibration until the person has touched the page).
-      h('button', { class: 'primary', onclick: (e) => ((e.target.textContent = 'Ready ✓'), (e.target.disabled = true), navigator.vibrate?.(40)) }, 'I’m here'),
-      h('div', { class: 'lookup' }, h('div', { class: 'big' }, 'Look up'), h('p', { class: 'faint small' }, 'This screen changes when it’s time.')),
-    ),
-  }),
-  submit: submitScreen,
-  cluster: () => lookUp('Look up', 'Grouping the cards.'),
+  // Join and Submit (see screenKey).
+  write: submitScreen,
+  cluster: clusterScreen,
   react: reactScreen,
   walk: walkScreen,
   finale: () => lookUp(),
@@ -151,16 +175,37 @@ const SCREENS = {
 
 const DEFAULT_PLACEHOLDER = 'Write freely. Notes stay on this phone until you choose to share them.';
 
+// What this phone already shared, so its owner can still see it: { text,
+// receipt }, the receipt being what takes that card back while sharing is
+// open. Kept and wiped exactly like the private notes. Entries saved before
+// cards could be taken back are plain text, with no receipt: they stay listed,
+// with no way to take them back.
+const sentCards = () => local.get('sent', []).map((s) => (typeof s === 'string' ? { text: s, receipt: null } : s));
+const sentList = (cards, takeBack) =>
+  cards.map((card) =>
+    h(
+      'div',
+      { class: 'note sent' },
+      h('span', { class: 'tick' }, '✓'),
+      h('div', { class: 'text' }, card.text),
+      takeBack && card.receipt && h('button', { class: 'quiet', onclick: (e) => takeBack(card, e.currentTarget) }, 'Take back'),
+    ),
+  );
+
+const takenBackCopy = (n) => (n === 1 ? "Taken back. It won't be shown. It's back in your notes." : "Taken back. They won't be shown. They're back in your notes.");
+
 function submitScreen() {
   let notes = local.get('notes', []);
-  // What this phone already shared, so its owner can still see it. Kept and
-  // wiped exactly like the private notes.
-  let sent = local.get('sent', []);
+  let sent = sentCards();
   let step = 'write';
   let picked = new Set();
+  // Shared cards unchecked in the pick step, by receipt: sharing takes them back.
+  let unchecked = new Set();
   let view = null;
   const saveNotes = () => local.set('notes', notes);
   const remaining = () => (view ? view.submit.max - view.submit.submitted : 3);
+  // Shared cards that can still be taken back (a receipt; not an old entry).
+  const takeable = () => sent.filter((c) => c.receipt);
 
   // The writing area is built once and never replaced, so the iPhone keyboard
   // stays attached to the same textarea while notes are added.
@@ -173,13 +218,18 @@ function submitScreen() {
   const toast = h('div', { class: 'toast', hidden: true });
   const listHead = h('p', { class: 'small faint' }, 'Private notes (only on this phone)');
   const sentHead = h('p', { class: 'small faint' }, 'Already shared');
-  const sentList = h('div', { class: 'stack' });
+  const sentBox = h('div', { class: 'stack' });
   const list = h('div', { class: 'stack' });
   const pickButton = h('button', { class: 'primary' });
-  const writeStep = h('div', { class: 'stack' }, toast, writeArea, doneText, sentHead, sentList, listHead, list, pickButton);
+  const writeStep = h('div', { class: 'stack' }, toast, writeArea, doneText, sentHead, sentBox, listHead, list, pickButton);
   const pickStep = h('div', { class: 'stack' });
   const timer = h('div', { class: 'timer-banner', hidden: true });
-  const el = h('div', { class: 'stack' }, h('h2', {}, PROMPT), timer, writeStep, pickStep);
+  // One compact line above the prompt, kept through Submit so nothing moves
+  // under someone's thumb when the room moves on. Browsers block vibration
+  // until the person has touched the page: the first tap in the notepad is
+  // that touch, so Android can vibrate on later phase changes.
+  const promises = h('p', { class: 'small faint' }, "Anonymous. Notes you don't share never leave this phone. Everything on our server is shredded tonight.");
+  const el = h('div', { class: 'stack' }, promises, h('h2', {}, PROMPT), timer, writeStep, pickStep);
 
   function refreshInput() {
     counter.textContent = `${input.value.length}/${SOFT_MAX}`;
@@ -190,13 +240,15 @@ function submitScreen() {
   }
 
   // Only offer picking when there's something to pick (a saved note, or text
-  // in the box, which picking saves first).
+  // in the box, which picking saves first). With all 3 shared, picking is a
+  // swap: a shared card is unchecked for a note.
   function refreshPickButton() {
     const left = remaining();
-    pickButton.hidden = left <= 0 || (notes.length === 0 && !input.value.trim());
-    pickButton.textContent = `Pick up to ${left} to share →`;
+    pickButton.hidden = (left <= 0 && !takeable().length) || (notes.length === 0 && !input.value.trim());
+    pickButton.textContent = left > 0 ? `Pick up to ${left} to share →` : 'Swap a shared card for a note →';
   }
   input.addEventListener('input', refreshInput);
+  input.addEventListener('input', () => input.value && sayTyping());
 
   // Keeps whatever is in the box as a note. Returns true if it saved one.
   function saveDraft() {
@@ -238,7 +290,7 @@ function submitScreen() {
     listHead.hidden = notes.length === 0;
     listHead.textContent = left > 0 ? 'Private notes (only on this phone)' : 'Not shared. Only on this phone; wiped at the shred. To be sure, close this tab.';
     sentHead.hidden = sent.length === 0;
-    fill(sentList, sent.map((text) => h('div', { class: 'note sent' }, h('span', { class: 'tick' }, '✓'), h('div', { class: 'text' }, text))));
+    fill(sentBox, sentList(sent, takeBack));
     fill(
       list,
       notes.map((note) =>
@@ -252,6 +304,55 @@ function submitScreen() {
       ),
     );
     refreshPickButton();
+  }
+
+  // Shares `chosen` notes and takes back `back` shared cards in one call. On
+  // success, what was taken back is put back at the top of the notes, so
+  // nothing written is lost. Only the lists are redrawn: the writing box and
+  // what's in it are never touched.
+  async function exchange(chosen, back) {
+    const before = view?.submit.submitted;
+    const { receipts } = await post('submit', { cid, texts: chosen.map((n) => n.text), withdraw: back.map((c) => c.receipt) });
+    // The server's count follows by its next update; until then, count here.
+    if (view && view.submit.submitted === before) view.submit.submitted += chosen.length - back.length;
+    const gone = new Set(back.map((c) => c.receipt));
+    sent = [...sent.filter((c) => !gone.has(c.receipt)), ...chosen.map((n, i) => ({ text: n.text, receipt: receipts[i] }))];
+    local.set('sent', sent);
+    const ids = new Set(chosen.map((n) => n.id));
+    notes = [...back.map((c) => ({ id: newId(), text: c.text })), ...notes.filter((n) => !ids.has(n.id))];
+    saveNotes();
+    picked.clear();
+    unchecked.clear();
+    step = 'write';
+    const left = remaining();
+    const parts = [];
+    if (back.length) parts.push(takenBackCopy(back.length));
+    if (chosen.length) {
+      parts.push(
+        left > 0
+          ? `Shared. You can still share ${left} more while there's time, or look up when the facilitator moves on.`
+          : // A swap at 3: "You've shared 3 cards" below already says the rest.
+            back.length
+            ? 'Shared.'
+            : 'Shared: that’s all 3. Look up when the facilitator moves on.',
+      );
+    }
+    toast.textContent = parts.join(' ');
+    lastRemaining = left;
+    render();
+    // With all 3 shared, "You've shared 3 cards" says it, unless a card was
+    // just taken back (a swap): say that.
+    toast.hidden = left <= 0 && !back.length;
+  }
+
+  async function takeBack(card, button) {
+    button.disabled = true;
+    try {
+      await exchange([], [card]);
+    } catch (err) {
+      button.disabled = false;
+      showError(writeStep, err);
+    }
   }
 
   function editNote(note) {
@@ -274,35 +375,62 @@ function submitScreen() {
   }
 
   function renderPick() {
-    const left = remaining();
+    const max = view?.submit.max ?? 3;
     picked = new Set([...picked].filter((id) => notes.some((n) => n.id === id)));
-    const share = h('button', { class: 'primary', disabled: picked.size === 0 }, picked.size > 1 ? `Share ${picked.size} cards` : 'Share 1 card');
+    unchecked = new Set([...unchecked].filter((r) => sent.some((c) => c.receipt === r)));
+    // Checked in all: the shared cards still checked, and the notes picked.
+    const checked = (view?.submit.submitted ?? sent.length) - unchecked.size + picked.size;
+    const full = checked >= max;
+    const shares = picked.size;
+    const takes = unchecked.size;
+    const label =
+      shares && takes ? `Share ${shares}, take back ${takes}` : takes ? `Take back ${takes}` : shares > 1 ? `Share ${shares} cards` : 'Share 1 card';
+    const share = h('button', { class: 'primary', disabled: shares + takes === 0 }, label);
     share.addEventListener('click', async () => {
-      const chosen = notes.filter((n) => picked.has(n.id));
       share.disabled = true;
       try {
-        await post('submit', { cid, texts: chosen.map((n) => n.text) });
-        sent = [...sent, ...chosen.map((n) => n.text)];
-        local.set('sent', sent);
-        notes = notes.filter((n) => !picked.has(n.id));
-        picked.clear();
-        saveNotes();
-        step = 'write';
-        const stillLeft = remaining() - chosen.length;
-        toast.textContent =
-          stillLeft > 0
-            ? `Shared. You can still share ${stillLeft} more while there's time, or look up when the facilitator moves on.`
-            : 'Shared: that’s all 3. Look up when the facilitator moves on.';
-        toast.hidden = false;
-        render();
+        await exchange(
+          notes.filter((n) => picked.has(n.id)),
+          sent.filter((c) => unchecked.has(c.receipt)),
+        );
       } catch (err) {
         share.disabled = false;
         showError(pickStep, err);
       }
     });
+    const shared = sent.map((card) => {
+      const on = !unchecked.has(card.receipt);
+      return h(
+        'button',
+        {
+          class: `note pickable${on ? ' picked' : ''}`,
+          // An entry with no receipt can't be taken back.
+          disabled: !card.receipt || (!on && full),
+          'aria-pressed': String(on),
+          onclick: () => {
+            if (on) unchecked.add(card.receipt);
+            else if (!full) unchecked.delete(card.receipt);
+            render();
+          },
+        },
+        h('span', { class: 'check' }),
+        h('span', { class: 'text' }, card.text),
+        h('span', { class: 'tag small faint' }, 'Shared'),
+      );
+    });
+    // At 3, a note can only come in for a shared card unchecked.
+    const swapHint = full && takeable().some((c) => !unchecked.has(c.receipt)) && notes.some((n) => !picked.has(n.id));
     fill(
       pickStep,
-      h('p', {}, `Pick up to ${left} to share as cards. The rest stay here and are discarded.`),
+      h(
+        'p',
+        {},
+        takeable().length
+          ? `Up to ${max} in all. Uncheck a shared card to take it back; notes you don't pick stay here and are discarded.`
+          : `Pick up to ${remaining()} to share as cards. The rest stay here and are discarded.`,
+      ),
+      shared,
+      swapHint && h('p', { class: 'hint' }, 'Uncheck a shared card to swap it for this one.'),
       notes.map((note) => {
         const on = picked.has(note.id);
         const hint = on ? identifierHint(note.text) : null;
@@ -313,9 +441,11 @@ function submitScreen() {
             'button',
             {
               class: `note pickable${on ? ' picked' : ''}`,
+              disabled: !on && full,
+              'aria-pressed': String(on),
               onclick: () => {
                 if (on) picked.delete(note.id);
-                else if (picked.size < left) picked.add(note.id);
+                else if (!full) picked.add(note.id);
                 render();
               },
             },
@@ -331,7 +461,7 @@ function submitScreen() {
   }
 
   function render() {
-    if (step === 'pick' && (remaining() <= 0 || !notes.length)) step = 'write';
+    if (step === 'pick' && (!notes.length || (remaining() <= 0 && !takeable().length))) step = 'write';
     writeStep.hidden = step !== 'write';
     pickStep.hidden = step !== 'pick';
     if (step === 'pick') renderPick();
@@ -362,8 +492,8 @@ function submitScreen() {
   }
   const nudgeInterval = setInterval(tickNudge, 6000);
 
-  refreshInput();
   let lastRemaining = null;
+  refreshInput();
   return {
     el,
     update(v) {
@@ -383,40 +513,84 @@ function submitScreen() {
   };
 }
 
+// ---- grouping: look up; what was shared stays as it is -----------------------
+
+function clusterScreen() {
+  const sent = sentCards();
+  const look = lookUp('Look up', 'Grouping the cards.');
+  if (!sent.length) return look;
+  return {
+    el: h(
+      'div',
+      { class: 'stack', style: { flex: '1' } },
+      look.el,
+      h('p', { class: 'small faint' }, 'Grouping has started: shared cards stay as they are. The facilitator can still hide any card.'),
+      sentList(sent, null),
+    ),
+  };
+}
+
 // ---- reactions: one card at a time, one pass ---------------------------------
 
 function reactScreen() {
+  // The server clears unsent flags on leaving reactions; a restored draft raises it again.
+  unsentSaid = false;
   const timer = h('div', { class: 'timer-banner', hidden: true });
   const body = h('div', { class: 'stack' });
   const el = h('div', { class: 'stack' }, timer, body);
   let groups = [];
   let endsAt = null;
+  let deckSize = null;
   // The card on screen, so a phase change can send what's unsent on it.
   let current = null;
   // What this phone reacted to each card with, and the receipt that lets it
   // change those reactions. Kept and wiped like the private notes.
   const mine = local.get('reactions', {});
-  // Comment drafts per card, kept like the private notes.
-  const drafts = local.get('commentDrafts', {});
   let index = null; // position in this phone's shuffled order
   let shownId = null;
   let finished = false;
   let sentDone = false;
+  // The cards this phone has shown, so a card that joins the deck behind
+  // where it is (unhidden, or come in late) is still reached. Kept on the
+  // phone, never sent, and wiped like the notes.
+  const seen = new Set(local.get('seenCards', []));
+  const markSeen = (id) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    local.set('seenCards', [...seen]);
+  };
+  // The "New cards came in" line at the end of the deck.
+  let freshLine = null;
+  let shownUnseen = null;
+  // On a card reached by jumping to one not yet shown: Next goes on to the
+  // next such card (or the end), not back through cards already seen.
+  // "◀ Previous" goes back to stepping through the deck in order.
+  let catchingUp = false;
 
-  // Two warnings, like the submission ones. Nothing locks at zero.
+  // Two warnings, like the submission ones, early enough to leave time for
+  // the thought at the end. None once the thought is sent or skipped.
+  // Nothing locks at zero.
   function tickTimer() {
     const left = endsAt ? endsAt - serverNow() : Infinity;
-    timer.hidden = finished || left > 60_000 || left <= 0;
-    if (left > 15_000) timer.textContent = `Finish the card you're on (${formatClock(left)}).`;
-    else timer.textContent = `15 seconds: send this card (${formatClock(left)}).`;
-    timer.classList.toggle('urgent', left <= 15_000);
+    timer.hidden = local.get('afterthoughtDone', false) || left > 120_000 || left <= 0;
+    if (left > 60_000) timer.textContent = `About 2 minutes left: finish your cards, then add a thought if you like (${formatClock(left)}).`;
+    else timer.textContent = `About a minute left: send your thought now (${formatClock(left)}).`;
+    timer.classList.toggle('urgent', left <= 60_000);
   }
   const timerInterval = setInterval(tickTimer, 1000);
 
+  // This phone's deck: deckSize cards of its own shuffle, from a seed the
+  // server never sees, so it never learns which cards the phone saw. Cards
+  // already reacted to stay in it; fewer cards than that: all of them.
   function order() {
-    const ids = groups.map((g) => g.id).sort((a, b) => a - b);
-    return seededShuffle(ids, `${cid}:react`).items;
+    const reacted = new Set(Object.keys(mine).map(Number));
+    return deck(groups.map((g) => g.id), deckSeed(), deckSize, reacted);
   }
+  // The end of the deck: the first card in it not yet shown (a card reacted
+  // to counts as shown), and whether "That was every card" is true.
+  const deckState = () => deckEnd(order(), groups.length, new Set([...seen, ...Object.keys(mine).map(Number)]));
+  const askCopy = (every) => (every ? 'That was every card. Anything new after seeing them all?' : 'That was your deck. Anything new after seeing it?');
+  const waitCopy = (every) => `${every ? 'That was every card' : 'That was your deck'}. Thank you. Waiting for everyone else to finish.`;
 
   function textFor(group) {
     // Each phone sees one wording from a group of near-duplicates.
@@ -424,20 +598,121 @@ function reactScreen() {
     return group.texts[Math.floor(rand() * group.texts.length)];
   }
 
+  // The end of the deck: one thought, if there's anything new after seeing
+  // the deck, and a way back to add an emoji. The thought is sent only when
+  // its button is tapped, never when the room moves on; an unsent draft stays
+  // on the phone and is wiped like the notes.
   function finish() {
     finished = true;
     shownId = null;
     current = null;
     tickTimer();
+    freshLine = h('div', { class: 'stack', hidden: true });
+    shownUnseen = null;
     fill(
       body,
-      lookUp('Look up', 'That was every card. Thank you. Waiting for everyone else to finish.').el,
+      freshLine,
+      thoughtBox(),
+      h('p', { class: 'small dim' }, 'Made your own emoji? Go back and add it to a card.'),
       h('button', { class: 'quiet', onclick: () => ((finished = false), (index = order().length - 1), show()) }, '◀ Back to the last card'),
     );
+    refreshEnd();
     if (!sentDone) {
       sentDone = true;
       post('reactDone', { cid }).catch(() => (sentDone = false));
     }
+  }
+
+  // New cards in the deck while the phone is at its end: say so, with a way
+  // to them, but leave the phone where it is (someone may be typing a
+  // thought; the draft is kept either way). The words follow what's true.
+  function refreshEnd() {
+    if (!finished) return;
+    const { unseen, everyCard } = deckState();
+    const ask = body.querySelector('[data-end="ask"]');
+    if (ask) ask.textContent = askCopy(everyCard);
+    const wait = body.querySelector('[data-end="wait"]');
+    if (wait) wait.textContent = waitCopy(everyCard);
+    // Only rebuild the button when the unseen card changes: SSE updates come
+    // several times a second, and a button replaced between press and release
+    // loses the tap.
+    if (unseen === shownUnseen) return;
+    shownUnseen = unseen;
+    freshLine.hidden = unseen === null;
+    fill(freshLine, unseen === null ? '' : [h('p', {}, 'New cards came in.'), h('button', { class: 'primary', onclick: seeNew }, 'See them ▶')]);
+  }
+  function seeNew() {
+    const ids = order();
+    const { unseen } = deckState();
+    if (unseen === null) return refreshEnd();
+    finished = false;
+    shownId = null;
+    index = ids.indexOf(unseen);
+    catchingUp = true;
+    show();
+  }
+
+  // The end-of-deck thought. Kept on the phone and wiped like the notes:
+  // 'afterthought' is what was sent ({ text, receipt }), 'afterthoughtDraft'
+  // what's typed and not sent, 'afterthoughtDone' that the box was closed
+  // (sent, or "Nothing to add").
+  function thoughtBox() {
+    const box = h('div', { class: 'stack' });
+    const render = () => fill(box, local.get('afterthoughtDone', false) ? done() : write());
+    const close = () => {
+      local.set('afterthoughtDraft', null);
+      local.set('afterthoughtDone', true);
+      sayUnsent(false);
+      render();
+      tickTimer();
+    };
+    function write() {
+      const sent = local.get('afterthought', null);
+      const had = !!sent?.text;
+      const input = h('textarea', { rows: 3, maxLength: AFTERTHOUGHT_MAX, placeholder: 'Optional. For the last slide, with no name.', 'aria-label': 'Your thought' });
+      input.value = local.get('afterthoughtDraft', null) ?? sent?.text ?? '';
+      const counter = h('div', { class: 'counter' });
+      const hint = h('div');
+      const add = h('button', { class: 'primary grow' });
+      const skip = h('button', { class: 'quiet', onclick: close }, had ? 'Keep it as it was' : 'Nothing to add');
+      const refresh = () => {
+        local.set('afterthoughtDraft', input.value);
+        counter.textContent = `${input.value.length}/${AFTERTHOUGHT_MAX}`;
+        fill(hint, identifierHint(input.value) ?? '');
+        const text = input.value.trim();
+        add.textContent = !had ? 'Add this thought' : text ? 'Change this thought' : 'Take back this thought';
+        add.disabled = had ? text === sent.text : !text;
+        // Typed and not sent: a restored draft counts too, once, on the first refresh.
+        sayUnsent(!!text && text !== sent?.text);
+      };
+      input.addEventListener('input', refresh);
+      input.addEventListener('input', () => input.value && sayTyping());
+      add.addEventListener('click', async () => {
+        const text = input.value.trim();
+        add.disabled = true;
+        try {
+          const { receipt } = await post('afterthought', { cid, text, receipt: sent?.receipt });
+          local.set('afterthought', { text, receipt: receipt ?? sent?.receipt });
+          close();
+        } catch (err) {
+          add.disabled = false;
+          showError(box, err);
+        }
+      });
+      refresh();
+      return [h('h2', { 'data-end': 'ask' }, askCopy(deckState().everyCard)), input, counter, hint, h('div', { class: 'row' }, add, skip)];
+    }
+    function done() {
+      const text = local.get('afterthought', null)?.text;
+      const reopen = () => (local.set('afterthoughtDone', false), render(), tickTimer());
+      return [
+        lookUp('Look up', text ? 'Thank you. Your thought is in, with no name. It’s for the last slide.' : h('span', { 'data-end': 'wait' }, waitCopy(deckState().everyCard))).el,
+        text ? h('div', { class: 'note sent' }, h('span', { class: 'tick' }, '✓'), h('div', { class: 'text' }, text)) : '',
+        h('button', { class: 'quiet', onclick: reopen }, text ? 'Change your thought' : 'Add a thought after all'),
+      ];
+    }
+    render();
+    return box;
   }
 
   function show() {
@@ -445,10 +720,17 @@ function reactScreen() {
     if (!ids.length) return finish();
     // Start at the first card this phone hasn't reacted to.
     if (index === null) index = ids.findIndex((id) => !mine[id]);
-    if (index < 0 || index >= ids.length) return finish();
+    // Past the end: a card in the deck not yet shown comes first.
+    if (index < 0 || index >= ids.length) {
+      const { unseen } = deckState();
+      if (unseen === null) return finish();
+      index = ids.indexOf(unseen);
+      catchingUp = true;
+    }
     const id = ids[index];
     if (shownId === id) return;
     shownId = id;
+    markSeen(id);
     current = null;
     const group = groups.find((g) => g.id === id);
     const before = mine[id];
@@ -545,34 +827,20 @@ function reactScreen() {
       refreshLimit();
     });
 
-    const comment = h('textarea', { rows: 2, maxLength: HARD_MAX, placeholder: 'Add a comment (optional)', 'aria-label': 'Add a comment' });
-    comment.value = drafts[id] ?? before?.comment ?? '';
-    const commentHint = h('div');
-    const refreshComment = () => {
-      drafts[id] = comment.value;
-      local.set('commentDrafts', drafts);
-      fill(commentHint, identifierHint(comment.value) ?? '');
-    };
-    comment.addEventListener('input', refreshComment);
-    refreshComment();
-
-    // Sends the emojis and comment together, with the receipt when this card
-    // was sent before. A first send with neither is not sent at all.
+    // Sends the emojis, with the receipt when this card was sent before. A
+    // first send with none is not sent at all.
     let sending = false;
     const dirty = () => {
       const emojis = [...selected];
-      const text = comment.value.trim();
-      if (!before) return emojis.length > 0 || text !== '';
-      const sameEmojis = emojis.length === before.emojis.length && emojis.every((e) => before.emojis.includes(e));
-      return !sameEmojis || text !== (before.comment ?? '');
+      if (!before) return emojis.length > 0;
+      return emojis.length !== before.emojis.length || !emojis.every((e) => before.emojis.includes(e));
     };
     async function send() {
       const emojis = [...selected];
-      const text = comment.value.trim();
       sending = true;
       try {
-        const { receipt } = await post('react', { cid, groupId: id, emojis, receipt: before?.receipt, comment: text });
-        mine[id] = { emojis, comment: text, receipt: receipt ?? before?.receipt };
+        const { receipt } = await post('react', { cid, groupId: id, emojis, receipt: before?.receipt });
+        mine[id] = { emojis, receipt: receipt ?? before?.receipt };
         local.set('reactions', mine);
         // Remember your own emojis for later cards, most recent first.
         const own = custom.filter((e) => selected.has(e)); // newest first, as shown
@@ -597,7 +865,9 @@ function reactScreen() {
           }
         }
       }
-      index += step;
+      if (step < 0) catchingUp = false;
+      // Past the end, show() goes to the next card not yet shown, or finishes.
+      index = step > 0 && catchingUp ? Infinity : index + step;
       show();
     }
     // The phase left reactions: send what's unsent on this card, once. The
@@ -616,15 +886,13 @@ function reactScreen() {
 
     fill(
       body,
-      h('div', { class: 'small faint' }, `Card ${index + 1} of ${ids.length}`, (before?.emojis.length || before?.comment) ? ' · you reacted to this one' : ''),
+      h('div', { class: 'small faint' }, `Card ${index + 1} of ${ids.length}`, before?.emojis.length ? ' · you reacted to this one' : ''),
       h('div', { class: 'react-card' }, textFor(group)),
       grid,
       h('div', { class: 'row wrap custom-row' }, addOwn, input, chips),
       howTo,
       emojiHint,
       limitHint,
-      comment,
-      commentHint,
       h('div', { class: 'row' }, back, next),
     );
     refreshLimit();
@@ -635,9 +903,16 @@ function reactScreen() {
     update(v) {
       groups = v.react.groups;
       endsAt = v.react.endsAt;
+      deckSize = v.react.deckSize;
       tickTimer();
-      if (finished) return;
-      if (v.react.done && index === null) return finish();
+      if (finished) return refreshEnd();
+      // Finished before (a reload): back to the end, unless the deck has a card not yet shown.
+      if (v.react.done && index === null) {
+        const { unseen } = deckState();
+        if (unseen === null) return finish();
+        index = order().indexOf(unseen);
+        catchingUp = true;
+      }
       // Keep the place by card, not by position: a hidden card leaves the
       // stack, even mid-way, and the cards after it move up.
       if (shownId !== null) {
@@ -654,30 +929,10 @@ function reactScreen() {
   };
 }
 
-// ---- walk-through: look up, with two light taps -------------------------------
+// ---- walk-through: look up -------------------------------
 
 function walkScreen() {
   const el = h('div', { class: 'stack', style: { flex: '1' } });
-  const signals = h('div', { class: 'signals' });
-  el.append(h('div', { class: 'lookup' }, h('div', { class: 'big' }, 'Look up')), signals);
-
-  const toggles = {};
-  const signal = (kind, label, sub) => {
-    const b = h('button', {}, label, h('span', { class: 'sub' }, sub));
-    b.addEventListener('click', () => {
-      const on = !b.classList.contains('on');
-      b.classList.toggle('on', on);
-      post('signal', { cid, kind, on }).catch(() => b.classList.toggle('on', !on));
-    });
-    toggles[kind] = b;
-    return b;
-  };
-  signals.append(signal('stay', 'Stay', 'on this card'), signal('back', 'Go back', 'a card'));
-
-  return {
-    el,
-    update(v) {
-      for (const [kind, b] of Object.entries(toggles)) b.classList.toggle('on', !!v.walk.mine[kind]);
-    },
-  };
+  el.append(h('div', { class: 'lookup' }, h('div', { class: 'big' }, 'Look up')));
+  return { el, update() {} };
 }

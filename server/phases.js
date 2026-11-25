@@ -21,12 +21,29 @@ export const SUBMIT_MINUTES = 5;
 export const REACT_MINUTES = 5;
 // Reactions still count this long after the room moves on.
 export const REACT_GRACE_MS = 10_000;
+// Each phone's deck fits the reaction window: about 8 seconds a card, with a
+// minute kept for the thought at the end, and never fewer than 8 cards
+// (deckSize in flow.js).
+export const CARD_REACT_MS = 8_000;
+export const AFTERTHOUGHT_RESERVE_MS = 60_000;
+export const MIN_DECK = 8;
+// A phone counts as "writing" this long after it last said it typed.
+export const WRITING_WINDOW_MS = 20_000;
+// The harshness check runs once there's been this long with no new card or thought.
+export const HARSHNESS_QUIET_MS = 5_000;
+// ...but never later than this after the first item waiting for it arrived,
+// and a call carries at most this many items.
+export const HARSHNESS_MAX_WAIT_MS = 15_000;
+export const HARSHNESS_BATCH = 30;
 
-// The walk-through runs itself. The last slide ("Anything else? Out loud.")
-// gets a fixed share, no card gets less than the floor, and the walk ends at
-// minute talk.minutes - 3.5 on the talk clock (21.5 of 25), never shorter
-// than the minimum.
+// The walk-through runs itself. The last slide gets 20 seconds ("Anything
+// else? Out loud."), or a page of afterthoughts every 10 seconds when there
+// are some (lastSlideMs in flow.js), no card gets less than the floor, and the
+// walk ends at minute talk.minutes - 3.5 on the talk clock (21.5 of 25),
+// never shorter than the minimum.
 export const LAST_SLIDE_MS = 20_000;
+export const AFTERTHOUGHTS_PER_PAGE = 4;
+export const AFTERTHOUGHT_PAGE_MS = 10_000;
 export const MIN_CARD_MS = 15_000;
 export const MIN_WALK_MS = 180_000;
 export const WALK_END_BEFORE_MINUTES = 3.5;

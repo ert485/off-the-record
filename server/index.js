@@ -2,7 +2,7 @@
 //
 // Privacy rules this file keeps (see "Privacy and the shred" in the spec):
 // - No request logging of any kind. Nothing here prints IPs, URLs or content.
-// - Errors print only a fixed label, never card or comment text.
+// - Errors print only a fixed label, never card or thought text.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -13,6 +13,7 @@ import { Session, ActionError } from './session.js';
 import { openStore } from './db.js';
 import { createClusterer, createPlacer } from './cluster.js';
 import { createNudgeTagger } from './nudges.js';
+import { createHarshnessCheck } from './moderation.js';
 import { loadDemo } from './demo.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -40,6 +41,8 @@ const session = new Session({
   placeLateCards: createPlacer(),
   talkMinutes: Number(process.env.TALK_MINUTES) || undefined,
   tagCards: createNudgeTagger(),
+  // Null without an API key: nothing is checked, and every card reads "not checked".
+  checkHarshness: createHarshnessCheck(),
   demo: loadDemo(join(ROOT, 'demo')),
   onChange: () => {
     store.save(session.state);
@@ -107,10 +110,14 @@ function openStream(req, res, url) {
 // ---- actions ------------------------------------------------------------
 
 const PHONE_ACTIONS = {
-  submit: (b) => session.submitCards(b.cid, b.texts),
-  react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt, b.comment),
+  // Shares cards, takes them back by receipt, or both (a swap).
+  submit: (b) => session.submitCards(b.cid, b.texts ?? [], b.withdraw ?? []),
+  react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt),
   reactDone: (b) => session.reactDone(b.cid),
-  signal: (b) => session.signal(b.cid, b.kind, b.on),
+  afterthought: (b) => session.afterthought(b.cid, b.text, b.receipt),
+  // Neither carries text: only the phone's id, and whether a thought is unsent.
+  typing: (b) => session.typing(b.cid),
+  unsent: (b) => session.unsent(b.cid, b.on),
 };
 
 const FACILITATOR_ACTIONS = {
@@ -138,7 +145,9 @@ const FACILITATOR_ACTIONS = {
     session.reset();
   },
   hideCard: (b) => session.hideCard(b.id, b.hidden),
-  removeComment: (b) => session.removeComment(b.id),
+  removeAfterthought: (b) => session.removeAfterthought(b.id),
+  review: (b) => session.review(b.kind, b.id, b.on),
+  reviewRest: () => session.reviewRest(),
 };
 
 async function readJson(req) {

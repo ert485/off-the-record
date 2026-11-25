@@ -15,10 +15,16 @@ body { background: #000; overflow: hidden; cursor: none; }
 .huge { font-size: 7vw; font-weight: 600; letter-spacing: -0.01em; }
 .sub { font-size: 2.2vw; color: var(--text-dim); margin-top: 2vh; }
 
+/* Submit and react: the clock large, a quiet count below. */
+.huge.clock { font-size: 14vw; font-variant-numeric: tabular-nums; min-height: 1.1em; line-height: 1.1; }
+.writing-count { font-size: 2.2vw; color: var(--text-dim); margin-top: 2vh; min-height: 1.3em; }
+
 /* Teaser: the title large, its lines below. */
 .teaser .huge { font-size: 7.5vw; line-height: 1.1; }
 .teaser-lines { margin-top: 3vh; }
 .teaser-lines .sub { font-size: 2.8vw; margin-top: 1.4vh; line-height: 1.3; }
+/* A struck word in a teaser line: a thin, muted red line through it, the word still readable. */
+.teaser .struck { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--danger) 75%, transparent); text-decoration-thickness: 0.07em; }
 
 .join { position: absolute; inset: 0; display: grid; grid-template-columns: auto 1fr; gap: 5vw; align-items: center; padding: 6vh 6vw; }
 .join .qr { width: min(42vw, 78vh); background: white; padding: 1.2vw; border-radius: 1.4vw; }
@@ -32,7 +38,7 @@ body { background: #000; overflow: hidden; cursor: none; }
 /* Leaves room under the walk for the waiting line, in one column that never grows
    past the screen (a long emoji row shrinks to fit instead). A crowded card
    fits by --crowd (1 down to 0.5, set by projector.js): it scales the card
-   text, comments and haiku, each to its floor, and the gaps and paddings
+   text, the last slide's afterthoughts and the haiku, each to its floor, and the gaps and paddings
    (to half). The bottom padding stays: the waiting line needs it. The rows
    under the card are max-content, not auto: an auto row squeezes down to its
    min-height when the card is crowded, and the emojis then ride up over the
@@ -109,7 +115,7 @@ body { background: #000; overflow: hidden; cursor: none; }
 .walk .mix small { font-family: var(--font); font-size: 1.2vw; color: var(--text-faint); margin-top: 0.5vh; }
 /* Starts at the card's left edge (projector.js sets padding-left); the right keeps clear of the corner QR. */
 .walk .under { display: flex; flex-direction: column; gap: calc(0.8vh * var(--crowd)); min-width: 0; padding-right: 14vw; }
-/* Floors when crowded: comments 1.4vw, haiku 1.3vw. */
+/* A list of short texts (the last slide's afterthoughts). Floors when crowded: 1.4vw, haiku 1.3vw. */
 .comments { display: flex; flex-direction: column; gap: calc(0.6vh * var(--crowd, 1)); }
 .comments .comment { font-size: max(1.4vw, calc(1.7vw * var(--crowd, 1))); line-height: 1.25; background: #15161a; border-left: 0.35vw solid var(--accent); padding: calc(0.6vh * var(--crowd, 1)) 1.2vw; border-radius: 0 0.8vw 0.8vw 0; overflow-wrap: anywhere; }
 .comments-more { font-size: max(1.4vw, calc(1.5vw * var(--crowd, 1))); color: var(--text-dim); padding-left: 1.2vw; }
@@ -123,11 +129,12 @@ body { background: #000; overflow: hidden; cursor: none; }
 .hseg.hwrap { white-space: normal; text-wrap: balance; }
 .hsep { color: var(--text-faint); }
 .walk .bottom { display: flex; gap: 2vw; align-items: flex-end; min-height: 3vh; padding-right: 10vw; }
-.walk .counts { display: flex; gap: 1.2vw; font-size: 1.5vw; color: var(--text-dim); }
-.walk .counts span { background: #15161a; border-radius: 99px; padding: 0.5vh 1.1vw; }
-.walk .counts span.zero { visibility: hidden; }
-.walk .controls-line { font-size: 1.4vw; color: var(--text-faint); }
 .walk.is-last .stage-card { margin-top: 0; }
+/* The last slide's afterthoughts, a page at a time, under the title: the
+   list's look, larger (floor 1.8vw), each page fading in. */
+.afterthoughts { display: flex; flex-direction: column; gap: calc(0.8vh * var(--crowd)); width: 70vw; margin-top: calc(2vh * var(--crowd)); }
+.afterthoughts .comment { font-size: max(1.8vw, calc(2.4vw * var(--crowd, 1))); padding: calc(1.2vh * var(--crowd, 1)) 1.6vw; animation: fade-in 0.6s ease-out both; }
+.afterthoughts .comments-more { padding-left: 1.6vw; }
 .walk.is-last .card-text { font-size: inherit; }
 
 /* The app is waiting on the facilitator: said plainly, at the bottom. */
@@ -255,17 +262,16 @@ body { background: #000; overflow: hidden; cursor: none; }
 .demo .dfolder-card { align-self: stretch; background: #1c1d22; border: 2px solid var(--manila-edge); border-radius: 0 12px 12px 12px; padding: 36px 24px; text-align: center; font-size: 28px; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere; }
 .demo .dhaiku { margin-top: 30px; font-size: 34px; line-height: 1.3; font-weight: 500; color: var(--text); display: flex; flex-direction: column; align-items: center; text-align: center; }
 .demo .dhaiku .hsep { color: var(--text-faint); }
+/* Step 3: the haiku's segments wait (laid out, so the fit holds) and come in one at a time. */
+.demo .dhaiku .hseg { transition: opacity 0.6s ease, transform 0.6s ease; }
+.demo .dhaiku .hseg.later { opacity: 0; transform: translateY(14px); }
 
 /* Entrances: only on a forward step (.animate); Back shows everything settled. */
 .demo .animate .pop { animation: demo-in 0.55s ease both; animation-delay: var(--d, 0s); }
-.demo .animate .dtab { animation: demo-drop 0.6s ease both 0.5s; }
-.demo .animate .dhaiku { animation: demo-in 0.8s ease both 1.6s; }
-.demo .animate .dfolder-card { animation: demo-in 0.5s ease both; }
+.demo .animate .dfolder { animation: demo-in 0.5s ease both; }
 .demo .animate.demo-reveal .card { animation: demo-grow 0.6s ease both; }
-.demo .animate.demo-reveal .mix > span { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
-.demo .animate.demo-reveal .comment, .demo .animate.demo-reveal .comments-more, .demo .animate.demo-reveal .haiku { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
+.demo .animate.demo-reveal .mix > span, .demo .animate.demo-reveal .haiku { animation: demo-in 0.6s ease both; animation-delay: var(--d, 0s); }
 @keyframes demo-in { from { opacity: 0; transform: translateY(14px); } }
-@keyframes demo-drop { from { opacity: 0; transform: translateY(-14px); } }
 @keyframes demo-grow { from { opacity: 0; transform: scale(0.94); } }
 @keyframes demo-tap { 50% { transform: scale(1.12); } }
 @keyframes demo-press { 40% { transform: scale(0.93); } }

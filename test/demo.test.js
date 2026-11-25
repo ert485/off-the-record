@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Session } from '../server/session.js';
 import { validateDemo, loadDemo, DEMO_STEPS, DEMO_STEP_MS } from '../server/demo.js';
+import { struckParts } from '../public/shared/struck.js';
 
 const EXAMPLE = resolve(fileURLToPath(new URL('../demo/example.json', import.meta.url)));
 const example = () => JSON.parse(readFileSync(EXAMPLE, 'utf8'));
@@ -22,7 +23,7 @@ function make({ teaser = false, demo = validateDemo(example()) } = {}) {
 
 test('the example demo file is valid', () => {
   const demo = validateDemo(example());
-  assert.equal(demo.notes.filter((n) => n.share).length, 1);
+  assert.equal(demo.notes.filter((n) => n.share).length, 2);
   assert.deepEqual(DEMO_STEPS, ['notes', 'pick', 'group', 'react', 'reveal']);
 });
 
@@ -32,14 +33,18 @@ test('an invalid demo is rejected with the reason', () => {
     change(d);
     assert.throws(() => validateDemo(d), reason);
   };
-  bad((d) => (d.notes[1].share = true), /exactly one shared/);
-  bad((d) => (d.notes[0].share = false), /exactly one shared/);
+  bad((d) => d.notes.forEach((n) => delete n.share), /1 to 3 shared/);
   bad((d) => (d.notes[1].text = 'x'.repeat(201)), /1 to 200/);
   bad((d) => (d.react.own = 'ab'), /one emoji/);
-  bad((d) => (d.reveal.comments = Array(6).fill('hi')), /up to 5/);
   bad((d) => (d.react.presets = ['🦆']), /preset/);
   bad((d) => (d.reveal.mix = [['🎉', 0]]), /positive/);
   bad((d) => (d.theme.name = ''), /theme name/);
+});
+
+test('the demo may tap any of the 16 presets', () => {
+  const d = example();
+  d.react.presets = ['🔥', '🙋'];
+  assert.deepEqual(validateDemo(d).react.presets, ['🔥', '🙋']);
 });
 
 test('loadDemo prefers local.json and falls back to the example when it is invalid', () => {
@@ -89,28 +94,78 @@ test('phones see only that the session starts soon', () => {
   assert.equal(s.view('phone', { cid: A }).teaser, undefined);
 });
 
-test('leaving the demo adds its card once, with no author', () => {
+test('leaving the demo adds every shared note as a card, once', () => {
   const s = make();
-  const shared = example().notes.find((n) => n.share).text;
+  const shared = example().notes.filter((n) => n.share).map((n) => n.text);
+  assert.equal(shared.length, 2);
   assert.equal(s.state.cards.length, 0);
   s.advance();
-  assert.equal(s.state.cards.length, 1);
-  const [card] = s.state.cards;
-  assert.deepEqual(Object.keys(card).sort(), ['hidden', 'id', 'text']);
-  assert.equal(card.text, shared);
-  assert.equal(card.hidden, false);
+  assert.equal(s.state.cards.length, shared.length);
+  for (const card of s.state.cards) {
+    assert.deepEqual(Object.keys(card).sort(), ['hidden', 'id', 'text']);
+    assert.equal(card.hidden, false);
+  }
+  assert.deepEqual(s.state.cards.map((c) => c.text).sort(), [...shared].sort());
   assert.deepEqual(s.state.clients, {});
   s.back();
   s.advance();
-  assert.equal(s.state.cards.length, 1);
+  assert.equal(s.state.cards.length, shared.length);
 });
 
-test("the demo's reactions and comments don't carry over", () => {
+test('a demo file may share 1 to 3 notes, and no more', () => {
+  const sharing = (n) => {
+    const d = example();
+    d.notes = Array.from({ length: 5 }, (_, i) => ({ text: `Note ${i + 1}`, ...(i < n ? { share: true } : {}) }));
+    return d;
+  };
+  for (const n of [1, 2, 3]) assert.equal(validateDemo(sharing(n)).notes.filter((x) => x.share).length, n);
+  for (const n of [0, 4, 5]) assert.throws(() => validateDemo(sharing(n)), /^Error: Demo needs 1 to 3 shared notes$/);
+  // A three-note demo carries all three over.
+  const s = make({ demo: validateDemo(sharing(3)) });
+  s.advance();
+  assert.deepEqual(s.state.cards.map((c) => c.text).sort(), ['Note 1', 'Note 2', 'Note 3']);
+});
+
+test('comment fields in an old demo file are ignored', () => {
+  const d = example();
+  d.react.comment = 'An old comment.';
+  d.reveal.comments = ['One', 'Two', 'x'.repeat(500), 7];
+  const demo = validateDemo(d);
+  assert.deepEqual(Object.keys(demo.react).sort(), ['own', 'presets']);
+  assert.deepEqual(Object.keys(demo.reveal), ['mix']);
+  assert.ok(!JSON.stringify(make({ demo }).view('projector')).includes('An old comment.'));
+});
+
+test('the loop steps take 13, 16, 16, 12 and 12 seconds', () => {
+  assert.deepEqual(DEMO_STEP_MS, [13_000, 16_000, 16_000, 12_000, 12_000]);
+});
+
+test('struckParts splits ~~marked~~ spans and leaves an unpaired ~~ as text', () => {
+  assert.deepEqual(struckParts('plain'), [{ text: 'plain', struck: false }]);
+  assert.deepEqual(struckParts('We ~~fix it~~ talk about it.'), [
+    { text: 'We ', struck: false },
+    { text: 'fix it', struck: true },
+    { text: ' talk about it.', struck: false },
+  ]);
+  assert.deepEqual(struckParts('~~a~~ and ~~b~~'), [
+    { text: 'a', struck: true },
+    { text: ' and ', struck: false },
+    { text: 'b', struck: true },
+  ]);
+  assert.deepEqual(struckParts('~~one~~ then ~~ alone'), [
+    { text: 'one', struck: true },
+    { text: ' then ~~ alone', struck: false },
+  ]);
+  assert.deepEqual(struckParts('only ~~ here'), [{ text: 'only ~~ here', struck: false }]);
+  assert.deepEqual(struckParts('empty ~~~~ pair'), [{ text: 'empty ~~~~ pair', struck: false }]);
+});
+
+test("the demo's reactions and thoughts don't carry over", () => {
   const s = make();
   s.demoStep(1);
   s.advance();
   assert.deepEqual(s.state.reactions, []);
-  assert.deepEqual(s.state.comments, []);
+  assert.deepEqual(s.state.afterthoughts, []);
 });
 
 test('a session without a demo skips straight on, adding no card', () => {
@@ -158,7 +213,7 @@ test('leaving the teaser starts the demo on a loop; Back from the demo returns t
   s.clock.tick(5000);
   s.advance();
   assert.equal(s.state.phase, 'demo');
-  assert.deepEqual(s.state.demo, { step: 0, cardId: null, auto: true, stepStartedAt: s.clock.now() });
+  assert.deepEqual(s.state.demo, { step: 0, cardIds: null, auto: true, stepStartedAt: s.clock.now() });
   const p = s.view('projector').demo;
   assert.equal(p.auto, true);
   assert.equal(p.stepStartedAt, s.clock.now());
@@ -296,6 +351,15 @@ test('an older saved state loads without the loop fields', () => {
   assert.equal(again.state.demo.stepStartedAt, 2_000_000);
   again.tick();
   assert.equal(again.view('projector').demo.step, 0);
+  // Saved before a demo could share more than one note: the card it added
+  // still counts, so leaving the demo again adds nothing.
+  const added = JSON.parse(JSON.stringify(s.state));
+  added.demo = { step: 0, cardId: 12345 };
+  const later = new Session({ state: added, now: () => 2_000_000, demo: validateDemo(example()), clusterCards: async () => ({ themes: [] }) });
+  assert.deepEqual(later.state.demo.cardIds, [12345]);
+  assert.equal('cardId' in later.state.demo, false);
+  later.advance();
+  assert.equal(later.state.cards.length, 0);
 });
 
 test('starting the talk clock mid-demo by hand keeps the step', () => {

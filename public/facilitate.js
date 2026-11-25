@@ -5,7 +5,7 @@
 // look:
 //   1. Move    (yellow)  back / next phase, and in the walk-through, cards
 //   2. Now     (white)   the one number that matters right now, and its time
-//   3. Room    (blue)    what the room is asking for: pause, stay, go back
+//   3. Room    (blue)    the room's pace: pause and resume
 //   4. Content (grey)    what's on screen or needs a decision
 //   5. Lists   (folded)  every card, the stream
 // Hide and Remove are always red-outlined, on the right of the thing they act on.
@@ -259,7 +259,7 @@ function nav(v) {
   } else if (v.next === 'shred') {
     next = h('button', { class: 'danger prompt' }, v.move ? `${v.move.label} ▶` : 'Shred…');
     next.addEventListener('click', () => {
-      if (confirm('Shred everything? This deletes every card, reaction and comment from the server, and Back cannot undo it.')) {
+      if (confirm('Shred everything? This deletes every card, reaction and thought from the server, and Back cannot undo it.')) {
         act('advance', { from: v.phase, confirm: true });
       }
     });
@@ -286,13 +286,63 @@ function modButton(label, onclick) {
   return h('button', { class: 'small-btn mod', onclick }, label);
 }
 
-function cardRow(card) {
+// The harshness check's answer, for the facilitator only: a red (harsh) or
+// amber (edgy) dot with its reason, nothing when it was fine, or "not checked".
+function harshLine(item) {
+  if (!item.harsh) return h('div', { class: 'harsh small dim' }, 'not checked');
+  const { level, reason } = item.harsh;
+  if (!level) return '';
+  return h('div', { class: `harsh harsh-${level} small` }, h('span', { class: 'dot', 'aria-label': level === 2 ? 'Harsh' : 'Edgy' }), reason || (level === 2 ? 'Harsh' : 'Worth a look'));
+}
+
+// The "Reviewed" toggle. The walk-through holds before a card or thought
+// nobody has reviewed.
+function reviewToggle(item, kind) {
+  return h('button', {
+    class: `small-btn review${item.reviewed ? ' on' : ''}`,
+    'aria-pressed': item.reviewed ? 'true' : 'false',
+    onclick: () => act('review', { kind, id: item.id, on: !item.reviewed }),
+  }, item.reviewed ? 'Reviewed ✓' : 'Reviewed');
+}
+
+// A card or thought: its text and check, then Reviewed, then Hide or Remove
+// (always rightmost). A hidden card needs no review.
+function itemRow(item, kind, mod) {
+  const shown = !item.hidden;
   return h(
     'div',
-    { class: `cardrow${card.hidden ? ' hidden' : ''}` },
-    h('div', { class: 'text' }, card.text),
-    modButton(card.hidden ? 'Show' : 'Hide', () => act('hideCard', { id: card.id, hidden: !card.hidden })),
+    { class: `cardrow${item.hidden ? ' hidden' : ''}${shown && !item.reviewed ? ' unreviewed' : ''}` },
+    h('div', { class: 'text' }, item.text, shown ? harshLine(item) : ''),
+    shown && item.reviewed !== undefined ? reviewToggle(item, kind) : '',
+    mod,
   );
+}
+
+function cardRow(card) {
+  return itemRow(card, 'card', modButton(card.hidden ? 'Show' : 'Hide', () => act('hideCard', { id: card.id, hidden: !card.hidden })));
+}
+
+function thoughtRow(t) {
+  return itemRow(t, 'afterthought', modButton('Remove', () => act('removeAfterthought', { id: t.id })));
+}
+
+// "Mark the rest reviewed", at the top of the lists: one tap for every card
+// and thought the check found fine or never checked.
+function reviewBar(v) {
+  if (!v.review) return '';
+  const i = info(
+    'review',
+    v.review.checking
+      ? 'Claude Haiku checks each card and thought for harsh wording: red is harsh, amber is worth a look. “Mark the rest reviewed” marks every one that isn’t red or amber, including any not checked; look at red and amber ones yourself. The walk-through waits before showing a card or thought nobody has reviewed.'
+      : 'With no API key on the server, nothing is checked for harsh wording. “Mark the rest reviewed” marks every card and thought; the walk-through waits before showing one nobody has reviewed.',
+  );
+  const { left, rest } = v.review;
+  return h('div', { class: 'stack' },
+    h('div', { class: 'row wrap review-bar' },
+      h('span', { class: 'grow small dim' }, left ? `${left} not reviewed ` : 'Everything is reviewed ', i.button),
+      // Only when the tap would mark something (red and amber are reviewed one by one).
+      rest ? h('button', { class: 'small-btn', onclick: () => act('reviewRest') }, 'Mark the rest reviewed') : ''),
+    i.text);
 }
 
 // A folded list that stays open or closed the way the facilitator left it.
@@ -302,24 +352,22 @@ function foldable(key, summary, defaultOpen, ...children) {
   return el;
 }
 
-function allCards(v, defaultOpen = false) {
+// `bar`: false when the review bar is already shown above (during a hold).
+function allCards(v, defaultOpen = false, { bar = true } = {}) {
   if (!v.cards?.length) return '';
   const visible = v.cards.filter((c) => !c.hidden).length;
-  return foldable('cards', `All cards (${visible} shown, ${v.cards.length - visible} hidden)`, defaultOpen, v.cards.map(cardRow));
+  return foldable('cards', `All cards (${visible} shown, ${v.cards.length - visible} hidden)`, defaultOpen, bar ? reviewBar(v) : '', h('div', {}, v.cards.map(cardRow)));
 }
 
 function mixLine(mix) {
   return h('div', { class: 'mixline' }, (mix ?? []).map(([e, n]) => `${e}${n > 1 ? `×${n}` : ''}`).join('  ') || ' ');
 }
 
-function commentList(label, comments) {
-  if (!comments?.length) return '';
-  return h(
-    'div',
-    { class: 'stack' },
-    h('div', { class: 'label' }, label),
-    comments.map((c) => h('div', { class: 'cardrow' }, h('div', { class: 'text' }, c.text), modButton('Remove', () => act('removeComment', { id: c.id })))),
-  );
+// The thoughts phones added at the end of their decks, each with its check,
+// Reviewed and Remove; unreviewed first, then harshest first.
+function afterthoughtList(label, afterthoughts) {
+  if (!afterthoughts?.length) return '';
+  return h('div', { class: 'stack' }, h('div', { class: 'label' }, label), h('div', {}, afterthoughts.map(thoughtRow)));
 }
 
 function nudgeStatus(submit) {
@@ -335,7 +383,7 @@ function nudgeStatus(submit) {
 // Prompts for when the room goes quiet. Facilitator only; never projected.
 const PROMPTS = [
   'Does this one land for anyone?',
-  'Anyone want to add to this, out loud or anonymously?',
+  'Anyone want to add to this, out loud?',
   'What do you notice in the emoji mix?',
   'Has anyone felt the opposite?',
   'Is this something people talk about at work, or not?',
@@ -344,7 +392,7 @@ const OVERVIEW_PROMPTS = ['First reactions: anything surprise you?', 'Which of t
 
 // Matches the projector's fine print word for word.
 const DISCLOSURE =
-  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. I see cards and comments before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
+  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards and thoughts go to Anthropic (Claude Haiku) for grouping, picking writing prompts and a check for harsh wording; they don’t train on them and delete them within 30 days. I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
 
 // ---- grouping --------------------------------------------------------------
 
@@ -475,6 +523,7 @@ const PHASES = {
     const countInfo = info('submit-count', 'Cards submitted so far, and how many phones have sent at least one (the percentage is of connected phones).');
     const timeInfo = info('submit-time', 'Time left for submissions. The room sees the same countdown. “+1 minute” adds a minute; nothing closes by itself, you move on.');
     const c = v.clustering;
+    const writingInfo = info('submit-writing', 'Phones that typed in the last 20 seconds; no text is sent. If almost nobody is writing, you can move on early; if many still are when time’s up, add a minute.');
     return {
       now: now(
         v.cards.length,
@@ -487,6 +536,7 @@ const PHASES = {
           h('button', { class: 'small-btn', onclick: () => act('extend', { from: v.submit.endsAt }) }, '+1 minute'),
           h('button', { class: `small-btn${v.submit.nudgesOn ? ' on' : ''}`, onclick: () => act('nudges', { on: !v.submit.nudgesOn }) }, `Nudges ${v.submit.nudgesOn ? 'on' : 'off'}`),
           h('span', { class: 'small dim grow' }, nudgeStatus(v.submit))),
+        h('div', {}, h('span', { class: 'dim small' }, `${v.writing} writing now `), writingInfo.button, writingInfo.text),
         c.status === 'running' ? h('div', { class: 'small dim' }, 'Grouping started (about 40 seconds)…') : '',
       ),
       content: [h('p', { class: 'dim small' }, 'Cards arrive below. Hide any card that shouldn’t be shown.'), v.themes.length ? themeDrafts(v) : ''],
@@ -531,19 +581,32 @@ const PHASES = {
       ),
       content: [
         themeDrafts(v),
-        // Not once there are reactions: new groups would cut them (and comments) off their cards.
+        // Not once there are reactions: new groups would cut them off their cards.
         c.status !== 'running' && c.status !== 'idle' && !c.empty && !v.react.reactions ? h('button', { class: 'quiet', onclick: () => act('recluster') }, 'Re-run grouping') : '',
       ],
+      lists: allCards(v),
     };
   },
 
   react: (v) => {
     const total = Math.max(v.phones, v.react.done);
     const pct = total ? Math.round((v.react.done / total) * 100) : 0;
-    const pctInfo = info('react-pct', 'Share of connected phones that have finished reacting to every card. “Done” is the phone’s own button.');
+    const pctInfo = info('react-pct', 'Share of connected phones that have reached the end of their deck. “Done” is the phone’s own button.');
     const timeInfo = info('react-time', 'Time left for reactions. The room sees the same countdown. “+1 minute” adds a minute; when time is up or every phone is done, you’ll be asked to move on.');
     const countInfo = info('react-count', 'Every emoji tap from every phone so far, counted once per emoji per card.');
+    // Each phone's deck: the deck size, or every card when there are fewer.
+    const perPhone = Math.min(v.react.deckSize ?? v.react.total, v.react.total);
+    const partDeck = perPhone < v.react.total;
+    const deckInfo = info(
+      'react-deck',
+      partDeck
+        ? `Each phone gets ${perPhone} of the ${v.react.total} cards, picked at random, so everyone can finish with time for a thought at the end. Cards seen by more phones can gather more reactions.`
+        : 'Each phone gets every card, in its own random order. With more cards than fit the time, each phone would get some of them, picked at random.',
+    );
+    const unsentInfo = info('react-unsent', 'Thoughts aren’t sent automatically. Wait for them, or say there’s no time and move on.');
     return {
+      // Beside the move prompt, so it is seen before moving on.
+      move: [nav(v), h('div', {}, h('span', { class: 'dim small' }, `${v.unsent} still writing a thought `), unsentInfo.button, unsentInfo.text)],
       now: now(
         `${pct}%`,
         [` of phones finished (${v.react.done} of ${total}) `, pctInfo.button],
@@ -553,7 +616,13 @@ const PHASES = {
         timeInfo.text,
         h('div', { class: 'row wrap' }, h('button', { class: 'small-btn', onclick: () => act('extendReact', { from: v.react.endsAt }) }, '+1 minute')),
       ),
-      content: h('div', {}, h('span', { class: 'dim small' }, `${v.react.reactions} reactions so far `), countInfo.button, countInfo.text),
+      content: [
+        h('div', {}, h('span', { class: 'dim small' }, `${v.react.reactions} reactions so far `), countInfo.button, countInfo.text),
+        // Nothing to say about decks with no cards to react to.
+        v.react.total ? h('div', {}, h('span', { class: 'dim small' }, partDeck ? `${perPhone} of ${v.react.total} cards on each phone ` : `All ${v.react.total} cards on each phone `), deckInfo.button, deckInfo.text) : '',
+        v.react.afterthoughts.length ? reviewBar(v) : '',
+        afterthoughtList('Thoughts from the end of the deck, shown on the last slide', v.react.afterthoughts),
+      ],
       lists: allCards(v),
     };
   },
@@ -567,17 +636,31 @@ const PHASES = {
     const shown = group?.cards.find((c) => !c.hidden);
     const cards = Math.max(0, w.total - 2); // not the overview or the last slide
     const prompts = overview ? OVERVIEW_PROMPTS : [PROMPTS[w.index % PROMPTS.length], PROMPTS[(w.index + 1) % PROMPTS.length]];
-    const posInfo = info('walk-pos', 'Where you are: the themes overview first, then the cards in order of reactions, then a last slide that invites the room to speak.');
+    const posInfo = info('walk-pos', 'Where you are: the themes overview first, then the cards in order of reactions, then a last slide: the room’s afterthoughts, or, with none, an invitation to speak.');
     const timeInfo = info('walk-time', 'How long this card has been on screen. The projector shows the time left in the whole walk-through instead.');
-    const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (20 seconds are kept for the last slide). It’s a rough average, not a limit: spend longer where the room wants to.');
-    const signalInfo = info('signals', 'Phones asking to stay on this card or to go back. They reset on every card; the room sees the same counts on the projector.');
+    const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (the last slide keeps 20 seconds, or 10 seconds for each page of 4 thoughts, up to a minute). It’s a rough average, not a limit: spend longer where the room wants to.');
+    const nextIsLast = !lastSlide && w.index === w.total - 2;
     const showLeft = !lastSlide && !w.done && w.cardsLeft !== null;
+    // Held before an item nobody has reviewed: its cards (or the thoughts), to check here.
+    const holdItem = w.held ? w.stream[w.holdTo] : null;
+    const holdLast = holdItem?.groupId === 'last';
+    const holdGroup = holdItem && !holdLast ? v.themes.flatMap((t) => t.groups).find((g) => g.id === holdItem.groupId) : null;
+    const holdInfo = info('walk-hold', 'The walk-through waits before showing a card or thought nobody has reviewed. Next marks it reviewed and shows it; Hide skips it; Resume gives the current card another share. The finish doesn’t move.');
+    const held = w.held
+      ? h('div', { class: 'alert hold' },
+          h('div', { class: 'row' },
+            h('strong', { class: 'grow' }, holdLast ? 'The thoughts for the last slide haven’t been reviewed: check them below, then Next.' : 'The next card hasn’t been reviewed: check it below, then Next.'),
+            holdInfo.button),
+          holdInfo.text,
+          holdLast ? h('div', {}, w.afterthoughts.map(thoughtRow)) : h('div', {}, (holdGroup?.cards ?? []).filter((c) => !c.hidden).map(cardRow)),
+          reviewBar(v))
+      : '';
     return {
       move: [
         nav(v),
         h('div', { class: 'walk-nav' },
           h('button', { disabled: w.index === 0, onclick: () => act('prevCard', { from: w.index }) }, w.index === 1 ? '◀ Back to the themes overview' : '◀ Back one card'),
-          h('button', { class: 'primary', disabled: w.done, onclick: () => act('nextCard', { from: w.index }) }, w.index === 0 ? 'First card ▶' : lastSlide ? 'Finish the walk-through ▶' : 'Next card ▶')),
+          h('button', { class: 'primary', disabled: w.done, onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : w.index === 0 ? 'First card ▶' : lastSlide ? 'Finish the walk-through ▶' : 'Next card ▶')),
       ],
       now: now(
         overview ? 'Themes' : lastSlide ? 'Last slide' : `Card ${w.index} of ${cards}`,
@@ -591,19 +674,15 @@ const PHASES = {
       ),
       room: [
         h('div', { class: `room-row${w.paused ? ' active' : ''}` },
-          h('strong', { class: 'grow' }, w.paused ? 'Paused: the card stays until you resume' : 'Running'),
+          h('strong', { class: 'grow' }, w.held ? 'Waiting for a review: the card stays until you move on' : w.paused ? 'Paused: the card stays until you resume' : 'Running'),
           h('button', { class: 'small-btn room-btn', onclick: () => act('pauseWalk', { paused: !w.paused }) }, w.paused ? 'Resume' : 'Pause')),
-        h('div', { class: 'signals' },
-          h('div', {}, h('b', {}, w.stay), 'stay'),
-          h('div', {}, h('b', {}, w.back), 'go back')),
-        h('div', {}, signalInfo.button),
-        signalInfo.text,
       ],
       content: [
+        held,
         overview
-          ? h('div', { class: 'current' }, 'The themes are on the projector. Say aloud: you set the pace, timers are hints, and anyone can ask to stay or go back.')
+          ? h('div', { class: 'current' }, 'The themes are on the projector.')
           : lastSlide
-            ? h('div', { class: 'current' }, 'Anything else? Out loud.')
+            ? h('div', { class: 'current' }, w.afterthoughts.length ? 'Afterthoughts' : 'Anything else? Out loud.')
             : [
                 item?.theme ? h('div', { class: 'dim' }, item.theme) : '',
                 item?.haiku ? h('div', { class: 'dim small' }, item.haiku) : '',
@@ -616,21 +695,25 @@ const PHASES = {
                 mixLine(item?.mix),
               ],
         lastSlide ? '' : h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
-        commentList(
-          item?.hidden
-            ? 'Comments on this card (hidden, so none are on the projector)'
-            : 'Comments on this card: the first 5 are on the projector, the rest as “+N more”',
-          v.comments?.current,
-        ),
-        commentList('Comments on the next card, not shown yet', v.comments?.next),
+        // In the projector's order (oldest first, as its pages turn), not the review order.
+        lastSlide ? afterthoughtList('On the projector now, 4 to a page', [...w.afterthoughts].sort((a, b) => a.id - b.id)) : '',
+        // Held before the last slide, the hold's alert lists the thoughts instead.
+        nextIsLast && !holdLast ? afterthoughtList('Thoughts on the last slide, next: not shown yet', w.afterthoughts) : '',
       ],
-      lists: foldable(
-        'stream',
-        'Stream',
-        false,
-        h('p', { class: 'small dim' }, 'Themes in order of total reactions, then cards in order of reactions inside each theme.'),
-        h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, i === 0 || i === w.stream.length - 1 ? s.text : `${i}. ${s.text ?? '(hidden)'} · ${s.reactions} reactions`))),
-      ),
+      lists: [
+        // Earlier in the walk-through, the thoughts wait here, to be read and removed before the last slide.
+        !lastSlide && !nextIsLast && !holdLast && w.afterthoughts.length
+          ? foldable('afterthoughts', `Thoughts for the last slide (${w.afterthoughts.length})`, false, afterthoughtList('Not shown yet', w.afterthoughts))
+          : '',
+        allCards(v, false, { bar: !w.held }),
+        foldable(
+          'stream',
+          'Stream',
+          false,
+          h('p', { class: 'small dim' }, 'Themes in order of total reactions, then cards in order of reactions inside each theme.'),
+          h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, i === 0 || i === w.stream.length - 1 ? s.text : `${i}. ${s.text ?? '(hidden)'} · ${s.reactions} reactions`))),
+        ),
+      ],
     };
   },
 

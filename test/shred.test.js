@@ -1,7 +1,7 @@
 // Proves the shred leaves nothing behind.
 //
 // Runs the real server as a separate process with its own data, temp and
-// home directories, plays a whole session where every card and comment
+// home directories, plays a whole session where every card and thought
 // carries a random marker, shreds, then checks:
 //   1. the data directory is empty;
 //   2. no file in the project, data, temp or home directories contains the marker;
@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const TOKEN = 'test-token-' + randomBytes(4).toString('hex');
 const MARKER = 'MARKER' + randomBytes(8).toString('hex');
+const TAKEN = 'TAKEN' + randomBytes(8).toString('hex');
 const PHONES = ['a'.repeat(24), 'b'.repeat(24), 'c'.repeat(24)];
 
 const freePort = () =>
@@ -101,6 +102,7 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
     });
     const json = await res.json();
     assert.equal(res.status, 200, `${action}: ${JSON.stringify(json)}`);
+    return json;
   };
   const run = (action, body) => post(action, body, true);
   const view = async (query) => {
@@ -126,9 +128,21 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   await run('advance'); // demo
   await run('advance'); // join
   await run('advance'); // submit
+  const receipts = [];
   for (const [i, cid] of PHONES.entries()) {
-    await post('submit', { cid, texts: [`card ${i} ${MARKER}`, `another ${i} ${MARKER}`] });
+    receipts.push(...(await post('submit', { cid, texts: [`card ${i} ${MARKER}`, `another ${i} ${MARKER}`] })).receipts);
   }
+  // One card is shared, then taken back while submissions are open: it is
+  // deleted from the database at once, not only at the shred.
+  const [takenBack] = (await post('submit', { cid: PHONES[0], texts: [`taken back ${TAKEN}`] })).receipts;
+  receipts.push(takenBack);
+  assert.ok(JSON.stringify(await facilitatorView()).includes(TAKEN), 'control: the card arrived');
+  assert.ok(filesContaining(filesUnder(dataDir), takenBack).length > 0, 'control: its receipt is in the database');
+  await post('submit', { cid: PHONES[0], texts: [], withdraw: [takenBack] });
+  assert.equal(JSON.stringify(await facilitatorView()).includes(TAKEN), false, 'a card taken back is gone from every view');
+  assert.deepEqual(filesContaining(filesUnder(dataDir), TAKEN), [], 'a card taken back is gone from the database');
+  assert.deepEqual(filesContaining(filesUnder(dataDir), takenBack), [], 'and so is its receipt');
+  assert.equal(receipts.length, PHONES.length * 2 + 1);
   await run('advance'); // cluster
   let f;
   do f = await facilitatorView();
@@ -137,11 +151,20 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   await run('advance'); // react
   const groups = (await view(`role=phone&cid=${PHONES[0]}`)).react.groups;
   for (const cid of PHONES) {
-    for (const g of groups) await post('react', { cid, groupId: g.id, emojis: ['🙋', '🦆'], comment: `comment ${MARKER}` });
+    for (const g of groups) await post('react', { cid, groupId: g.id, emojis: ['🙋', '🦆'] });
     await post('reactDone', { cid });
+    await post('typing', { cid, text: `typed ${MARKER}` }); // extra fields are ignored
+    await post('unsent', { cid, on: true, text: `unsent ${MARKER}` });
+    await post('afterthought', { cid, text: `thought ${MARKER}` });
   }
+  const counted = await facilitatorView();
+  assert.equal(counted.writing, PHONES.length, 'control: the writing count arrived');
+  assert.equal(counted.unsent, PHONES.length, 'control: the unsent count arrived');
+  assert.equal(JSON.stringify(await view(`role=phone&cid=${PHONES[0]}`)).includes('writing'), false, 'phones get no count');
+  assert.ok(JSON.stringify(await facilitatorView()).includes(`thought ${MARKER}`), 'control: the thoughts arrived');
   await run('advance'); // walk
-  await post('signal', { cid: PHONES[0], kind: 'stay', on: true });
+  const gone = await fetch(`${base}/api/signal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cid: PHONES[0], kind: 'stay', on: true }) });
+  assert.equal(gone.status, 404);
   await run('nextCard');
   await run('advance'); // finale
   assert.ok(JSON.stringify(await view('role=projector')).includes('🦆'));
@@ -155,6 +178,8 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   ];
   assert.ok(filesContaining(filesUnder(dataDir), MARKER).length > 0, 'control: marker should be in the database');
 
+  assert.deepEqual(filesContaining(filesUnder(dataDir), 'typedAt'), [], 'even before the shred, the database holds no typing times');
+
   // The shred.
   const res = await fetch(`${base}/api/advance`, {
     method: 'POST',
@@ -166,11 +191,19 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   await new Promise((r) => setTimeout(r, 400)); // the projector's animation payload expires
 
   assert.deepEqual(readdirSync(dataDir), [], 'data directory is empty');
-  assert.deepEqual(filesContaining(scanned(), MARKER), [], 'no file contains a card, comment or theme');
+  assert.deepEqual(filesContaining(scanned(), MARKER), [], 'no file contains a card, thought or theme');
+  for (const r of receipts) assert.deepEqual(filesContaining(scanned(), r), [], 'no file holds a card receipt');
+  assert.deepEqual(filesContaining(scanned(), TAKEN), [], 'nor the card taken back');
+  // The writing count was only ever in memory: no file holds when anyone typed, and it is gone.
+  assert.deepEqual(filesContaining([...filesUnder(dataDir), ...filesUnder(tmp), ...filesUnder(home)], 'typedAt'), [], 'no data file holds when a phone typed');
+  assert.equal((await post('typing', { cid: PHONES[0] })).ok, true, 'typing after the shred is ignored, not an error');
+  assert.equal(JSON.stringify(await facilitatorView()).includes('writing'), false, 'no count survives the shred');
   assert.equal(output.includes(MARKER), false, 'server output contains no content');
   assert.equal(/\b\d{1,3}(\.\d{1,3}){3}\b|::1|::ffff:/.test(output), false, 'server output contains no IP address');
   for (const q of [`role=facilitator&t=${encodeURIComponent(TOKEN)}`, 'role=projector', `role=phone&cid=${PHONES[0]}`]) {
-    assert.equal(JSON.stringify(await view(q)).includes(MARKER), false, `${q} view is clean`);
+    const seen = JSON.stringify(await view(q));
+    assert.equal(seen.includes(MARKER), false, `${q} view is clean`);
+    assert.equal(receipts.some((r) => seen.includes(r)), false, `${q} view holds no receipt`);
   }
   assert.equal(JSON.stringify(await view('role=projector')).includes('🦆'), false, 'reactions are gone too');
 
@@ -186,4 +219,56 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   await run('reset', { confirm: true });
   assert.equal((await view('role=projector')).phase, 'teaser');
   assert.deepEqual(filesContaining(scanned(), MARKER), [], 'still nothing after starting a new session');
+});
+
+// The harshness check's answers (a level and a one-line reason, which can
+// paraphrase a card) are stored on the cards and thoughts, for the
+// facilitator only. They go with everything else at the shred.
+test('no harshness reason survives the shred', async (t) => {
+  const { Session } = await import('../server/session.js');
+  const { openStore } = await import('../server/db.js');
+  const dir = mkdtempSync(join(tmpdir(), 'otr-harsh-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const REASON = 'REASON' + randomBytes(8).toString('hex');
+  let now = 1_000_000;
+  const store = openStore(dir);
+  const session = new Session({
+    now: () => now,
+    clusterCards: async (cards) => ({ themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }),
+    checkHarshness: async (items) => new Map(items.map((i) => [i.id, { level: 2, reason: `${REASON} ${i.id}` }])),
+    onChange: () => store.save(session.state),
+    onShred: () => store.shred(),
+    shredAnimationMs: 10,
+  });
+  const flush = () => new Promise((r) => setImmediate(r));
+  const quiet = async () => {
+    for (let i = 0; i < 6; i++) {
+      now += 1000;
+      session.tick();
+    }
+    await flush();
+  };
+  session.advance(); // demo
+  session.advance(); // join
+  session.advance(); // submit
+  session.submitCards(PHONES[0], ['a card', 'another card']);
+  await quiet();
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.afterthought(PHONES[1], 'a thought');
+  await quiet();
+  session.reviewRest();
+
+  const views = () => JSON.stringify([session.view('facilitator'), session.view('projector'), session.view('phone', { cid: PHONES[0] })]);
+  assert.ok(views().includes(REASON), 'control: the facilitator sees the reasons');
+  assert.ok(filesContaining(filesUnder(dir), REASON).length > 0, 'control: the reasons are in the database');
+  assert.ok(session.state.afterthoughts[0].harsh, 'control: the thought was checked');
+
+  session.shred();
+  assert.deepEqual(readdirSync(dir), [], 'data directory is empty');
+  assert.deepEqual(filesContaining(filesUnder(dir), REASON), []);
+  assert.equal(views().includes(REASON), false, 'no screen still holds a reason');
+  assert.equal(JSON.stringify(session.state).includes('harsh'), false, 'nor does the state');
+  assert.equal(JSON.stringify(session.state).includes('reviewed'), false);
 });

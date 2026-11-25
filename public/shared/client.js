@@ -69,6 +69,27 @@ export function seededShuffle(items, seedText) {
   return { items: out, rand };
 }
 
+// A phone's deck: the cards it has already reacted to, plus the first
+// unreacted cards of its own seeded order, up to `size` cards (all of them
+// with no size), in that order. Each card's place comes from the seed and its
+// own id, so a hidden card never reshuffles the rest: the next card in the
+// order fills its slot. A reacted card never leaves the deck, so cards that
+// arrive later take only the slots left.
+export function deck(ids, seedText, size, reacted = new Set()) {
+  const rank = new Map(ids.map((id) => [id, seededShuffle([], `${seedText}:${id}`).rand()]));
+  const ordered = [...ids].sort((a, b) => rank.get(a) - rank.get(b) || a - b);
+  let room = (size ?? ids.length) - ordered.filter((id) => reacted.has(id)).length;
+  return ordered.filter((id) => reacted.has(id) || room-- > 0);
+}
+
+// Where a phone stands at the end of its deck: the first card in it not yet
+// seen (one unhidden, or one that came in later), and whether "That was every
+// card" is true: the deck is every card and every one of them was seen.
+export function deckEnd(deckIds, total, seen) {
+  const unseen = deckIds.find((id) => !seen.has(id)) ?? null;
+  return { unseen, everyCard: deckIds.length >= total && unseen === null };
+}
+
 // replaceChildren that accepts nested arrays and skips empty values.
 export function fill(el, ...children) {
   el.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false && c !== ''));

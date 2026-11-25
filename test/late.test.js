@@ -38,15 +38,17 @@ const groupOf = (session, cardId) => {
 };
 
 // To submit, with 3 cards in; then the 1-minute warning starts the early run.
+// Returns each card's receipt, by text.
 async function toEarlyRun(made) {
   const { session, clock } = made;
   session.advance(); // join
   session.advance(); // submit
-  session.submitCards(A, ['one', 'two']);
-  session.submitCards(B, ['three']);
+  const a = session.submitCards(A, ['one', 'two']).receipts;
+  const b = session.submitCards(B, ['three']).receipts;
   clock.tick(4 * MIN);
   session.tick();
   await flush();
+  return { one: a[0], two: a[1], three: b[0] };
 }
 
 // The early run lands: "one" and "two" are near-duplicates in Work, "three" is in Life.
@@ -350,6 +352,77 @@ test('hidden cards are never sent for placement', async () => {
   assert.equal(sent.includes('secret five'), false);
   assert.equal(sent.includes('"two"'), false);
   assert.deepEqual(place.calls[0].input.late.map((c) => c.text), ['four']);
+});
+
+test('a card taken back after the early grouping leaves its group; an emptied group and theme go', async () => {
+  const made = make();
+  const { session, clock, place } = made;
+  const receipts = await toEarlyRun(made);
+  await landEarly(made);
+  session.approveAll({});
+  const [one, two] = ['one', 'two'].map((t) => idOf(session, t));
+  const work = session.state.themes.find((t) => t.name === 'Work');
+  // "three" is alone in Life: its group and its theme go with it.
+  session.submitCards(B, [], [receipts.three]);
+  assert.deepEqual(session.state.themes.map((t) => t.name), ['Work']);
+  // "one" shares a group with "two": the group stays, with "two" only, and keeps its name.
+  session.submitCards(A, [], [receipts.one]);
+  assert.deepEqual(session.state.themes.map((t) => [t.id, t.name, t.approved, t.groups.map((g) => g.cardIds)]), [[work.id, 'Work', true, [[two]]]]);
+  assert.equal(session.card(one), undefined);
+  const saved = JSON.stringify(session.state);
+  assert.equal(saved.includes('"one"') || saved.includes('"three"'), false, 'their text is gone from the state');
+  assert.equal(JSON.stringify(session.view('facilitator')).includes('"three"'), false);
+  // Nothing is left to place on entering grouping.
+  clock.tick(MIN);
+  session.advance(); // cluster
+  await flush();
+  assert.equal(place.calls.length, 0);
+  assert.deepEqual(session.state.themes.flatMap((t) => t.groups.flatMap((g) => g.cardIds)), [two]);
+});
+
+test("a card taken back while the AI is grouping doesn't come back in the result", async () => {
+  const made = make();
+  const { session, cluster } = made;
+  const receipts = await toEarlyRun(made);
+  assert.equal(session.state.clustering.status, 'running');
+  const ids = ['one', 'two', 'three'].map((t) => idOf(session, t));
+  session.submitCards(A, [], [receipts.one]);
+  session.submitCards(B, [], [receipts.three]);
+  // The AI was sent all three; its answer still names the two taken back.
+  cluster.calls[0].resolve({
+    themes: [
+      { name: 'Work', haiku: '', groups: [[ids[0], ids[1]]] },
+      { name: 'Life', haiku: '', groups: [[ids[2]]] },
+    ],
+  });
+  await flush();
+  assert.equal(session.state.clustering.status, 'done');
+  assert.deepEqual(session.state.themes.map((t) => [t.name, t.groups.map((g) => g.cardIds)]), [['Work', [[ids[1]]]]]);
+});
+
+test("a card taken back while the quick call is placing it doesn't come back in the result", async () => {
+  const made = make();
+  const { session, clock, place } = made;
+  await toEarlyRun(made);
+  await landEarly(made);
+  session.approveAll({});
+  const late = session.submitCards(C, ['four', 'five']).receipts;
+  clock.tick(MIN);
+  session.advance(); // cluster: the quick call runs
+  await flush();
+  const placements = fits(session);
+  const five = idOf(session, 'five');
+  // Back to submissions while it runs, and "five" is taken back.
+  session.back();
+  session.submitCards(C, [], [late[1]]);
+  place.calls[0].resolve({ placements, flags: [{ cardIds: [five], reason: 'Nothing about bridges yet' }] });
+  await flush();
+  assert.equal(groupOf(session, five), null);
+  // Its flag went with it: nothing is left for the facilitator to choose on.
+  assert.equal(session.state.clustering.late.status, 'done');
+  assert.deepEqual(session.state.clustering.late.flags, []);
+  assert.equal(JSON.stringify(session.state.clustering).includes(String(five)), false);
+  assert.equal(groupOf(session, idOf(session, 'four')).group.id, placements[0].groupId);
 });
 
 test('normalizePlacements drops unknown ids and duplicates; unplaced cards are flagged', () => {

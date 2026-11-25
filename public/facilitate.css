@@ -31,10 +31,6 @@ section.panel h3 { margin: 0; font-size: 15px; color: var(--text-dim); font-weig
 .theme.approved { border-color: var(--ok); }
 .current { font-size: 22px; line-height: 1.35; background: var(--bg-sunk); border-radius: var(--radius); padding: 14px; overflow-wrap: anywhere; }
 .mixline { font-family: var(--emoji); font-size: 22px; }
-.signals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
-.signals div { background: var(--bg-sunk); border-radius: 10px; padding: 8px; }
-.signals b { display: block; font-size: 24px; }
-.signals .private { outline: 1px dashed var(--warn); }
 .walk-nav { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
 .walk-nav button { min-height: 64px; font-size: 18px; }
 .stream { display: grid; gap: 4px; font-size: 14px; color: var(--text-dim); max-height: 260px; overflow: auto; }
@@ -61,8 +57,6 @@ details summary { cursor: pointer; color: var(--text-dim); }
 .mod { background: transparent; border-color: color-mix(in srgb, var(--danger) 70%, transparent); color: #ff8a8d; flex: none; }
 .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
 .prompts { display: grid; gap: 2px; font-size: 14px; color: var(--text-dim); border-top: 1px dashed var(--line); padding-top: 8px; }
-.signals div { background: color-mix(in srgb, var(--room) 8%, var(--bg-sunk)); }
-.signals .private { outline: 1px dashed var(--warn); }
 .zone-lists { display: block; }
 .zone-lists > * + * { margin-top: 10px; }
 .pace-text { font-size: 14px; font-weight: 600; }
@@ -76,3 +70,12 @@ details summary { cursor: pointer; color: var(--text-dim); }
 .zone-now .nav { margin-top: 4px; }
 .loop-btn { min-height: 48px; font-size: 16px; width: 100%; margin-top: 4px; }
 .speed-btn { flex: 1; min-height: 48px; font-size: 16px; }
+/* The harshness check (facilitator only): a red or amber dot with its reason. */
+.harsh { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; }
+.harsh .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; transform: translateY(1px); }
+.harsh-2 { color: #ff8a8d; }
+.harsh-2 .dot { background: var(--danger); }
+.harsh-1 { color: var(--warn); }
+.harsh-1 .dot { background: var(--warn); }
+.cardrow .review { flex: none; }
+.alert.hold { flex-direction: column; align-items: stretch; border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
