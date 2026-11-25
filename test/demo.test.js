@@ -160,12 +160,12 @@ test('struckParts splits ~~marked~~ spans and leaves an unpaired ~~ as text', ()
   assert.deepEqual(struckParts('empty ~~~~ pair'), [{ text: 'empty ~~~~ pair', struck: false }]);
 });
 
-test("the demo's reactions and comments don't carry over", () => {
+test("the demo's reactions and thoughts don't carry over", () => {
   const s = make();
   s.demoStep(1);
   s.advance();
   assert.deepEqual(s.state.reactions, []);
-  assert.deepEqual(s.state.comments, []);
+  assert.deepEqual(s.state.afterthoughts, []);
 });
 
 test('a session without a demo skips straight on, adding no card', () => {

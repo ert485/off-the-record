@@ -11,6 +11,7 @@ import { struckParts } from './shared/struck.js';
 const PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
+const AFTERTHOUGHT_MAX = 200; // the server's cap on the one thought at the end of the deck
 // Every keyboard puts its emojis somewhere slightly different.
 const MAX_EMOJIS = 22; // the server's cap per card: 16 presets + 6 of your own
 const MAX_OWN = 6; // own-emoji chips shown on a card
@@ -398,8 +399,6 @@ function reactScreen() {
   // What this phone reacted to each card with, and the receipt that lets it
   // change those reactions. Kept and wiped like the private notes.
   const mine = local.get('reactions', {});
-  // Comment drafts per card, kept like the private notes.
-  const drafts = local.get('commentDrafts', {});
   let index = null; // position in this phone's shuffled order
   let shownId = null;
   let finished = false;
@@ -426,6 +425,10 @@ function reactScreen() {
     return group.texts[Math.floor(rand() * group.texts.length)];
   }
 
+  // The end of the deck: one thought, if there's anything new after seeing
+  // every card, and a way back to add an emoji. The thought is sent only when
+  // its button is tapped, never when the room moves on; an unsent draft stays
+  // on the phone and is wiped like the notes.
   function finish() {
     finished = true;
     shownId = null;
@@ -433,13 +436,72 @@ function reactScreen() {
     tickTimer();
     fill(
       body,
-      lookUp('Look up', 'That was every card. Thank you. Waiting for everyone else to finish.').el,
+      thoughtBox(),
+      h('p', { class: 'small dim' }, 'Made your own emoji? Go back and add it to a card.'),
       h('button', { class: 'quiet', onclick: () => ((finished = false), (index = order().length - 1), show()) }, '◀ Back to the last card'),
     );
     if (!sentDone) {
       sentDone = true;
       post('reactDone', { cid }).catch(() => (sentDone = false));
     }
+  }
+
+  // The end-of-deck thought. Kept on the phone and wiped like the notes:
+  // 'afterthought' is what was sent ({ text, receipt }), 'afterthoughtDraft'
+  // what's typed and not sent, 'afterthoughtDone' that the box was closed
+  // (sent, or "Nothing to add").
+  function thoughtBox() {
+    const box = h('div', { class: 'stack' });
+    const render = () => fill(box, local.get('afterthoughtDone', false) ? done() : write());
+    const close = () => {
+      local.set('afterthoughtDraft', null);
+      local.set('afterthoughtDone', true);
+      render();
+    };
+    function write() {
+      const sent = local.get('afterthought', null);
+      const had = !!sent?.text;
+      const input = h('textarea', { rows: 3, maxLength: AFTERTHOUGHT_MAX, placeholder: 'Optional. Shown on the last slide, with no name.', 'aria-label': 'Your thought' });
+      input.value = local.get('afterthoughtDraft', null) ?? sent?.text ?? '';
+      const counter = h('div', { class: 'counter' });
+      const hint = h('div');
+      const add = h('button', { class: 'primary grow' });
+      const skip = h('button', { class: 'quiet', onclick: close }, had ? 'Keep it as it was' : 'Nothing to add');
+      const refresh = () => {
+        local.set('afterthoughtDraft', input.value);
+        counter.textContent = `${input.value.length}/${AFTERTHOUGHT_MAX}`;
+        fill(hint, identifierHint(input.value) ?? '');
+        const text = input.value.trim();
+        add.textContent = !had ? 'Add this thought' : text ? 'Change this thought' : 'Take back this thought';
+        add.disabled = had ? text === sent.text : !text;
+      };
+      input.addEventListener('input', refresh);
+      add.addEventListener('click', async () => {
+        const text = input.value.trim();
+        add.disabled = true;
+        try {
+          const { receipt } = await post('afterthought', { cid, text, receipt: sent?.receipt });
+          local.set('afterthought', { text, receipt: receipt ?? sent?.receipt });
+          close();
+        } catch (err) {
+          add.disabled = false;
+          showError(box, err);
+        }
+      });
+      refresh();
+      return [h('h2', {}, 'That was every card. Anything new after seeing them all?'), input, counter, hint, h('div', { class: 'row' }, add, skip)];
+    }
+    function done() {
+      const text = local.get('afterthought', null)?.text;
+      const reopen = () => (local.set('afterthoughtDone', false), render());
+      return [
+        lookUp('Look up', text ? 'Thank you. Your thought is in: it shows on the last slide, with no name.' : 'That was every card. Thank you. Waiting for everyone else to finish.').el,
+        text ? h('div', { class: 'note sent' }, h('span', { class: 'tick' }, '✓'), h('div', { class: 'text' }, text)) : '',
+        h('button', { class: 'quiet', onclick: reopen }, text ? 'Change your thought' : 'Add a thought after all'),
+      ];
+    }
+    render();
+    return box;
   }
 
   function show() {
@@ -547,34 +609,20 @@ function reactScreen() {
       refreshLimit();
     });
 
-    const comment = h('textarea', { rows: 2, maxLength: HARD_MAX, placeholder: 'Add a comment (optional)', 'aria-label': 'Add a comment' });
-    comment.value = drafts[id] ?? before?.comment ?? '';
-    const commentHint = h('div');
-    const refreshComment = () => {
-      drafts[id] = comment.value;
-      local.set('commentDrafts', drafts);
-      fill(commentHint, identifierHint(comment.value) ?? '');
-    };
-    comment.addEventListener('input', refreshComment);
-    refreshComment();
-
-    // Sends the emojis and comment together, with the receipt when this card
-    // was sent before. A first send with neither is not sent at all.
+    // Sends the emojis, with the receipt when this card was sent before. A
+    // first send with none is not sent at all.
     let sending = false;
     const dirty = () => {
       const emojis = [...selected];
-      const text = comment.value.trim();
-      if (!before) return emojis.length > 0 || text !== '';
-      const sameEmojis = emojis.length === before.emojis.length && emojis.every((e) => before.emojis.includes(e));
-      return !sameEmojis || text !== (before.comment ?? '');
+      if (!before) return emojis.length > 0;
+      return emojis.length !== before.emojis.length || !emojis.every((e) => before.emojis.includes(e));
     };
     async function send() {
       const emojis = [...selected];
-      const text = comment.value.trim();
       sending = true;
       try {
-        const { receipt } = await post('react', { cid, groupId: id, emojis, receipt: before?.receipt, comment: text });
-        mine[id] = { emojis, comment: text, receipt: receipt ?? before?.receipt };
+        const { receipt } = await post('react', { cid, groupId: id, emojis, receipt: before?.receipt });
+        mine[id] = { emojis, receipt: receipt ?? before?.receipt };
         local.set('reactions', mine);
         // Remember your own emojis for later cards, most recent first.
         const own = custom.filter((e) => selected.has(e)); // newest first, as shown
@@ -618,15 +666,13 @@ function reactScreen() {
 
     fill(
       body,
-      h('div', { class: 'small faint' }, `Card ${index + 1} of ${ids.length}`, (before?.emojis.length || before?.comment) ? ' · you reacted to this one' : ''),
+      h('div', { class: 'small faint' }, `Card ${index + 1} of ${ids.length}`, before?.emojis.length ? ' · you reacted to this one' : ''),
       h('div', { class: 'react-card' }, textFor(group)),
       grid,
       h('div', { class: 'row wrap custom-row' }, addOwn, input, chips),
       howTo,
       emojiHint,
       limitHint,
-      comment,
-      commentHint,
       h('div', { class: 'row' }, back, next),
     );
     refreshLimit();

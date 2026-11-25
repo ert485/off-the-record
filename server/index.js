@@ -2,7 +2,7 @@
 //
 // Privacy rules this file keeps (see "Privacy and the shred" in the spec):
 // - No request logging of any kind. Nothing here prints IPs, URLs or content.
-// - Errors print only a fixed label, never card or comment text.
+// - Errors print only a fixed label, never card or thought text.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -108,8 +108,9 @@ function openStream(req, res, url) {
 
 const PHONE_ACTIONS = {
   submit: (b) => session.submitCards(b.cid, b.texts),
-  react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt, b.comment),
+  react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt),
   reactDone: (b) => session.reactDone(b.cid),
+  afterthought: (b) => session.afterthought(b.cid, b.text, b.receipt),
 };
 
 const FACILITATOR_ACTIONS = {
@@ -137,7 +138,7 @@ const FACILITATOR_ACTIONS = {
     session.reset();
   },
   hideCard: (b) => session.hideCard(b.id, b.hidden),
-  removeComment: (b) => session.removeComment(b.id),
+  removeAfterthought: (b) => session.removeAfterthought(b.id),
 };
 
 async function readJson(req) {

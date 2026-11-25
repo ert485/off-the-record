@@ -128,7 +128,7 @@ function demoScreen() {
   const main = h('div', { class: 'demo-main' }, h('div', { class: 'demo-phone-wrap' }, phone), h('div', { class: 'demo-side' }, caption));
   const revealTop = h('div', { class: 'top demo-top' });
   const reveal = h('div', { class: 'walk demo-reveal', hidden: true });
-  // The reveal fits the screen as a crowded walk-through card does (it has no comments to drop).
+  // The reveal fits the screen as a crowded walk-through card does (it has nothing to drop).
   const under = underCard(
     reveal,
     crowdFit(reveal, () => 0, () => {}),
@@ -372,7 +372,7 @@ function joinScreen() {
         { class: 'disclosure' },
         'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. ',
         'Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. ',
-        'I see cards and comments before they’re shown and can remove any of them to prevent abuse. ',
+        'I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. ',
         'Everything on our server is shredded tonight. Code: ',
         repo,
       ),
@@ -393,10 +393,12 @@ function joinScreen() {
 
 // A crowded walk-through card steps --crowd down from 1 to CROWD_FLOOR by
 // CROWD_STEP (crowdFit). The card text never goes under
-// CARD_FLOOR; the comments' and haiku's floors are in projector.css.
+// CARD_FLOOR; the afterthoughts' and haiku's floors are in projector.css.
 const CROWD_STEP = 0.05;
 const CROWD_FLOOR = 0.5;
 const CARD_FLOOR = '2.6vw';
+// The last slide shows this many afterthoughts a page (AFTERTHOUGHTS_PER_PAGE in server/phases.js).
+const AFTERTHOUGHTS_PER_PAGE = 4;
 
 function cardFontSize(text) {
   const n = text.length;
@@ -411,11 +413,12 @@ function crowdedCardSize(text) {
 // A crowded card fits the screen (the walk-through's, and the demo's reveal,
 // which uses the same layout): everything from the card to the .bottom row
 // ends above the walk's bottom padding (kept for the waiting line). Start at
-// the normal sizes with every comment; while it overflows, step --crowd down
-// (the card text, comments, haiku and the gaps all scale by it, each only to
-// its floor); if it still overflows at CROWD_FLOOR, show fewer comments,
-// dropping the newest into "+N more" (show(n) draws the first n of count()).
-// The haiku sits under the comments, so it is never what's cut. Bounded: one
+// the normal sizes with every item (the last slide's page of afterthoughts;
+// a card has none); while it overflows, step --crowd down (the card text,
+// afterthoughts, haiku and the gaps all scale by it, each only to its floor);
+// if it still overflows at CROWD_FLOOR, show fewer items,
+// dropping the last into "+N more" (show(n) draws the first n of count()).
+// The haiku sits below them, so it is never what's cut. Bounded: one
 // measure per step. Returns the fit that underCard runs.
 function crowdFit(walk, count, show) {
   return (layout) => {
@@ -493,7 +496,7 @@ function mixRow(mix) {
 // Lays out what sits under the card. The emoji mix stays one row: when it is
 // wider than its space (up to 12 big emojis), the whole row shrinks to fit
 // instead of wrapping (no room for a second row) or running under the corner
-// QR. The comments column starts at the card's left edge, wherever the centred
+// QR. The column under the card starts at its left edge, wherever the centred
 // card lands; offsetLeft is the laid-out position, so the demo's entrance
 // animations (transforms) don't skew it. Re-run when the card or screen
 // resizes, and whenever a font finishes loading (the emoji font loads only once
@@ -560,29 +563,58 @@ function walkScreen() {
   const folder = h('div', { class: 'folder-card' }, tab, card);
   const more = h('div', { class: 'more' });
   const mix = h('div', { class: 'mix' });
-  const comments = h('div', { class: 'comments' });
-  const commentsMore = h('div', { class: 'comments-more' });
   const haiku = h('div', { class: 'haiku' });
+  // The last slide's afterthoughts, a page at a time, in the comment list's style.
+  const thoughtList = h('div', { class: 'comments' });
+  const thoughtsMore = h('div', { class: 'comments-more' });
+  const thoughtsBox = h('div', { class: 'afterthoughts', hidden: true }, thoughtList, thoughtsMore);
   const el = h(
     'div',
     { class: 'walk' },
     h('div', { class: 'top' }, position),
-    h('div', { class: 'stage-card' }, folder, more),
+    h('div', { class: 'stage-card' }, folder, thoughtsBox, more),
     mix,
-    h('div', { class: 'under' }, comments, commentsMore, haiku),
+    h('div', { class: 'under' }, haiku),
     h('div', { class: 'bottom' }),
   );
-  let said = { shown: [], more: 0 }; // this card's comments, oldest first
+  let thoughts = []; // every afterthought, oldest first (the last slide only)
+  let page = 0;
+  let pageIndex = null; // the walk item the page belongs to
+  let onPage = []; // the thoughts on this page
+  let drawn = null; // what's drawn, so a re-fit doesn't replay the fade
 
-  // The first n comments; the rest join the server's "+N more".
-  function drawComments(n) {
-    fill(comments, ...said.shown.slice(0, n).map((c) => h('div', { class: 'comment' }, c.text)));
-    const more = said.more + said.shown.length - n;
-    commentsMore.textContent = more > 0 ? `+${more} more` : '';
+  const pages = () => Math.ceil(thoughts.length / AFTERTHOUGHTS_PER_PAGE);
+  // Every projector works out the same page from the server's clock: the
+  // slide's time split evenly between its pages. A pause (or the end of the
+  // walk-through) holds the page that was showing.
+  function pageNow(w) {
+    if (pageIndex !== w.index) page = 0;
+    pageIndex = w.index;
+    const n = pages();
+    if (n <= 1) return 0;
+    if (w.paused || w.cardEndsAt === null || w.cardStartedAt === null) return Math.min(page, n - 1);
+    const pageMs = (w.cardEndsAt - w.cardStartedAt) / n;
+    return Math.floor(Math.max(0, serverNow() - w.cardStartedAt) / pageMs) % n;
   }
 
-  // A crowded card fits the screen, down to the bottom row (crowdFit).
-  const under = underCard(el, crowdFit(el, () => said.shown.length, drawComments));
+  // The first n thoughts on this page; any that can't fit are counted.
+  function drawThoughts(n) {
+    const key = JSON.stringify([page, n, onPage]);
+    if (key === drawn) return;
+    drawn = key;
+    fill(thoughtList, onPage.slice(0, n).map((t) => h('div', { class: 'comment' }, t.text)));
+    thoughtsMore.textContent = onPage.length > n ? `+${onPage.length - n} more` : '';
+  }
+
+  function showPage(p) {
+    page = p;
+    onPage = thoughts.slice(p * AFTERTHOUGHTS_PER_PAGE, (p + 1) * AFTERTHOUGHTS_PER_PAGE);
+    const n = pages();
+    more.textContent = n > 1 ? `${p + 1} / ${n}` : '';
+  }
+
+  // A crowded card (or a full page of thoughts) fits the screen, down to the bottom row (crowdFit).
+  const under = underCard(el, crowdFit(el, () => onPage.length, drawThoughts));
   let view = null;
   let barWidth = null; // the last width seen while the card was running
   let barIndex = null; // the card that width belongs to
@@ -612,6 +644,11 @@ function walkScreen() {
   }
   function loop() {
     drawBar();
+    const w = view?.walk;
+    if (w?.item?.last && thoughts.length && pageNow(w) !== page) {
+      showPage(pageNow(w));
+      under.layout();
+    }
     frame = requestAnimationFrame(loop);
   }
   frame = requestAnimationFrame(loop);
@@ -626,6 +663,9 @@ function walkScreen() {
       const last = !!item?.last;
       el.classList.toggle('is-overview', overview);
       el.classList.toggle('is-last', last);
+      // The server sends the thoughts on the last slide only.
+      thoughts = last ? (w.afterthoughts ?? []) : [];
+      thoughtsBox.hidden = thoughts.length === 0;
       position.textContent = w.total > 2 && !overview && !last ? `${w.index} / ${w.total - 2}` : '';
       if (overview) {
         fill(folder, h('div', { class: 'overview-title' }, 'Themes'), drawer(item.overview));
@@ -638,9 +678,10 @@ function walkScreen() {
         folder.classList.remove('plain');
         folder.classList.toggle('last', last);
         folder.hidden = !!item?.hidden;
-        const body = last ? 'Anything else? Out loud.' : item && !item.hidden ? item.text : '';
+        const titled = last && thoughts.length > 0;
+        const body = titled ? 'Afterthoughts' : last ? 'Anything else? Out loud.' : item && !item.hidden ? item.text : '';
         text.textContent = body;
-        card.style.fontSize = last ? '6vw' : crowdedCardSize(body);
+        card.style.fontSize = titled ? 'max(2.6vw, calc(4vw * var(--crowd, 1)))' : last ? '6vw' : crowdedCardSize(body);
         const theme = !last && item?.theme ? item.theme : '';
         tab.textContent = theme;
         tab.hidden = !theme;
@@ -650,9 +691,10 @@ function walkScreen() {
         more.textContent = bits.join(' · ');
         fill(mix, ...mixRow(item?.mix));
       }
-      // Comments no longer arrive live: the server sends a stable few (none for a hidden card).
-      // under.layout() below draws as many of them as fit.
-      said = item?.hidden ? { shown: [], more: 0 } : w.comments;
+      // The page of thoughts (none off the last slide); under.layout() below
+      // draws as many as fit.
+      if (thoughts.length) showPage(pageNow(w));
+      else onPage = [];
       fill(haiku, !overview && !last && item?.haiku ? haikuParts(item.haiku) : []);
       drawBar();
       under.layout();
@@ -870,7 +912,7 @@ function deletePrelude(animate) {
     'div',
     { class: 'del-dialog' },
     h('div', { class: 'del-title' }, 'Delete everything?'),
-    h('div', { class: 'del-body' }, 'Every card, reaction and comment, from the server. This can’t be undone.'),
+    h('div', { class: 'del-body' }, 'Every card, reaction and thought, from the server. This can’t be undone.'),
     h('div', { class: 'del-actions' }, h('span', { class: 'del-cancel' }, 'Cancel'), button),
   );
   const cursor = h('div', { class: 'cursor' });

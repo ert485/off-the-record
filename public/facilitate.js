@@ -259,7 +259,7 @@ function nav(v) {
   } else if (v.next === 'shred') {
     next = h('button', { class: 'danger prompt' }, v.move ? `${v.move.label} ▶` : 'Shred…');
     next.addEventListener('click', () => {
-      if (confirm('Shred everything? This deletes every card, reaction and comment from the server, and Back cannot undo it.')) {
+      if (confirm('Shred everything? This deletes every card, reaction and thought from the server, and Back cannot undo it.')) {
         act('advance', { from: v.phase, confirm: true });
       }
     });
@@ -312,13 +312,14 @@ function mixLine(mix) {
   return h('div', { class: 'mixline' }, (mix ?? []).map(([e, n]) => `${e}${n > 1 ? `×${n}` : ''}`).join('  ') || ' ');
 }
 
-function commentList(label, comments) {
-  if (!comments?.length) return '';
+// The thoughts phones added at the end of their decks, each with Remove.
+function afterthoughtList(label, afterthoughts) {
+  if (!afterthoughts?.length) return '';
   return h(
     'div',
     { class: 'stack' },
     h('div', { class: 'label' }, label),
-    comments.map((c) => h('div', { class: 'cardrow' }, h('div', { class: 'text' }, c.text), modButton('Remove', () => act('removeComment', { id: c.id })))),
+    afterthoughts.map((t) => h('div', { class: 'cardrow' }, h('div', { class: 'text' }, t.text), modButton('Remove', () => act('removeAfterthought', { id: t.id })))),
   );
 }
 
@@ -344,7 +345,7 @@ const OVERVIEW_PROMPTS = ['First reactions: anything surprise you?', 'Which of t
 
 // Matches the projector's fine print word for word.
 const DISCLOSURE =
-  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. I see cards and comments before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
+  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
 
 // ---- grouping --------------------------------------------------------------
 
@@ -531,7 +532,7 @@ const PHASES = {
       ),
       content: [
         themeDrafts(v),
-        // Not once there are reactions: new groups would cut them (and comments) off their cards.
+        // Not once there are reactions: new groups would cut them off their cards.
         c.status !== 'running' && c.status !== 'idle' && !c.empty && !v.react.reactions ? h('button', { class: 'quiet', onclick: () => act('recluster') }, 'Re-run grouping') : '',
       ],
     };
@@ -553,7 +554,10 @@ const PHASES = {
         timeInfo.text,
         h('div', { class: 'row wrap' }, h('button', { class: 'small-btn', onclick: () => act('extendReact', { from: v.react.endsAt }) }, '+1 minute')),
       ),
-      content: h('div', {}, h('span', { class: 'dim small' }, `${v.react.reactions} reactions so far `), countInfo.button, countInfo.text),
+      content: [
+        h('div', {}, h('span', { class: 'dim small' }, `${v.react.reactions} reactions so far `), countInfo.button, countInfo.text),
+        afterthoughtList('Thoughts from the end of the deck, shown on the last slide', v.react.afterthoughts),
+      ],
       lists: allCards(v),
     };
   },
@@ -567,9 +571,10 @@ const PHASES = {
     const shown = group?.cards.find((c) => !c.hidden);
     const cards = Math.max(0, w.total - 2); // not the overview or the last slide
     const prompts = overview ? OVERVIEW_PROMPTS : [PROMPTS[w.index % PROMPTS.length], PROMPTS[(w.index + 1) % PROMPTS.length]];
-    const posInfo = info('walk-pos', 'Where you are: the themes overview first, then the cards in order of reactions, then a last slide that invites the room to speak.');
+    const posInfo = info('walk-pos', 'Where you are: the themes overview first, then the cards in order of reactions, then a last slide: the room’s afterthoughts, or, with none, an invitation to speak.');
     const timeInfo = info('walk-time', 'How long this card has been on screen. The projector shows the time left in the whole walk-through instead.');
-    const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (20 seconds are kept for the last slide). It’s a rough average, not a limit: spend longer where the room wants to.');
+    const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (the last slide keeps 20 seconds, or 10 seconds for each page of 4 thoughts, up to a minute). It’s a rough average, not a limit: spend longer where the room wants to.');
+    const nextIsLast = !lastSlide && w.index === w.total - 2;
     const showLeft = !lastSlide && !w.done && w.cardsLeft !== null;
     return {
       move: [
@@ -597,7 +602,7 @@ const PHASES = {
         overview
           ? h('div', { class: 'current' }, 'The themes are on the projector.')
           : lastSlide
-            ? h('div', { class: 'current' }, 'Anything else? Out loud.')
+            ? h('div', { class: 'current' }, w.afterthoughts.length ? 'Afterthoughts' : 'Anything else? Out loud.')
             : [
                 item?.theme ? h('div', { class: 'dim' }, item.theme) : '',
                 item?.haiku ? h('div', { class: 'dim small' }, item.haiku) : '',
@@ -610,21 +615,22 @@ const PHASES = {
                 mixLine(item?.mix),
               ],
         lastSlide ? '' : h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
-        commentList(
-          item?.hidden
-            ? 'Comments on this card (hidden, so none are on the projector)'
-            : 'Comments on this card: the first 5 are on the projector, the rest as “+N more”',
-          v.comments?.current,
-        ),
-        commentList('Comments on the next card, not shown yet', v.comments?.next),
+        lastSlide ? afterthoughtList('On the projector now, 4 to a page', w.afterthoughts) : '',
+        nextIsLast ? afterthoughtList('Thoughts on the last slide, next: not shown yet', w.afterthoughts) : '',
       ],
-      lists: foldable(
-        'stream',
-        'Stream',
-        false,
-        h('p', { class: 'small dim' }, 'Themes in order of total reactions, then cards in order of reactions inside each theme.'),
-        h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, i === 0 || i === w.stream.length - 1 ? s.text : `${i}. ${s.text ?? '(hidden)'} · ${s.reactions} reactions`))),
-      ),
+      lists: [
+        // Earlier in the walk-through, the thoughts wait here, to be read and removed before the last slide.
+        !lastSlide && !nextIsLast && w.afterthoughts.length
+          ? foldable('afterthoughts', `Thoughts for the last slide (${w.afterthoughts.length})`, false, afterthoughtList('Not shown yet', w.afterthoughts))
+          : '',
+        foldable(
+          'stream',
+          'Stream',
+          false,
+          h('p', { class: 'small dim' }, 'Themes in order of total reactions, then cards in order of reactions inside each theme.'),
+          h('div', { class: 'stream' }, w.stream.map((s, i) => h('div', { class: i === w.index ? 'now' : '' }, i === 0 || i === w.stream.length - 1 ? s.text : `${i}. ${s.text ?? '(hidden)'} · ${s.reactions} reactions`))),
+        ),
+      ],
     };
   },
 

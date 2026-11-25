@@ -34,7 +34,7 @@ body { background: #000; overflow: hidden; cursor: none; }
 /* Leaves room under the walk for the waiting line, in one column that never grows
    past the screen (a long emoji row shrinks to fit instead). A crowded card
    fits by --crowd (1 down to 0.5, set by projector.js): it scales the card
-   text, comments and haiku, each to its floor, and the gaps and paddings
+   text, the last slide's afterthoughts and the haiku, each to its floor, and the gaps and paddings
    (to half). The bottom padding stays: the waiting line needs it. The rows
    under the card are max-content, not auto: an auto row squeezes down to its
    min-height when the card is crowded, and the emojis then ride up over the
@@ -111,7 +111,7 @@ body { background: #000; overflow: hidden; cursor: none; }
 .walk .mix small { font-family: var(--font); font-size: 1.2vw; color: var(--text-faint); margin-top: 0.5vh; }
 /* Starts at the card's left edge (projector.js sets padding-left); the right keeps clear of the corner QR. */
 .walk .under { display: flex; flex-direction: column; gap: calc(0.8vh * var(--crowd)); min-width: 0; padding-right: 14vw; }
-/* Floors when crowded: comments 1.4vw, haiku 1.3vw. */
+/* A list of short texts (the last slide's afterthoughts). Floors when crowded: 1.4vw, haiku 1.3vw. */
 .comments { display: flex; flex-direction: column; gap: calc(0.6vh * var(--crowd, 1)); }
 .comments .comment { font-size: max(1.4vw, calc(1.7vw * var(--crowd, 1))); line-height: 1.25; background: #15161a; border-left: 0.35vw solid var(--accent); padding: calc(0.6vh * var(--crowd, 1)) 1.2vw; border-radius: 0 0.8vw 0.8vw 0; overflow-wrap: anywhere; }
 .comments-more { font-size: max(1.4vw, calc(1.5vw * var(--crowd, 1))); color: var(--text-dim); padding-left: 1.2vw; }
@@ -126,6 +126,11 @@ body { background: #000; overflow: hidden; cursor: none; }
 .hsep { color: var(--text-faint); }
 .walk .bottom { display: flex; gap: 2vw; align-items: flex-end; min-height: 3vh; padding-right: 10vw; }
 .walk.is-last .stage-card { margin-top: 0; }
+/* The last slide's afterthoughts, a page at a time, under the title: the
+   list's look, larger (floor 1.8vw), each page fading in. */
+.afterthoughts { display: flex; flex-direction: column; gap: calc(0.8vh * var(--crowd)); width: 70vw; margin-top: calc(2vh * var(--crowd)); }
+.afterthoughts .comment { font-size: max(1.8vw, calc(2.4vw * var(--crowd, 1))); padding: calc(1.2vh * var(--crowd, 1)) 1.6vw; animation: fade-in 0.6s ease-out both; }
+.afterthoughts .comments-more { padding-left: 1.6vw; }
 .walk.is-last .card-text { font-size: inherit; }
 
 /* The app is waiting on the facilitator: said plainly, at the bottom. */

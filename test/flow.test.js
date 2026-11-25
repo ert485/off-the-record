@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Session } from '../server/session.js';
-import { PLAN } from '../server/phases.js';
+import { PLAN, LAST_SLIDE_MS, AFTERTHOUGHTS_PER_PAGE, AFTERTHOUGHT_PAGE_MS } from '../server/phases.js';
+import { lastSlideMs } from '../server/flow.js';
 import { finaleTimeline, arrivalMs } from '../public/shared/finale-timing.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 
@@ -326,4 +327,19 @@ test('a deadline passing is broadcast even when nothing else happens', async () 
   session.advance(); // walk
   session.advance(); // finale
   expectPrompt('Ready to shred?', session.state.phaseStartedAt + finaleTimeline(session.state.reactions.length).doneAt);
+});
+
+test('lastSlideMs: 20 s with none, 10 s a page of 4, at most 60 s', () => {
+  assert.equal(AFTERTHOUGHTS_PER_PAGE, 4);
+  assert.equal(AFTERTHOUGHT_PAGE_MS, 10_000);
+  assert.equal(lastSlideMs(0), LAST_SLIDE_MS);
+  assert.equal(LAST_SLIDE_MS, 20_000);
+  // One or two pages still get the 20 seconds.
+  assert.equal(lastSlideMs(1), 20_000);
+  assert.equal(lastSlideMs(8), 20_000);
+  assert.equal(lastSlideMs(9), 30_000);
+  assert.equal(lastSlideMs(12), 30_000);
+  assert.equal(lastSlideMs(13), 40_000);
+  assert.equal(lastSlideMs(21), 60_000);
+  assert.equal(lastSlideMs(100), 60_000);
 });

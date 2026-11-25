@@ -1,7 +1,7 @@
 // Proves the shred leaves nothing behind.
 //
 // Runs the real server as a separate process with its own data, temp and
-// home directories, plays a whole session where every card and comment
+// home directories, plays a whole session where every card and thought
 // carries a random marker, shreds, then checks:
 //   1. the data directory is empty;
 //   2. no file in the project, data, temp or home directories contains the marker;
@@ -137,9 +137,11 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   await run('advance'); // react
   const groups = (await view(`role=phone&cid=${PHONES[0]}`)).react.groups;
   for (const cid of PHONES) {
-    for (const g of groups) await post('react', { cid, groupId: g.id, emojis: ['🙋', '🦆'], comment: `comment ${MARKER}` });
+    for (const g of groups) await post('react', { cid, groupId: g.id, emojis: ['🙋', '🦆'] });
     await post('reactDone', { cid });
+    await post('afterthought', { cid, text: `thought ${MARKER}` });
   }
+  assert.ok(JSON.stringify(await facilitatorView()).includes(`thought ${MARKER}`), 'control: the thoughts arrived');
   await run('advance'); // walk
   const gone = await fetch(`${base}/api/signal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cid: PHONES[0], kind: 'stay', on: true }) });
   assert.equal(gone.status, 404);
@@ -167,7 +169,7 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   await new Promise((r) => setTimeout(r, 400)); // the projector's animation payload expires
 
   assert.deepEqual(readdirSync(dataDir), [], 'data directory is empty');
-  assert.deepEqual(filesContaining(scanned(), MARKER), [], 'no file contains a card, comment or theme');
+  assert.deepEqual(filesContaining(scanned(), MARKER), [], 'no file contains a card, thought or theme');
   assert.equal(output.includes(MARKER), false, 'server output contains no content');
   assert.equal(/\b\d{1,3}(\.\d{1,3}){3}\b|::1|::ffff:/.test(output), false, 'server output contains no IP address');
   for (const q of [`role=facilitator&t=${encodeURIComponent(TOKEN)}`, 'role=projector', `role=phone&cid=${PHONES[0]}`]) {

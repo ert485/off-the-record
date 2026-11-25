@@ -2,7 +2,7 @@
 // server persists `session.state` after each change and wires up the shred.
 import { randomBytes, randomInt } from 'node:crypto';
 import { nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
-import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP } from './flow.js';
+import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP, lastSlideMs } from './flow.js';
 import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
 import { isSingleEmoji } from '../public/shared/emoji.js';
@@ -10,11 +10,11 @@ import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 import { DEMO_STEPS, DEMO_STEP_MS, DEFAULT_TEASER } from './demo.js';
 
-export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 22, themeName: 60, haiku: 120 };
-// The projector shows this many comments on a card, the rest as "+N more".
-export const COMMENTS_SHOWN = 5;
+export const LIMITS = { cardsPerPerson: 3, cardMax: 200, afterthoughtMax: 200, emojisPerCard: 22, themeName: 60, haiku: 120 };
 const OVERVIEW = 'overview';
 const LAST = 'last';
+// What an afterthought's receipt maps to (a card's receipt maps to its group id).
+const AFTERTHOUGHT = 'afterthought';
 
 export class ActionError extends Error {
   constructor(message) {
@@ -59,14 +59,16 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     themes: [],
     // Pooled per group, in the order they happened (the finale replays it).
     reactions: [],
-    // Receipt -> card, so a phone can change its reactions to that card.
+    // Receipt -> card (or AFTERTHOUGHT), so a phone can change its reactions
+    // to that card, or its thought.
     receipts: {},
-    walk: { stream: [], index: 0, cardStartedAt: null, cardEndsAt: null, endsAt: null, paused: false, done: false },
-    // { id, g, text, r }: no phone id. r is the card's receipt, so sending
-    // again replaces the comment along with the reactions.
-    comments: [],
-    // Receipts whose comment the facilitator removed.
-    removedComments: {},
+    walk: { stream: [], index: 0, cardStartedAt: null, cardEndsAt: null, endsAt: null, lastMs: LAST_SLIDE_MS, paused: false, done: false },
+    // The one thought each phone may add at the end of its deck, shown on the
+    // last slide. { id, text, r }: no phone id. r is its receipt, so sending
+    // again with it replaces the text.
+    afterthoughts: [],
+    // Receipts whose thought the facilitator removed.
+    removedAfterthoughts: {},
   };
 }
 
@@ -184,7 +186,14 @@ export class Session {
       this.state.reactEndsAt ??= null;
       this.state.reactClosedAt ??= null;
     }
-    if (!this.state.shredded) this.state.removedComments ??= {};
+    if (!this.state.shredded) {
+      // Saved before reactions became emojis only: the comments are dropped.
+      delete this.state.comments;
+      delete this.state.removedComments;
+      this.state.afterthoughts ??= [];
+      this.state.removedAfterthoughts ??= {};
+      if (this.state.walk) this.state.walk.lastMs ??= LAST_SLIDE_MS;
+    }
     if (!this.state.shredded) {
       this.state.demo ??= { step: 0, cardIds: null };
       // Saved when the demo added a single card.
@@ -285,7 +294,9 @@ export class Session {
     // Hex only, as phones make them. This also keeps out names like
     // "__proto__" or "constructor", which every plain object already has.
     if (typeof cid !== 'string' || !/^[0-9a-f]{16,64}$/.test(cid)) fail('Missing phone id');
-    return (this.s.clients[cid] ??= { cards: 0, reacted: 0, reactDone: false });
+    const client = (this.s.clients[cid] ??= { cards: 0, reacted: 0, reactDone: false, afterthoughts: 0 });
+    client.afterthoughts ??= 0; // saved before thoughts existed
+    return client;
   }
 
   newId() {
@@ -729,11 +740,9 @@ export class Session {
   // A phone's reactions to one card. The first send returns a random receipt;
   // sending again with it replaces those reactions, so a phone can go back and
   // change its mind. The receipt is tied to that one card's reactions, never
-  // to the phone, so reactions stay unlinkable across cards.
-  // The optional comment travels with the reactions and is replaced with them.
-  react(cid, groupId, emojis, receipt, comment) {
-    const graceLeft = this.s.phase === 'walk' && this.s.reactClosedAt !== null && this.now() - this.s.reactClosedAt <= REACT_GRACE_MS;
-    if (this.s.phase !== 'react' && !graceLeft) fail('Reactions are closed');
+  // to the phone, so reactions stay unlinkable across cards. Emojis only.
+  react(cid, groupId, emojis, receipt) {
+    if (!this.reactionsOpen()) fail('Reactions are closed');
     const client = this.client(cid);
     const found = this.findGroup(groupId);
     if (!found || this.visibleCardIds(found.group).length === 0) fail('No such card');
@@ -741,18 +750,12 @@ export class Session {
     if (emojis.length > LIMITS.emojisPerCard) fail(`Up to ${LIMITS.emojisPerCard} emojis on a card: remove ${emojis.length - LIMITS.emojisPerCard}`);
     const unique = [...new Set(emojis)];
     if (!unique.every(isSingleEmoji)) fail('Reactions are emojis only');
-    const text = typeof comment === 'string' ? comment.trim() : '';
-    if (text.length > LIMITS.commentMax) fail(`Comments are up to ${LIMITS.commentMax} characters`);
     const resend = receipt !== undefined && receipt !== null;
-    let keepId; // an edited comment keeps its id, so it keeps its place in the order
-    // Clearing a card with its receipt is fine; a first send needs something.
-    if (!resend && unique.length === 0 && !text) fail('Pick an emoji or write a comment');
+    // Clearing a card with its receipt is fine; a first send needs an emoji.
+    if (!resend && unique.length === 0) fail('Pick an emoji');
     if (resend) {
       if (typeof receipt !== 'string' || this.s.receipts[receipt] !== groupId) fail('Nothing to change');
       this.s.reactions = this.s.reactions.filter((r) => r.r !== receipt);
-      const old = this.s.comments.find((c) => c.r === receipt);
-      keepId = old?.id;
-      this.s.comments = this.s.comments.filter((c) => c.r !== receipt);
     } else {
       if (client.reacted >= this.visibleGroups().length) fail('You have reacted to every card');
       client.reacted += 1;
@@ -760,9 +763,59 @@ export class Session {
       this.s.receipts[receipt] = groupId;
     }
     for (const e of unique) this.s.reactions.push({ g: groupId, e, r: receipt });
-    if (text && !this.s.removedComments[receipt]) this.s.comments.push({ id: keepId ?? this.newId(), g: groupId, text, r: receipt });
     this.changed();
     return { receipt };
+  }
+
+  // Reactions and thoughts: open while reacting, and for the 10-second grace
+  // after the room moves on, so a send in flight isn't lost.
+  reactionsOpen() {
+    if (this.s.phase === 'react') return true;
+    return this.s.phase === 'walk' && this.s.reactClosedAt !== null && this.now() - this.s.reactClosedAt <= REACT_GRACE_MS;
+  }
+
+  // The one thought a phone may add at the end of its deck. The first send
+  // returns a random receipt; sending again with it replaces the text, and an
+  // empty text clears it. Like a card's receipt, it is never tied to the
+  // phone: only the phone's count says it has added one. A thought the
+  // facilitator removed stays removed.
+  afterthought(cid, text, receipt) {
+    if (!this.reactionsOpen()) fail('Thoughts are closed');
+    const client = this.client(cid);
+    const clean = typeof text === 'string' ? text.trim() : '';
+    if (clean.length > LIMITS.afterthoughtMax) fail(`Thoughts are up to ${LIMITS.afterthoughtMax} characters`);
+    const resend = receipt !== undefined && receipt !== null;
+    let keepId; // a changed thought keeps its id, so it keeps its place in the order
+    if (resend) {
+      if (typeof receipt !== 'string' || this.s.receipts[receipt] !== AFTERTHOUGHT) fail('Nothing to change');
+      keepId = this.s.afterthoughts.find((t) => t.r === receipt)?.id;
+      this.s.afterthoughts = this.s.afterthoughts.filter((t) => t.r !== receipt);
+    } else {
+      if (!clean) fail('Write a thought first');
+      if (client.afterthoughts >= 1) fail("You've already added a thought: change it instead");
+      client.afterthoughts += 1;
+      receipt = randomBytes(8).toString('hex');
+      this.s.receipts[receipt] = AFTERTHOUGHT;
+    }
+    if (clean && !this.s.removedAfterthoughts[receipt]) this.s.afterthoughts.push({ id: keepId ?? this.newId(), text: clean, r: receipt });
+    this.refreshLastMs();
+    this.changed();
+    return { receipt };
+  }
+
+  removeAfterthought(id) {
+    const i = this.s.afterthoughts.findIndex((t) => t.id === id);
+    if (i < 0) fail('No such thought');
+    // Remember the receipt (not the phone) so a resend can't bring it back.
+    this.s.removedAfterthoughts[this.s.afterthoughts[i].r] = 1;
+    this.s.afterthoughts.splice(i, 1);
+    this.refreshLastMs();
+    this.changed();
+  }
+
+  // Every thought, oldest first (ids are sequential, and a change keeps its id).
+  afterthoughtList() {
+    return this.s.afterthoughts.map(({ id, text }) => ({ id, text })).sort((a, b) => a.id - b.id);
   }
 
   reactDone(cid) {
@@ -782,16 +835,32 @@ export class Session {
     this.s.walk = {
       // The walk-through opens on an overview of what came up, so the room
       // can take in the whole before the first card, and closes on a last
-      // slide that invites the room to speak out loud.
+      // slide: the afterthoughts, or, with none, an invitation to speak out loud.
       stream: [{ groupId: OVERVIEW, overview: true }, ...buildStream(themes, this.reactionCounts()), { groupId: LAST, last: true }],
       index: 0,
       cardStartedAt: now,
       cardEndsAt: null,
       endsAt: walkEndsAt(this.s.talk, now),
+      // The last slide's time, kept back from the cards: more with more thoughts.
+      lastMs: lastSlideMs(this.s.afterthoughts.length),
       paused: false,
       done: false,
     };
     this.s.walk.cardEndsAt = now + cardMs(this.s.walk, now);
+  }
+
+  // The last slide's time follows the thoughts: one sent in the grace window,
+  // or one the facilitator removed, changes it. The slide already showing
+  // keeps its clock until it is shown again.
+  refreshLastMs() {
+    if (this.s.phase === 'walk') this.s.walk.lastMs = lastSlideMs(this.s.afterthoughts.length);
+  }
+
+  // How long the current item runs: the last slide its own time, a card its share.
+  itemMs(w, now) {
+    if (!w.stream[w.index].last) return cardMs(w, now);
+    this.refreshLastMs();
+    return w.lastMs;
   }
 
   // Shows another card and starts its clock. A paused walk holds the new card too.
@@ -800,7 +869,7 @@ export class Session {
     const now = this.now();
     w.index = index;
     w.cardStartedAt = now;
-    w.cardEndsAt = w.paused ? null : now + (w.stream[index].last ? LAST_SLIDE_MS : cardMs(w, now));
+    w.cardEndsAt = w.paused ? null : now + this.itemMs(w, now);
   }
 
   // `from` is the card the facilitator's screen showed when they tapped; if
@@ -824,7 +893,7 @@ export class Session {
       // After the walk-through's time is up, a Back or Next onto a real card
       // holds it until the facilitator resumes; otherwise the next tick would
       // snap straight back to the last slide. The last slide runs normally.
-      if (!w.stream[index].last && this.now() >= w.endsAt - LAST_SLIDE_MS) {
+      if (!w.stream[index].last && this.now() >= w.endsAt - w.lastMs) {
         w.paused = true;
         w.cardEndsAt = null;
       } else if (w.stream[index].last && w.paused) {
@@ -845,20 +914,9 @@ export class Session {
     if (paused) w.cardEndsAt = null;
     else if (!w.done) {
       const now = this.now();
-      w.cardEndsAt = now + (w.stream[w.index].last ? LAST_SLIDE_MS : cardMs(w, now));
+      w.cardEndsAt = now + this.itemMs(w, now);
       w.cardStartedAt = now;
     }
-    this.changed();
-  }
-
-  // ---- comments ---------------------------------------------------------
-
-  removeComment(id) {
-    const i = this.s.comments.findIndex((c) => c.id === id);
-    if (i < 0) fail('No such comment');
-    // Remember the receipt (not the phone) so a resend can't bring it back.
-    this.s.removedComments[this.s.comments[i].r] = 1;
-    this.s.comments.splice(i, 1);
     this.changed();
   }
 
@@ -900,7 +958,7 @@ export class Session {
     if (w.paused || w.done) return;
     const now = this.now();
     const last = w.stream.length - 1;
-    const timeUp = w.endsAt - LAST_SLIDE_MS;
+    const timeUp = w.endsAt - w.lastMs;
     const shownLate = w.cardStartedAt !== null && w.cardStartedAt >= timeUp;
     if (w.index < last && !shownLate && now >= timeUp) return this.moveTo(last);
     const over = this.itemView(this.currentItem())?.hidden || (w.cardEndsAt !== null && now >= w.cardEndsAt);
@@ -1013,27 +1071,6 @@ export class Session {
     return v;
   }
 
-  // Every comment on a card, oldest first (ids are sequential, and an edit
-  // keeps its id), so the newest are the ones counted in "+N more".
-  allCommentsFor(groupId) {
-    return this.s.comments
-      .filter((c) => c.g === groupId)
-      .map(({ id, text }) => ({ id, text }))
-      .sort((a, b) => Number(a.id) - Number(b.id));
-  }
-
-  commentsFor(groupId) {
-    const all = this.allCommentsFor(groupId);
-    return { shown: all.slice(0, COMMENTS_SHOWN), more: Math.max(0, all.length - COMMENTS_SHOWN) };
-  }
-
-  // The public projector gets the text only: ids come from one session-wide
-  // counter, so neighbouring ids could link one phone's comments across cards.
-  projectorComments(groupId) {
-    const c = this.commentsFor(groupId);
-    return { shown: c.shown.map(({ text }) => ({ text })), more: c.more };
-  }
-
   // The themes, biggest first, with how many cards and reactions each drew.
   overviewView() {
     const counts = this.reactionCounts();
@@ -1048,11 +1085,6 @@ export class Session {
       })
       .filter((t) => t.cards > 0)
       .sort((a, b) => b.reactions - a.reactions || b.cards - a.cards);
-  }
-
-  // Only real cards carry comments; the overview and the last slide have none.
-  commentKey(item) {
-    return item && !item.last ? item.groupId : null;
   }
 
   itemView(item) {
@@ -1112,9 +1144,10 @@ export class Session {
         cardEndsAt: s.walk.cardEndsAt,
         paused: s.walk.paused,
         item: this.itemView(item),
-        // A hidden card's comments stay off the projector (the facilitator still sees them).
-        comments: this.itemView(item)?.hidden ? { shown: [], more: 0 } : this.projectorComments(this.commentKey(item)),
       };
+      // On the last slide only, and the text only: ids come from one
+      // session-wide counter, so they could hint at when each was sent.
+      if (item?.last) v.walk.afterthoughts = this.afterthoughtList().map(({ text }) => ({ text }));
     }
     if (s.phase === 'finale') v.finale = { sequence: s.reactions.map((r) => r.e) };
     return v;
@@ -1185,10 +1218,12 @@ export class Session {
         cards: g.cardIds.map((id) => this.card(id)).filter(Boolean).map(({ id, text, hidden }) => ({ id, text, hidden })),
       })),
     }));
+    const afterthoughts = this.afterthoughtList();
     v.react = {
       done: Object.values(s.clients).filter((c) => c.reactDone).length,
       reactions: s.reactions.length,
       endsAt: s.reactEndsAt,
+      afterthoughts,
     };
     const item = this.currentItem();
     const inWalk = s.phase === 'walk';
@@ -1207,15 +1242,12 @@ export class Session {
         it.overview
           ? { groupId: it.groupId, text: 'Overview: what came up', reactions: s.reactions.length }
           : it.last
-            ? { groupId: it.groupId, text: 'Last slide: Anything else? Out loud.', reactions: 0 }
+            ? { groupId: it.groupId, text: afterthoughts.length ? `Last slide: Afterthoughts (${afterthoughts.length})` : 'Last slide: Anything else? Out loud.', reactions: 0 }
             : { groupId: it.groupId, text: this.groupText(it.groupId), reactions: counts.get(it.groupId) ?? 0 },
       ),
       item: item ? { groupId: item.groupId, ...this.itemView(item) } : null,
-    };
-    const upcoming = s.phase === 'walk' ? s.walk.stream[s.walk.index + 1] : null;
-    v.comments = {
-      current: s.phase === 'walk' ? this.allCommentsFor(this.commentKey(item)) : [],
-      next: upcoming && !upcoming.overview && !upcoming.last ? this.allCommentsFor(upcoming.groupId) : [],
+      // Every thought, to remove one before the last slide shows it.
+      afterthoughts,
     };
     return v;
   }

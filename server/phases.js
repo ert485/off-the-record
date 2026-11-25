@@ -22,11 +22,14 @@ export const REACT_MINUTES = 5;
 // Reactions still count this long after the room moves on.
 export const REACT_GRACE_MS = 10_000;
 
-// The walk-through runs itself. The last slide ("Anything else? Out loud.")
-// gets a fixed share, no card gets less than the floor, and the walk ends at
-// minute talk.minutes - 3.5 on the talk clock (21.5 of 25), never shorter
-// than the minimum.
+// The walk-through runs itself. The last slide gets 20 seconds ("Anything
+// else? Out loud."), or a page of afterthoughts every 10 seconds when there
+// are some (lastSlideMs in flow.js), no card gets less than the floor, and the
+// walk ends at minute talk.minutes - 3.5 on the talk clock (21.5 of 25),
+// never shorter than the minimum.
 export const LAST_SLIDE_MS = 20_000;
+export const AFTERTHOUGHTS_PER_PAGE = 4;
+export const AFTERTHOUGHT_PAGE_MS = 10_000;
 export const MIN_CARD_MS = 15_000;
 export const MIN_WALK_MS = 180_000;
 export const WALK_END_BEFORE_MINUTES = 3.5;
