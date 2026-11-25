@@ -522,11 +522,9 @@ function mixRow(mix) {
 // Lays out what sits under the card. The emoji mix stays one row: when it is
 // wider than its space (up to 12 big emojis), the whole row shrinks to fit
 // instead of wrapping (no room for a second row) or running under the corner
-// QR. The column under the card starts at its left edge, wherever the centred
-// card lands; offsetLeft is the laid-out position, so the demo's entrance
-// animations (transforms) don't skew it. Re-run when the card or screen
-// resizes, and whenever a font finishes loading (the emoji font loads only once
-// an emoji is drawn, often after document.fonts.ready). With fit, every re-run
+// QR. The haiku, centred under it, is fitted to its width. Re-run when the
+// card or screen resizes, and whenever a font finishes loading (the emoji font
+// loads only once an emoji is drawn, often after document.fonts.ready). With fit, every re-run
 // goes through it (fit calls layout itself, as often as it needs).
 function underCard(walk, fit) {
   const layout = () => {
@@ -539,12 +537,7 @@ function underCard(walk, fit) {
       const need = [...mix.children].reduce((n, c) => n + c.offsetWidth, 0);
       if (need > room && need > 0) mix.style.setProperty('--mix-scale', String(Math.max(0.3, room / need)));
     }
-    const card = walk.querySelector('.card');
-    const under = walk.querySelector('.under');
-    if (!under) return;
-    under.style.paddingLeft = '';
-    if (card?.offsetParent === walk) under.style.paddingLeft = `${Math.max(0, card.offsetLeft - under.offsetLeft)}px`;
-    walk.querySelectorAll('.haiku').forEach(fitHaiku); // its width follows that padding
+    walk.querySelectorAll('.haiku').forEach(fitHaiku);
   };
   const run = () => (fit ? fit(layout) : layout());
   const observer = new ResizeObserver(run);
