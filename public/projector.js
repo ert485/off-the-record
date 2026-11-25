@@ -83,7 +83,8 @@ const creditsPhotos = []; // object URLs; never uploaded or sent anywhere, gone 
 function closingScreen(v) {
   const el = h(
     'div',
-    { class: 'center closing' },
+    // With credits, the QR and heading shrink into the top half and the roll takes the bottom half.
+    { class: `center closing${v.credits ? ' with-credits' : ''}` },
     h(
       'div',
       { class: 'closing-inner' },

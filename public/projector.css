@@ -287,28 +287,33 @@ body { background: #000; overflow: hidden; cursor: none; }
 @keyframes demo-press { 40% { transform: scale(0.93); } }
 @keyframes demo-touch { from { opacity: 0.8; transform: scale(0.2); } to { opacity: 0; transform: scale(1.8); } }
 
-/* Credits roll: only when the demo file has credits. The QR and "What do you think?" stay exactly
-   where they are; the roll is a band in the free space under them. */
-.credits-roll { position: absolute; left: 14vw; right: 14vw; bottom: 2vh; height: 22vh; overflow: hidden; text-align: center; -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); }
+/* Credits roll: only when the demo file has credits. Half and half: the QR and "What do you think?"
+   shrink into the top half, and the roll is a band filling the bottom half. */
+.closing.with-credits { padding-top: 2vh; padding-bottom: 52vh; }
+.closing.with-credits .closing-inner { gap: 3vw; }
+.closing.with-credits .qr { width: min(15vw, 36vh); padding: 0.7vw; border-radius: 0.7vw; }
+.closing.with-credits h1 { font-size: 3.6vw; }
+.closing.with-credits .url { font-size: 1.5vw; margin-top: 1.5vh; }
+.credits-roll { position: absolute; left: 8vw; right: 8vw; bottom: 2vh; height: 50vh; overflow: hidden; text-align: center; -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); }
 /* The track starts one band-height down (the spacer) and moves up by its own height: transform only. */
-.credits-track { will-change: transform; animation: credits-roll 40s linear infinite; }
-.credits-spacer { height: 22vh; }
-.credits-title { font-size: 2.2vw; font-weight: 700; margin-bottom: 1vh; }
+.credits-track { will-change: transform; animation: credits-roll 50s linear infinite; }
+.credits-spacer { height: 50vh; }
+.credits-title { font-size: 3.6vw; font-weight: 700; margin-bottom: 1vh; }
 .credits-line { font-size: 1.7vw; color: var(--text-dim); margin-top: 1vh; line-height: 1.25; overflow-wrap: anywhere; }
 .credits-photos { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.2vw; margin-top: 2.5vh; }
-.credits-photo { height: 15vh; max-width: 100%; object-fit: cover; border-radius: 0.6vw; }
+.credits-photo { height: 30vh; max-width: 100%; object-fit: cover; border-radius: 0.6vw; }
 .credits-track > :last-child { margin-bottom: 3vh; }
 @keyframes credits-roll { to { transform: translateY(-100%); } }
 @media (prefers-reduced-motion: reduce) {
   /* A static list that shows in full: lines in columns, thumbnails below, no spacer or fade. */
   .credits-track { animation: none; }
   .credits-spacer { display: none; }
-  .credits-roll { -webkit-mask-image: none; mask-image: none; height: auto; max-height: 24vh; left: 8vw; right: 8vw; bottom: 1vh; }
-  .credits-title { font-size: 1.8vw; margin-bottom: 0; }
+  .credits-roll { -webkit-mask-image: none; mask-image: none; height: auto; max-height: 50vh; left: 8vw; right: 8vw; bottom: 1vh; }
+  .credits-title { font-size: 2.6vw; margin-bottom: 0; }
   .credits-lines { columns: 4; column-gap: 2vw; }
   .credits-line { font-size: 1.1vw; margin-top: 0.4vh; line-height: 1.2; break-inside: avoid; }
   .credits-photos { margin-top: 1vh; gap: 0.8vw; }
-  .credits-photo { height: 5vh; }
+  .credits-photo { height: 12vh; }
 }
 
 /* The photo picker is a hidden control in a corner: it shows when the mouse is over it or it has keyboard focus. */
