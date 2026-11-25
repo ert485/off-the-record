@@ -19,7 +19,7 @@ const isText = (s, max, min = 1) => typeof s === 'string' && s.trim().length >= 
 
 export function validateDemo(obj) {
   if (!obj || typeof obj !== 'object') fail('Demo must be an object');
-  const { notes, theme, react, reveal, teaser } = obj;
+  const { notes, theme, react, reveal, teaser, credits } = obj;
   if (!Array.isArray(notes) || notes.length < 1 || notes.length > 5) fail('Demo needs 1 to 5 notes');
   if (!notes.every((n) => n && isText(n.text, 200))) fail('Demo notes are 1 to 200 characters');
   const shared = notes.filter((n) => n.share === true).length;
@@ -41,7 +41,16 @@ export function validateDemo(obj) {
       fail('Demo teaser has up to 4 lines of 1 to 160 characters');
     }
   }
+  if (credits !== undefined) {
+    if (!credits || typeof credits !== 'object') fail('Demo credits must be an object');
+    if (!isText(credits.title, 60)) fail('Demo credits title is 1 to 60 characters');
+    if (!Array.isArray(credits.lines) || credits.lines.length > 12 || !credits.lines.every((l) => isText(l, 80))) {
+      fail('Demo credits have up to 12 lines of 1 to 80 characters');
+    }
+  }
   return {
+    // Optional, and public text shown on the projector at the closing only.
+    ...(credits ? { credits: { title: credits.title, lines: [...credits.lines] } } : {}),
     teaser: teaser ? { title: teaser.title, lines: [...teaser.lines] } : { ...DEFAULT_TEASER, lines: [...DEFAULT_TEASER.lines] },
     notes: notes.map((n) => ({ text: n.text, ...(n.share === true ? { share: true } : {}) })),
     theme: { name: theme.name, haiku: theme.haiku },

@@ -1588,11 +1588,15 @@ export class Session {
     const s = this.s;
     const v = { role: 'projector', phase: s.phase, now: this.now(), phaseStartedAt: s.phaseStartedAt };
     if (s.phase === 'shred') v.shred = this.shredPayload;
+    // The credits are the demo file's public text; the closing screen is the one place they show.
+    if (s.phase === 'closing' && this.demo?.credits) v.credits = this.demo.credits;
     if (s.phase === 'finale' || s.phase === 'shred') v.speedUp = s.speedUp ?? null;
     if (this.shredded) return v;
     if (s.phase === 'teaser') v.teaser = this.teaser();
+    // Only a flag, so the projector offers the credits photo picker when there is a roll to put them in.
+    if (s.phase === 'teaser' && this.demo?.credits) v.hasCredits = true;
     if (s.phase === 'demo' && this.demo) {
-      const { teaser, ...content } = this.demo;
+      const { teaser, credits, ...content } = this.demo;
       v.demo = { step: s.demo.step, auto: s.demo.auto, stepStartedAt: s.demo.stepStartedAt, ...content };
     }
     if (s.phase === 'join') v.phones = phoneCount;

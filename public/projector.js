@@ -70,19 +70,41 @@ const SCREENS = {
   walk: walkScreen,
   finale: finaleScreen,
   shred: shredScreen,
-  closing: () => ({
-    el: h(
-      'div',
-      { class: 'center closing' },
-      h(
-        'div',
-        { class: 'closing-inner' },
-        h('img', { class: 'qr', src: '/feedback-qr.svg', alt: '' }),
-        h('div', {}, h('h1', {}, 'What do you think?'), h('div', { class: 'url' }, config.feedbackUrl.replace(/^https?:\/\//, ''))),
-      ),
-    ),
-  }),
+  closing: closingScreen,
 };
+
+// ---- closing: the feedback QR, and (if the demo file has credits) a slow roll ----
+// The QR and "What do you think?" are always there. With credits in the view
+// (the projector only gets them at the closing), a roll of the title, the lines
+// and any photos scrolls upward beside them. Photos live in this tab only.
+
+const creditsPhotos = []; // object URLs; never uploaded or sent anywhere, gone on reload
+
+function closingScreen(v) {
+  const el = h(
+    'div',
+    { class: 'center closing' },
+    h(
+      'div',
+      { class: 'closing-inner' },
+      h('img', { class: 'qr', src: '/feedback-qr.svg', alt: '' }),
+      h('div', {}, h('h1', {}, 'What do you think?'), h('div', { class: 'url' }, config.feedbackUrl.replace(/^https?:\/\//, ''))),
+    ),
+  );
+  // The credits text is required: photos alone show nothing.
+  if (v.credits) {
+    const track = h(
+      'div',
+      { class: 'credits-track' },
+      h('div', { class: 'credits-spacer' }),
+      h('div', { class: 'credits-title' }, v.credits.title),
+      h('div', { class: 'credits-lines' }, v.credits.lines.map((line) => h('div', { class: 'credits-line' }, line))),
+      creditsPhotos.length ? h('div', { class: 'credits-photos' }, creditsPhotos.map((src) => h('img', { class: 'credits-photo', src, alt: '' }))) : null,
+    );
+    el.append(h('div', { class: 'credits-roll', 'aria-hidden': 'true' }, track));
+  }
+  return { el };
+}
 
 // ---- submit and react: the time left, and quietly how many are writing ------
 // The clock is the section timer (tickSection fills it, and leaves it empty
@@ -107,12 +129,32 @@ function timerScreen() {
 // The title large, its lines below, centred. Nothing from the demo. ~~words~~
 // in a line show struck through, still readable.
 
+// A small file input for the credits photos: kept as object URLs in this tab's
+// memory only, never uploaded or sent anywhere, and a reload loses them.
+function photoPicker() {
+  const count = h('span', { class: 'photo-count' }, creditsPhotos.length ? ` (${creditsPhotos.length} added)` : '');
+  const input = h('input', {
+    type: 'file',
+    accept: 'image/*',
+    multiple: true,
+    onchange: () => {
+      for (const f of input.files) if (f.type.startsWith('image/')) creditsPhotos.push(URL.createObjectURL(f));
+      count.textContent = creditsPhotos.length ? ` (${creditsPhotos.length} added)` : '';
+      input.value = '';
+    },
+  });
+  return h('label', { class: 'photo-picker' }, 'Add credits photos (a reload loses them) ', input, count);
+}
+
 function teaserScreen() {
+  const picker = photoPicker();
+  picker.hidden = true; // shown only when the demo file has credits
   const title = h('div', { class: 'huge' });
   const lines = h('div', { class: 'teaser-lines' });
   return {
-    el: h('div', { class: 'center teaser' }, h('div', {}, title, lines)),
+    el: h('div', { class: 'center teaser' }, h('div', {}, title, lines), picker),
     update(v) {
+      picker.hidden = !v.hasCredits;
       title.textContent = v.teaser?.title ?? 'Off the Record';
       fill(lines, (v.teaser?.lines ?? []).map((line) => h('div', { class: 'sub' }, struckParts(line).map((p) => (p.struck ? h('s', { class: 'struck' }, p.text) : p.text)))));
     },

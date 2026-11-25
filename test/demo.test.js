@@ -203,6 +203,9 @@ test('a session starts on the teaser, and the teaser shows no demo content', () 
   assert.equal(facilitator.next, 'demo');
   assert.equal(facilitator.canBack, false);
   assert.deepEqual(Object.keys(phone).sort(), ['now', 'phase', 'role', 'session', 'teaser']);
+  // No credits in the file: no photo-picker flag anywhere.
+  assert.equal('hasCredits' in projector, false);
+  assert.equal('hasCredits' in facilitator, false);
   assert.throws(() => s.back(), /Nothing to go back/);
   assert.throws(() => s.demoStep(1), /The demo is over/);
   assert.equal(s.state.cards.length, 0);
@@ -384,4 +387,60 @@ test("back to the teaser and into the demo during the talk doesn't loop", () => 
   s.advance();
   assert.equal(s.state.phase, 'demo');
   assert.equal(s.state.demo.auto, false);
+});
+
+test('credits in the demo file are validated and reach the projector only at the closing', () => {
+  const bad = (change) => {
+    const d = example();
+    d.credits = { title: 'Thanks', lines: ['One'] };
+    change(d);
+    assert.throws(() => validateDemo(d), /credits/);
+  };
+  bad((d) => (d.credits = 'thanks'));
+  bad((d) => (d.credits.title = ''));
+  bad((d) => (d.credits.title = 'x'.repeat(61)));
+  bad((d) => (d.credits.lines = 'one'));
+  bad((d) => (d.credits.lines = Array(13).fill('a')));
+  bad((d) => (d.credits.lines = ['']));
+  bad((d) => (d.credits.lines = ['x'.repeat(81)]));
+  const ok = example();
+  ok.credits = { title: 'T'.repeat(60), lines: Array(12).fill('x'.repeat(80)) };
+  assert.equal(validateDemo(ok).credits.lines.length, 12);
+  ok.credits.lines = [];
+  assert.deepEqual(validateDemo(ok).credits, { title: 'T'.repeat(60), lines: [] });
+  assert.equal(validateDemo(example()).credits, undefined);
+
+  const withCredits = example();
+  withCredits.credits = { title: 'Thank you', lines: ['To the room', 'To the facilitator'] };
+  const s = make({ demo: validateDemo(withCredits) });
+  const credits = { title: 'Thank you', lines: ['To the room', 'To the facilitator'] };
+  const seen = (role) => JSON.stringify(s.view(role, { cid: A }));
+  // The teaser tells only the projector (a flag, no text) that there are credits.
+  s.state.phase = 'teaser';
+  assert.equal(s.view('projector').hasCredits, true);
+  assert.equal('hasCredits' in s.view('phone', { cid: A }), false);
+  assert.equal('hasCredits' in s.view('facilitator'), false);
+  // Every phase before the closing: no screen is sent the credits.
+  for (const phase of ['teaser', 'demo', 'join', 'submit', 'cluster', 'react', 'walk', 'finale', 'shred']) {
+    s.state.phase = phase;
+    for (const role of ['projector', 'phone', 'facilitator']) assert.ok(!seen(role).includes('Thank you'), `${role} at ${phase}`);
+  }
+  // At the closing (after the shred has wiped the session) only the projector gets them.
+  s.state.phase = 'closing';
+  s.shredded = true;
+  assert.deepEqual(s.view('projector').credits, credits);
+  assert.equal(s.view('phone', { cid: A }).credits, undefined);
+  assert.equal(s.view('facilitator').credits, undefined);
+  assert.ok(!seen('phone').includes('Thank you'));
+  assert.ok(!seen('facilitator').includes('Thank you'));
+  // Without credits in the file, the closing view carries none.
+  const plain = make({ demo: validateDemo(example()) });
+  plain.state.phase = 'closing';
+  plain.shredded = true;
+  assert.equal('credits' in plain.view('projector'), false);
+});
+
+test('the Content-Security-Policy is pinned: images from this tab (blob:) are allowed, connections only to self', () => {
+  const src = readFileSync(resolve(fileURLToPath(new URL('../server/index.js', import.meta.url))), 'utf8');
+  assert.ok(src.includes(`"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'"`));
 });
