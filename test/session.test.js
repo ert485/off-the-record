@@ -80,9 +80,10 @@ test('the shred needs a confirm and cannot be undone', async () => {
 });
 
 test('submissions: up to 3 cards each, only while open, no author stored', () => {
-  const { session } = make();
+  const { session } = make({ atDemo: true });
   assert.throws(() => session.submitCards(A, ['early']), /closed/);
-  session.advance();
+  session.advance(); // join
+  session.advance(); // submit
   session.submitCards(A, ['a', 'b']);
   assert.throws(() => session.submitCards(A, ['c', 'd']), /Up to 3/);
   session.submitCards(A, ['c']);
@@ -92,6 +93,43 @@ test('submissions: up to 3 cards each, only while open, no author stored', () =>
   for (const card of session.state.cards) assert.deepEqual(Object.keys(card).sort(), ['hidden', 'id', 'text']);
   assert.equal(JSON.stringify(session.state.clients).includes('"a"'), false);
   assert.equal(session.view('phone', { cid: A }).submit.submitted, 3);
+});
+
+test('cards can be shared from Join', async () => {
+  const sent = [];
+  const { session, clock } = make({ cluster: async (cards) => (sent.push(...cards.map((c) => c.text)), { themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }) });
+  assert.equal(session.state.phase, 'join');
+  session.submitCards(A, ['early one', 'early two']);
+  assert.equal(session.view('phone', { cid: A }).submit.submitted, 2);
+  assert.equal(session.state.submitEndsAt, null, 'the 5 minutes start at Submit, not Join');
+  // Nothing timed runs at Join: no early grouping, however long it lasts.
+  clock.tick(10 * 60_000);
+  session.tick();
+  assert.equal(session.state.clustering.status, 'idle');
+  session.advance(); // submit
+  assert.equal(session.state.submitEndsAt, clock.now() + 5 * 60_000);
+  // The 3 cards each span Join and Submit.
+  session.submitCards(A, ['in submit']);
+  assert.throws(() => session.submitCards(A, ['a fourth']), /Up to 3/);
+  // The early grouping still comes at the 1-minute warning, and includes the Join cards.
+  clock.tick(4 * 60_000);
+  session.tick();
+  await flush();
+  assert.equal(session.state.clustering.early, true);
+  assert.deepEqual(sent.sort(), ['early one', 'early two', 'in submit']);
+});
+
+test("the phone view in Join carries the notepad's fields, with no timer and no nudge", () => {
+  const { session } = make();
+  session.setNudges(true);
+  const v = session.view('phone', { cid: A });
+  assert.deepEqual(Object.keys(v).sort(), ['now', 'phase', 'role', 'session', 'submit']);
+  assert.deepEqual(v.submit, { endsAt: null, submitted: 0, max: 3, nudgesOn: false, nudge: null });
+  session.advance(); // submit: the timer and the nudges start here
+  const s = session.view('phone', { cid: A }).submit;
+  assert.equal(typeof s.endsAt, 'number');
+  assert.equal(s.nudgesOn, true);
+  assert.ok(s.nudge.texts.length > 0);
 });
 
 test('extend adds a minute to the submission window', () => {
@@ -960,7 +998,7 @@ test('finishing is reset when reactions start again from grouping, kept when com
 // ---- the quiet count of people writing ------------------------------------
 
 test('writing counts phones that typed in the last 20 seconds', () => {
-  const { session, clock } = make();
+  const { session, clock, changes } = make();
   session.advance(); // submit
   session.typing(A);
   clock.tick(15_000);
@@ -978,9 +1016,19 @@ test('writing counts phones that typed in the last 20 seconds', () => {
   session.typing(C, 'secret text');
   assert.deepEqual(Object.keys(session.activity.get(C)).sort(), ['typedAt', 'unsent']);
   assert.equal(JSON.stringify([...session.activity]).includes('secret'), false);
-  session.back(); // join: nothing counts there yet
+  // Join: the notepad is open and typing counts, but no screen shows the count
+  // until Submit, and nothing is broadcast for it.
+  session.back();
+  clock.tick(30_000);
+  session.tick();
+  const before = changes();
   session.typing(A);
+  session.tick();
+  assert.equal(changes(), before, 'nothing shown, nothing broadcast');
   assert.equal(session.view('projector').writing, undefined);
+  assert.equal(session.view('facilitator').writing, undefined);
+  session.advance(); // submit
+  assert.equal(session.view('projector').writing, 1, 'typing at Join counts once the room reaches Submit');
 });
 
 test('the count falls on its own, broadcast by tick', () => {

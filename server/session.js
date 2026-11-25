@@ -16,8 +16,13 @@ const LAST = 'last';
 // What an afterthought's receipt maps to (a card's receipt maps to its group id).
 const AFTERTHOUGHT = 'afterthought';
 
-// The parts where a phone's typing is counted.
-const TYPING_PHASES = ['submit', 'react'];
+// The parts where phones can share cards: the notepad opens at Join, and the
+// 5-minute timer (and everything timed by it) starts at Submit.
+const SHARING_PHASES = ['join', 'submit'];
+// The parts where a phone's typing is counted (wherever its notepad is open),
+// and the parts whose screens show that count.
+const TYPING_PHASES = ['join', 'submit', 'react'];
+const WRITING_SHOWN = ['submit', 'react'];
 
 export class ActionError extends Error {
   constructor(message) {
@@ -453,7 +458,7 @@ export class Session {
   // ---- submissions ------------------------------------------------------
 
   submitCards(cid, texts) {
-    if (this.s.phase !== 'submit') fail('Submissions are closed');
+    if (!SHARING_PHASES.includes(this.s.phase)) fail('Submissions are closed');
     const client = this.client(cid);
     if (!Array.isArray(texts) || texts.length === 0) fail('Nothing to submit');
     const clean = texts.map((t) => (typeof t === 'string' ? t.trim() : ''));
@@ -464,7 +469,8 @@ export class Session {
     }
     client.cards += clean.length;
     this.changed();
-    this.scheduleNudge();
+    // Nudges are for Submit: a card shared at Join waits for the next one.
+    if (this.s.phase === 'submit') this.scheduleNudge();
   }
 
   // A card with a random id, kept in id order rather than arrival order, so
@@ -485,8 +491,8 @@ export class Session {
     card.hidden = !!hidden;
     // A card hidden before clustering was never grouped (or sent to the AI).
     // If it is shown again later, give it a group of its own. While people are
-    // still submitting, it waits to be placed with the other late cards instead.
-    if (!card.hidden && this.s.phase !== 'submit' && this.s.themes.length && !this.grouped().has(id)) {
+    // still sharing, it waits to be placed with the other late cards instead.
+    if (!card.hidden && !SHARING_PHASES.includes(this.s.phase) && this.s.themes.length && !this.grouped().has(id)) {
       this.otherTheme().groups.push({ id: this.newId(), cardIds: [id] });
     }
     this.changed();
@@ -1038,7 +1044,7 @@ export class Session {
 
   // ---- the quiet count of people writing -----------------------------------
   // Phones only say "I'm typing" (and "I hold an unsent thought"), never what.
-  // Typing counts in these parts; later parts may be added here.
+  // Typing counts from Join (TYPING_PHASES); screens show it from Submit.
 
   typing(cid) {
     this.checkCid(cid);
@@ -1080,7 +1086,7 @@ export class Session {
   // What the screens show of this, as one comparable string; '' where nothing is shown.
   activityCounts() {
     const p = this.s.phase;
-    if (this.shredded || !TYPING_PHASES.includes(p)) return '';
+    if (this.shredded || !WRITING_SHOWN.includes(p)) return '';
     return `${this.writingCount()}:${p === 'react' ? this.unsentCount() : 0}`;
   }
 
@@ -1159,13 +1165,15 @@ export class Session {
     if (this.shredded) return v;
     if (s.phase === 'teaser') v.teaser = this.teaser();
     const c = typeof cid === 'string' ? s.clients[cid] : undefined;
-    if (s.phase === 'submit') {
-      const texts = this.nudgeTexts();
+    // The notepad is open from Join. Its timer and nudges start at Submit.
+    if (SHARING_PHASES.includes(s.phase)) {
+      const timed = s.phase === 'submit';
+      const texts = timed ? this.nudgeTexts() : null;
       v.submit = {
-        endsAt: s.submitEndsAt,
+        endsAt: timed ? s.submitEndsAt : null,
         submitted: c?.cards ?? 0,
         max: LIMITS.cardsPerPerson,
-        nudgesOn: s.nudgesOn,
+        nudgesOn: timed && s.nudgesOn,
         nudge: texts && { texts },
       };
     }
@@ -1227,7 +1235,7 @@ export class Session {
       v.demo = { step: s.demo.step, auto: s.demo.auto, stepStartedAt: s.demo.stepStartedAt, ...content };
     }
     if (s.phase === 'join') v.phones = phoneCount;
-    if (TYPING_PHASES.includes(s.phase)) v.writing = this.writingCount();
+    if (WRITING_SHOWN.includes(s.phase)) v.writing = this.writingCount();
     // How long this part of the session is planned to take, as a hint the
     // room can see. Only while there's time left: a visible "over" would
     // make people hold back.
@@ -1283,7 +1291,7 @@ export class Session {
     const { startedAt, minutes } = s.talk;
     if (s.phase === 'teaser') v.teaser = this.teaser();
     if (s.phase === 'demo' && this.demo) v.demo = { step: s.demo.step, steps: DEMO_STEPS.length, name: DEMO_STEPS[s.demo.step], auto: s.demo.auto };
-    if (TYPING_PHASES.includes(s.phase)) v.writing = this.writingCount();
+    if (WRITING_SHOWN.includes(s.phase)) v.writing = this.writingCount();
     if (s.phase === 'react') v.unsent = this.unsentCount();
     v.talk = { startedAt, minutes, leftMs: startedAt === null ? minutes * 60_000 : startedAt + minutes * 60_000 - now };
     v.pace =

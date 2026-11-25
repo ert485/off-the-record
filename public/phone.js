@@ -66,8 +66,13 @@ const app = document.getElementById('app');
 const flash = document.getElementById('flash');
 const status = document.getElementById('status');
 let screen = null;
-let screenPhase = null;
+let screenKeyNow = null;
 let screenSession = null;
+
+// Join and Submit are one screen, the notepad: the room moving from one to the
+// other updates it in place (no rebuild, no buzz, no flash), so someone
+// mid-sentence keeps their text, their focus and their keyboard.
+const screenKey = (phase) => (phase === 'join' || phase === 'submit' ? 'write' : phase);
 
 // Phase change: vibrate where the browser allows it (Android), and flash the
 // screen everywhere (iPhones don't support web vibration).
@@ -86,12 +91,13 @@ subscribe(
     const notesFrom = local.get('session', null);
     if (notesFrom && view.session && notesFrom !== view.session) local.clear();
     if (view.session) local.set('session', view.session);
-    if (view.phase !== screenPhase || view.session !== screenSession) {
+    const key = screenKey(view.phase);
+    if (key !== screenKeyNow || view.session !== screenSession) {
       screenSession = view.session;
-      if (screenPhase !== null) buzz();
+      if (screenKeyNow !== null) buzz();
       screen?.destroy?.();
-      screenPhase = view.phase;
-      screen = SCREENS[view.phase](view);
+      screenKeyNow = key;
+      screen = SCREENS[key](view);
       fill(app, screen.el);
     }
     screen.update?.(view);
@@ -149,27 +155,8 @@ const SCREENS = {
     ),
   }),
   demo: () => lookUp('Starting soon', 'Look up: the facilitator is showing how this works.'),
-  join: () => ({
-    el: h(
-      'div',
-      { class: 'stack' },
-      h('h1', {}, 'Off the Record'),
-      h('p', {}, "You're in."),
-      h(
-        'ul',
-        { class: 'plain dim' },
-        h('li', {}, "It's anonymous: no login, no names."),
-        h('li', {}, 'Notes you don’t share never leave this phone.'),
-        h('li', {}, 'Everything on our server is shredded tonight.'),
-        h('li', {}, 'You can always speak aloud instead.'),
-      ),
-      // A first tap lets Android vibrate on later phase changes (browsers
-      // block vibration until the person has touched the page).
-      h('button', { class: 'primary', onclick: (e) => ((e.target.textContent = 'Ready ✓'), (e.target.disabled = true), navigator.vibrate?.(40)) }, 'I’m here'),
-      h('div', { class: 'lookup' }, h('div', { class: 'big' }, 'Look up'), h('p', { class: 'faint small' }, 'This screen changes when it’s time.')),
-    ),
-  }),
-  submit: submitScreen,
+  // Join and Submit (see screenKey).
+  write: submitScreen,
   cluster: () => lookUp('Look up', 'Grouping the cards.'),
   react: reactScreen,
   walk: walkScreen,
@@ -216,7 +203,12 @@ function submitScreen() {
   const writeStep = h('div', { class: 'stack' }, toast, writeArea, doneText, sentHead, sentList, listHead, list, pickButton);
   const pickStep = h('div', { class: 'stack' });
   const timer = h('div', { class: 'timer-banner', hidden: true });
-  const el = h('div', { class: 'stack' }, h('h2', {}, PROMPT), timer, writeStep, pickStep);
+  // One compact line above the prompt, kept through Submit so nothing moves
+  // under someone's thumb when the room moves on. Browsers block vibration
+  // until the person has touched the page: the first tap in the notepad is
+  // that touch, so Android can vibrate on later phase changes.
+  const promises = h('p', { class: 'small faint' }, "Anonymous. Notes you don't share never leave this phone. Everything on our server is shredded tonight.");
+  const el = h('div', { class: 'stack' }, promises, h('h2', {}, PROMPT), timer, writeStep, pickStep);
 
   function refreshInput() {
     counter.textContent = `${input.value.length}/${SOFT_MAX}`;
