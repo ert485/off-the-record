@@ -601,6 +601,7 @@ function underCard(walk, fit) {
 }
 
 // The overview: the themes as folders in a file drawer, biggest first.
+// The long shot comes first; the cards come after, in close-up.
 function drawer(themes) {
   return h(
     'div',

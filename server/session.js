@@ -12,6 +12,8 @@ import { DEMO_STEPS, DEMO_STEP_MS, DEFAULT_TEASER } from './demo.js';
 
 export const LIMITS = { cardsPerPerson: 3, cardMax: 200, afterthoughtMax: 200, emojisPerCard: 22, themeName: 60, haiku: 120 };
 const OVERVIEW = 'overview';
+// The last slide hands the room back to live speech: a written card can't
+// answer a question, and the people in the room can.
 const LAST = 'last';
 // What an afterthought's receipt maps to (a card's receipt maps to its group id).
 const AFTERTHOUGHT = 'afterthought';

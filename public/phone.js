@@ -205,7 +205,8 @@ function submitScreen() {
   const takeable = () => sent.filter((c) => c.receipt);
 
   // The writing area is built once and never replaced, so the iPhone keyboard
-  // stays attached to the same textarea while notes are added.
+  // stays attached to the same textarea while notes are added. It listens the
+  // way Iona's horse did, for anyone with nobody else to tell.
   const input = h('textarea', { rows: 4, maxLength: HARD_MAX, placeholder: DEFAULT_PLACEHOLDER });
   input.value = local.get('draft', '');
   const counter = h('div', { class: 'counter' });

@@ -100,3 +100,5 @@ owasp saskatoon
 sasktech
 saskatoon women in tech
 blackswan
+
+# Bridge City, Paris of the Prairies. Some overpasses sit lower than the loads on the yabal.
