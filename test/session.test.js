@@ -319,14 +319,14 @@ test('editing a comment keeps its place', async () => {
   assert.deepEqual(session.allCommentsFor(g).map((c) => c.text), ['first, edited', 'second', 'late']);
 });
 
-test('the emoji limit says how many to remove', async () => {
+test('the emoji limit is 22: 16 presets plus 6 of your own', async () => {
   const { session } = make();
   await toReact(session);
   const g = session.view('phone', { cid: A }).react.groups[0].id;
   const many = (n) => Array.from({ length: n }, (_, i) => String.fromCodePoint(0x1f600 + i));
-  session.react(A, g, many(14));
-  assert.throws(() => session.react(B, g, many(15)), /Up to 14 emojis on a card: remove 1$/);
-  assert.throws(() => session.react(B, g, many(17)), /remove 3$/);
+  session.react(A, g, many(22));
+  assert.throws(() => session.react(B, g, many(23)), /Up to 22 emojis on a card: remove 1$/);
+  assert.throws(() => session.react(B, g, many(25)), /remove 3$/);
 });
 
 test('the facilitator sees every comment on the current and next card, and can remove one', async () => {

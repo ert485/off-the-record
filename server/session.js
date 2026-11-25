@@ -10,7 +10,7 @@ import { NUDGES, MIN_CARDS, leastCovered } from './nudges.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 import { DEMO_STEPS, DEMO_STEP_MS, DEFAULT_TEASER } from './demo.js';
 
-export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 14, themeName: 60, haiku: 120 };
+export const LIMITS = { cardsPerPerson: 3, cardMax: 200, commentMax: 200, emojisPerCard: 22, themeName: 60, haiku: 120 };
 // The projector shows this many comments on a card, the rest as "+N more".
 export const COMMENTS_SHOWN = 5;
 const OVERVIEW = 'overview';

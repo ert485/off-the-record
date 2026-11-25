@@ -11,7 +11,7 @@ const PROMPT = 'Write down something you experienced, felt, or were surprised by
 const SOFT_MAX = 140;
 const HARD_MAX = 200;
 // Every keyboard puts its emojis somewhere slightly different.
-const MAX_EMOJIS = 14; // the server's cap per card: 8 presets + 6 of your own
+const MAX_EMOJIS = 22; // the server's cap per card: 16 presets + 6 of your own
 const MAX_OWN = 6; // own-emoji chips shown on a card
 
 const EMOJI_KEYBOARD_HOWTO =

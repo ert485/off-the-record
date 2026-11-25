@@ -42,6 +42,12 @@ test('an invalid demo is rejected with the reason', () => {
   bad((d) => (d.theme.name = ''), /theme name/);
 });
 
+test('the demo may tap any of the 16 presets', () => {
+  const d = example();
+  d.react.presets = ['🔥', '🙋'];
+  assert.deepEqual(validateDemo(d).react.presets, ['🔥', '🙋']);
+});
+
 test('loadDemo prefers local.json and falls back to the example when it is invalid', () => {
   const dir = mkdtempSync(join(tmpdir(), 'otr-demo-'));
   const logs = [];
