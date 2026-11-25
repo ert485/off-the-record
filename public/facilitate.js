@@ -523,7 +523,7 @@ const PHASES = {
     const countInfo = info('submit-count', 'Cards submitted so far, and how many phones have sent at least one (the percentage is of connected phones).');
     const timeInfo = info('submit-time', 'Time left for submissions. The room sees the same countdown. “+1 minute” adds a minute; nothing closes by itself, you move on.');
     const c = v.clustering;
-    const writingInfo = info('submit-writing', 'Phones that typed in the last 20 seconds; no text is sent. If almost nobody is writing, you can move on early; if many still are when time’s up, add a minute.');
+    const writingInfo = info('submit-writing', 'Phones that typed in the last 8 seconds; no text is sent. If almost nobody is writing, you can move on early; if many still are when time’s up, add a minute.');
     return {
       now: now(
         v.cards.length,

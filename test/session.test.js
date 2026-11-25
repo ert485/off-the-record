@@ -4,6 +4,7 @@ import { Session, normalizeClusters, cleanHaiku, SKIPPED } from '../server/sessi
 import { paceMinutes, PHASES, PLAN } from '../server/phases.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 import { deck, deckEnd } from '../public/shared/client.js';
+import { typingThrottle, TYPING_EVERY_MS, WRITING_WINDOW_MS } from '../public/shared/writing.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbbbbbbbbbbbbbb';
@@ -998,15 +999,15 @@ test('finishing is reset when reactions start again from grouping, kept when com
 
 // ---- the quiet count of people writing ------------------------------------
 
-test('writing counts phones that typed in the last 20 seconds', () => {
+test('writing counts phones that typed in the last 8 seconds', () => {
   const { session, clock, changes } = make();
   session.advance(); // submit
   session.typing(A);
-  clock.tick(15_000);
+  clock.tick(5_000);
   session.typing(B);
   assert.equal(session.view('projector').writing, 2);
   assert.equal(session.view('facilitator').writing, 2);
-  clock.tick(6_000); // A's last keystroke is now 21 seconds old
+  clock.tick(4_000); // A's last keystroke is now 9 seconds old
   assert.equal(session.view('projector').writing, 1);
   session.typing(B);
   session.typing(B); // the same phone twice is still one person
@@ -1039,13 +1040,49 @@ test('the count falls on its own, broadcast by tick', () => {
   const before = changes();
   session.tick();
   assert.equal(changes(), before, 'nothing changed, nothing broadcast');
-  clock.tick(21_000);
+  clock.tick(9_000);
   session.tick();
   assert.equal(changes(), before + 1, 'the count fell, so one broadcast');
   assert.equal(session.view('projector').writing, 0);
   session.tick();
   assert.equal(changes(), before + 1);
   assert.equal(session.activity.size, 0, 'old entries are dropped');
+});
+
+// The room saw "1 person writing" linger long after the typing stopped. The
+// count runs from the phone's last send, and the phone's throttle sends only
+// the first keystroke of each TYPING_EVERY_MS, never a trailing one, so the
+// line stays up for the whole window after a send that can be nearly
+// TYPING_EVERY_MS before the last keystroke. It must clear soon after the
+// typing stops, and never drop out while someone is still typing.
+test('"N writing" clears within 10 seconds of the last keystroke and holds while someone types', () => {
+  const { session, clock } = make();
+  session.advance(); // submit
+  const due = typingThrottle();
+  const writing = () => session.view('projector').writing;
+  // The server ticks every second, on the second; keystrokes land in between.
+  const run = (ms, keyEvery) => {
+    for (let t = 0; t < ms; t += 50) {
+      if (keyEvery && t % keyEvery === 0 && due(clock.now())) session.typing(A);
+      clock.tick(50);
+      if (clock.now() % 1000 === 0) session.tick();
+    }
+  };
+  // A slow, steady typist with a long pause between words: still writing.
+  for (let i = 0; i < 6; i++) {
+    run(400, 100); // a word
+    run(TYPING_EVERY_MS - 400, 0); // a pause as long as the throttle
+    assert.equal(writing(), 1, 'still writing between words');
+  }
+  // Worst case: the last keystroke is the one that was sent.
+  run(50, 50);
+  let gone = null;
+  for (let t = 0; t < 30_000 && gone === null; t += 50) {
+    run(50, 0);
+    if (writing() === 0) gone = t + 50;
+  }
+  assert.ok(gone !== null && gone <= 10_000, `cleared ${gone} ms after the last keystroke`);
+  assert.ok(TYPING_EVERY_MS <= WRITING_WINDOW_MS / 2, 'a steady typist sends at least twice a window');
 });
 
 test('unsent thoughts are counted for the facilitator only', async () => {

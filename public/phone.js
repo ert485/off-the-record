@@ -7,6 +7,7 @@ import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle, deck, 
 import { PRESETS, firstEmoji } from './shared/emoji.js';
 import { loadChecker, HINT } from './shared/identifier-check.js';
 import { struckParts } from './shared/struck.js';
+import { typingThrottle } from './shared/writing.js';
 
 const PROMPT = 'Write down something you experienced, felt, or were surprised by in 2026.';
 const SOFT_MAX = 140;
@@ -106,15 +107,11 @@ subscribe(
 );
 
 // Tells the server this phone is typing, so the room can see people are
-// writing. At most once every 5 seconds, and never with any text. Fire and
-// forget: a dropped one only means a slightly lower count.
-const TYPING_EVERY_MS = 5_000;
-let lastTypingAt = 0;
+// writing. At most once every few seconds (shared/writing.js), and never with
+// any text. Fire and forget: a dropped one only means a slightly lower count.
+const typingDue = typingThrottle();
 function sayTyping() {
-  const t = Date.now();
-  if (t - lastTypingAt < TYPING_EVERY_MS) return;
-  lastTypingAt = t;
-  post('typing', { cid }).catch(() => {});
+  if (typingDue(Date.now())) post('typing', { cid }).catch(() => {});
 }
 
 // Tells the server, only when it changes, whether this phone holds a thought it
