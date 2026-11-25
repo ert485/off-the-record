@@ -141,7 +141,8 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
     await post('reactDone', { cid });
   }
   await run('advance'); // walk
-  await post('signal', { cid: PHONES[0], kind: 'stay', on: true });
+  const gone = await fetch(`${base}/api/signal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cid: PHONES[0], kind: 'stay', on: true }) });
+  assert.equal(gone.status, 404);
   await run('nextCard');
   await run('advance'); // finale
   assert.ok(JSON.stringify(await view('role=projector')).includes('🦆'));

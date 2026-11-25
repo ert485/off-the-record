@@ -563,8 +563,6 @@ function walkScreen() {
   const comments = h('div', { class: 'comments' });
   const commentsMore = h('div', { class: 'comments-more' });
   const haiku = h('div', { class: 'haiku' });
-  const counts = h('div', { class: 'counts' });
-  const controls = h('div', { class: 'controls-line' }, 'From your phone you can ask to stay, or to go back a card.');
   const el = h(
     'div',
     { class: 'walk' },
@@ -572,7 +570,7 @@ function walkScreen() {
     h('div', { class: 'stage-card' }, folder, more),
     mix,
     h('div', { class: 'under' }, comments, commentsMore, haiku),
-    h('div', { class: 'bottom' }, h('div', { class: 'grow' }, controls), counts),
+    h('div', { class: 'bottom' }),
   );
   let said = { shown: [], more: 0 }; // this card's comments, oldest first
 
@@ -583,7 +581,7 @@ function walkScreen() {
     commentsMore.textContent = more > 0 ? `+${more} more` : '';
   }
 
-  // A crowded card fits the screen, down to the counts row (crowdFit).
+  // A crowded card fits the screen, down to the bottom row (crowdFit).
   const under = underCard(el, crowdFit(el, () => said.shown.length, drawComments));
   let view = null;
   let barWidth = null; // the last width seen while the card was running
@@ -656,9 +654,6 @@ function walkScreen() {
       // under.layout() below draws as many of them as fit.
       said = item?.hidden ? { shown: [], more: 0 } : w.comments;
       fill(haiku, !overview && !last && item?.haiku ? haikuParts(item.haiku) : []);
-      const chip = (n, label) => h('span', { class: n ? '' : 'zero' }, `${label} ${n}`);
-      fill(counts, ...(last || overview ? [] : [chip(w.stay, 'Stay'), chip(w.back, 'Go back')]));
-      controls.hidden = last;
       drawBar();
       under.layout();
     },

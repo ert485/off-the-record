@@ -110,7 +110,6 @@ const PHONE_ACTIONS = {
   submit: (b) => session.submitCards(b.cid, b.texts),
   react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt, b.comment),
   reactDone: (b) => session.reactDone(b.cid),
-  signal: (b) => session.signal(b.cid, b.kind, b.on),
 };
 
 const FACILITATOR_ACTIONS = {

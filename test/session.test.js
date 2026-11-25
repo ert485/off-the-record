@@ -175,20 +175,46 @@ test('reactions are pooled per group and capped at one pass', async () => {
   assert.equal(session.view('facilitator').react.done, 1);
 });
 
-test('walk-through: cards move, signals reset per card, stay and back counted', async () => {
+test('walk-through: cards move, and nothing counts stay or go back', async () => {
   const { session } = make();
   await toReact(session);
   session.advance();
   assert.equal(session.state.phase, 'walk');
-  session.signal(A, 'stay', true);
-  session.signal(B, 'back', true);
-  const p = session.view('projector');
-  assert.equal(p.walk.stay, 1);
-  assert.equal(p.walk.back, 1);
   session.moveCard(1);
-  assert.equal(session.view('projector').walk.stay, 0);
   session.moveCard(-1);
   assert.throws(() => session.moveCard(-1), /first card/);
+  for (const role of ['projector', 'facilitator']) {
+    const w = session.view(role).walk;
+    assert.equal('stay' in w, false);
+    assert.equal('back' in w, false);
+  }
+});
+
+test('there is no signal action', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.advance();
+  assert.equal(session.signal, undefined);
+  assert.equal('signals' in session.state.walk, false);
+});
+
+test("the phone's walk view has no stay or go back", async () => {
+  const { session } = make();
+  await toReact(session);
+  session.advance();
+  assert.equal(session.view('phone', { cid: A }).walk, undefined);
+});
+
+test('a saved state from before still loads, without its signals', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.advance();
+  const saved = JSON.parse(JSON.stringify(session.state));
+  saved.walk.signals = { stay: { [A]: 1 }, back: {} };
+  const loaded = new Session({ state: saved, now: () => 1_000_000 });
+  assert.equal('signals' in loaded.state.walk, false);
+  loaded.moveCard(1);
+  assert.equal(loaded.view('projector').walk.index, 1);
 });
 
 test('hidden cards leave the stream and the reaction stack', async () => {
@@ -368,7 +394,6 @@ test('the anonymous pause and move on are gone', async () => {
   session.advance();
   assert.equal(session.requestPause, undefined);
   assert.equal(session.acceptPause, undefined);
-  assert.throws(() => session.signal(A, 'moveOn', true), /Unknown signal/);
 });
 
 test('finale gets the reaction sequence, nothing else', async () => {

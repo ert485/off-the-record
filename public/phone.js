@@ -656,30 +656,10 @@ function reactScreen() {
   };
 }
 
-// ---- walk-through: look up, with two light taps -------------------------------
+// ---- walk-through: look up -------------------------------
 
 function walkScreen() {
   const el = h('div', { class: 'stack', style: { flex: '1' } });
-  const signals = h('div', { class: 'signals' });
-  el.append(h('div', { class: 'lookup' }, h('div', { class: 'big' }, 'Look up')), signals);
-
-  const toggles = {};
-  const signal = (kind, label, sub) => {
-    const b = h('button', {}, label, h('span', { class: 'sub' }, sub));
-    b.addEventListener('click', () => {
-      const on = !b.classList.contains('on');
-      b.classList.toggle('on', on);
-      post('signal', { cid, kind, on }).catch(() => b.classList.toggle('on', !on));
-    });
-    toggles[kind] = b;
-    return b;
-  };
-  signals.append(signal('stay', 'Stay', 'on this card'), signal('back', 'Go back', 'a card'));
-
-  return {
-    el,
-    update(v) {
-      for (const [kind, b] of Object.entries(toggles)) b.classList.toggle('on', !!v.walk.mine[kind]);
-    },
-  };
+  el.append(h('div', { class: 'lookup' }, h('div', { class: 'big' }, 'Look up')));
+  return { el, update() {} };
 }

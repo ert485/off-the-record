@@ -125,10 +125,6 @@ body { background: #000; overflow: hidden; cursor: none; }
 .hseg.hwrap { white-space: normal; text-wrap: balance; }
 .hsep { color: var(--text-faint); }
 .walk .bottom { display: flex; gap: 2vw; align-items: flex-end; min-height: 3vh; padding-right: 10vw; }
-.walk .counts { display: flex; gap: 1.2vw; font-size: 1.5vw; color: var(--text-dim); }
-.walk .counts span { background: #15161a; border-radius: 99px; padding: 0.5vh 1.1vw; }
-.walk .counts span.zero { visibility: hidden; }
-.walk .controls-line { font-size: 1.4vw; color: var(--text-faint); }
 .walk.is-last .stage-card { margin-top: 0; }
 .walk.is-last .card-text { font-size: inherit; }
 

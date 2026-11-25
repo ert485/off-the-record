@@ -26,9 +26,6 @@ const fail = (message) => {
   throw new ActionError(message);
 };
 
-const emptySignals = () => ({ stay: {}, back: {} });
-const count = (obj) => Object.keys(obj ?? {}).length;
-
 export function freshState(now, talkMinutes = TALK_MINUTES) {
   return {
     // Random per session. Phones compare it with the one their notes were
@@ -64,7 +61,7 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     reactions: [],
     // Receipt -> card, so a phone can change its reactions to that card.
     receipts: {},
-    walk: { stream: [], index: 0, cardStartedAt: null, cardEndsAt: null, endsAt: null, paused: false, done: false, signals: emptySignals() },
+    walk: { stream: [], index: 0, cardStartedAt: null, cardEndsAt: null, endsAt: null, paused: false, done: false },
     // { id, g, text, r }: no phone id. r is the card's receipt, so sending
     // again replaces the comment along with the reactions.
     comments: [],
@@ -198,6 +195,8 @@ export class Session {
       this.state.demo.auto ??= false;
       this.state.demo.stepStartedAt ??= now();
     }
+    // Saved before the room's stay and go-back taps were removed.
+    if (this.state.walk) delete this.state.walk.signals;
     this.state.sessionId ??= randomBytes(8).toString('hex');
     this.shredded = !!this.state.shredded;
     const c = this.state.clustering;
@@ -791,7 +790,6 @@ export class Session {
       endsAt: walkEndsAt(this.s.talk, now),
       paused: false,
       done: false,
-      signals: emptySignals(),
     };
     this.s.walk.cardEndsAt = now + cardMs(this.s.walk, now);
   }
@@ -803,7 +801,6 @@ export class Session {
     w.index = index;
     w.cardStartedAt = now;
     w.cardEndsAt = w.paused ? null : now + (w.stream[index].last ? LAST_SLIDE_MS : cardMs(w, now));
-    w.signals = emptySignals();
   }
 
   // `from` is the card the facilitator's screen showed when they tapped; if
@@ -851,15 +848,6 @@ export class Session {
       w.cardEndsAt = now + (w.stream[w.index].last ? LAST_SLIDE_MS : cardMs(w, now));
       w.cardStartedAt = now;
     }
-    this.changed();
-  }
-
-  signal(cid, kind, on) {
-    if (this.s.phase !== 'walk') fail('Not in the walk-through');
-    if (!['stay', 'back'].includes(kind)) fail('Unknown signal');
-    this.client(cid);
-    if (on) this.s.walk.signals[kind][cid] = 1;
-    else delete this.s.walk.signals[kind][cid];
     this.changed();
   }
 
@@ -1022,15 +1010,6 @@ export class Session {
         endsAt: s.reactEndsAt,
       };
     }
-    if (s.phase === 'walk') {
-      v.walk = {
-        cardKey: `${s.walk.index}:${this.currentItem()?.groupId ?? ''}`,
-        mine: {
-          stay: !!s.walk.signals?.stay?.[cid],
-          back: !!s.walk.signals?.back?.[cid],
-        },
-      };
-    }
     return v;
   }
 
@@ -1135,8 +1114,6 @@ export class Session {
         item: this.itemView(item),
         // A hidden card's comments stay off the projector (the facilitator still sees them).
         comments: this.itemView(item)?.hidden ? { shown: [], more: 0 } : this.projectorComments(this.commentKey(item)),
-        stay: count(s.walk.signals.stay),
-        back: count(s.walk.signals.back),
       };
     }
     if (s.phase === 'finale') v.finale = { sequence: s.reactions.map((r) => r.e) };
@@ -1234,8 +1211,6 @@ export class Session {
             : { groupId: it.groupId, text: this.groupText(it.groupId), reactions: counts.get(it.groupId) ?? 0 },
       ),
       item: item ? { groupId: item.groupId, ...this.itemView(item) } : null,
-      stay: count(s.walk.signals.stay),
-      back: count(s.walk.signals.back),
     };
     const upcoming = s.phase === 'walk' ? s.walk.stream[s.walk.index + 1] : null;
     v.comments = {

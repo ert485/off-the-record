@@ -5,7 +5,7 @@
 // look:
 //   1. Move    (yellow)  back / next phase, and in the walk-through, cards
 //   2. Now     (white)   the one number that matters right now, and its time
-//   3. Room    (blue)    what the room is asking for: pause, stay, go back
+//   3. Room    (blue)    the room's pace: pause and resume
 //   4. Content (grey)    what's on screen or needs a decision
 //   5. Lists   (folded)  every card, the stream
 // Hide and Remove are always red-outlined, on the right of the thing they act on.
@@ -570,7 +570,6 @@ const PHASES = {
     const posInfo = info('walk-pos', 'Where you are: the themes overview first, then the cards in order of reactions, then a last slide that invites the room to speak.');
     const timeInfo = info('walk-time', 'How long this card has been on screen. The projector shows the time left in the whole walk-through instead.');
     const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (20 seconds are kept for the last slide). It’s a rough average, not a limit: spend longer where the room wants to.');
-    const signalInfo = info('signals', 'Phones asking to stay on this card or to go back. They reset on every card; the room sees the same counts on the projector.');
     const showLeft = !lastSlide && !w.done && w.cardsLeft !== null;
     return {
       move: [
@@ -593,15 +592,10 @@ const PHASES = {
         h('div', { class: `room-row${w.paused ? ' active' : ''}` },
           h('strong', { class: 'grow' }, w.paused ? 'Paused: the card stays until you resume' : 'Running'),
           h('button', { class: 'small-btn room-btn', onclick: () => act('pauseWalk', { paused: !w.paused }) }, w.paused ? 'Resume' : 'Pause')),
-        h('div', { class: 'signals' },
-          h('div', {}, h('b', {}, w.stay), 'stay'),
-          h('div', {}, h('b', {}, w.back), 'go back')),
-        h('div', {}, signalInfo.button),
-        signalInfo.text,
       ],
       content: [
         overview
-          ? h('div', { class: 'current' }, 'The themes are on the projector. Say aloud: you set the pace, timers are hints, and anyone can ask to stay or go back.')
+          ? h('div', { class: 'current' }, 'The themes are on the projector.')
           : lastSlide
             ? h('div', { class: 'current' }, 'Anything else? Out loud.')
             : [
