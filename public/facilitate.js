@@ -246,8 +246,10 @@ async function approveAll(v) {
 // The move zone: back, and one forward button. When a part is over the
 // forward button is the server's prompt ("Ready for grouping?"); otherwise it
 // says where it goes. `from` makes a double tap, on this or another device, move once.
-function nav(v) {
+// With forward false, only Back (the walk-through's last slide has its own finale button).
+function nav(v, { forward = true } = {}) {
   const back = h('button', { disabled: !v.canBack, onclick: () => act('back', { from: v.phase }) }, v.prev ? `◀ Back to ${BACK_TO[v.prev]}` : '◀ Back');
+  if (!forward) return h('div', { class: 'nav' }, back);
   let next;
   if (v.phase === 'cluster') {
     const c = v.clustering;
@@ -523,7 +525,7 @@ const PHASES = {
     const countInfo = info('submit-count', 'Cards submitted so far, and how many phones have sent at least one (the percentage is of connected phones).');
     const timeInfo = info('submit-time', 'Time left for submissions. The room sees the same countdown. “+1 minute” adds a minute; nothing closes by itself, you move on.');
     const c = v.clustering;
-    const writingInfo = info('submit-writing', 'Phones that typed in the last 20 seconds; no text is sent. If almost nobody is writing, you can move on early; if many still are when time’s up, add a minute.');
+    const writingInfo = info('submit-writing', 'Phones that typed in the last 8 seconds; no text is sent. If almost nobody is writing, you can move on early; if many still are when time’s up, add a minute.');
     return {
       now: now(
         v.cards.length,
@@ -657,10 +659,14 @@ const PHASES = {
       : '';
     return {
       move: [
-        nav(v),
+        // On the last slide the walk's Next is the only way forward: one finale button.
+        nav(v, { forward: !lastSlide }),
         h('div', { class: 'walk-nav' },
           h('button', { disabled: w.index === 0, onclick: () => act('prevCard', { from: w.index }) }, w.index === 1 ? '◀ Back to the themes overview' : '◀ Back one card'),
-          h('button', { class: 'primary', disabled: w.done, onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : w.index === 0 ? 'First card ▶' : lastSlide ? 'Finish the walk-through ▶' : 'Next card ▶')),
+          // On the last slide, Next is the finale, in one tap (the server ignores
+          // a tap that is the second half of a double-tapped Next), marked as the
+          // prompt once the room is asked to move on.
+          h('button', { class: `primary${lastSlide && v.move ? ' prompt' : ''}`, onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : w.index === 0 ? 'First card ▶' : lastSlide ? `${v.move ? v.move.label : FORWARD.finale} ▶` : 'Next card ▶')),
       ],
       now: now(
         overview ? 'Themes' : lastSlide ? 'Last slide' : `Card ${w.index} of ${cards}`,

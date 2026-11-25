@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createChecker } from '../public/shared/identifier-check.js';
-import { isSingleEmoji, firstEmoji } from '../public/shared/emoji.js';
+import { isSingleEmoji, firstEmoji, PRESETS } from '../public/shared/emoji.js';
 
 const list = (p) => readFileSync(new URL(p, import.meta.url), 'utf8').split('\n');
 const check = createChecker({ firstNames: list('../public/lists/first-names.txt'), companies: list('../public/lists/companies.txt') });
@@ -44,4 +44,10 @@ test('reactions accept exactly one emoji', () => {
   for (const ok of ['🙋', '🫂', '👍🏽', '👩‍💻', '🇨🇦', '❤️']) assert.equal(isSingleEmoji(ok), true, ok);
   for (const bad of ['', 'a', 'ok', '🙋🙋', 'hi 🙋', '1']) assert.equal(isSingleEmoji(bad), false, bad);
   assert.equal(firstEmoji('lol 🦆 duck'), '🦆');
+});
+
+test('only the first two rows of presets carry a label; the rest are left open to read', () => {
+  assert.deepEqual(PRESETS.map((p) => p.e), ['🙋', '🫂', '😂', '🥲', '😢', '😤', '😰', '🎉', '🔥', '🤯', '🫠', '😮‍💨', '💪', '❤️', '🙏', '👀']);
+  assert.deepEqual(PRESETS.slice(0, 8).map((p) => p.label), ['me too', 'sending care', 'laughed', 'bittersweet', 'sad', 'frustrated', 'anxious', 'glad for you']);
+  for (const p of PRESETS.slice(8)) assert.equal(p.label, undefined, p.e);
 });

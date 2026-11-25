@@ -27,8 +27,9 @@ export const REACT_GRACE_MS = 10_000;
 export const CARD_REACT_MS = 8_000;
 export const AFTERTHOUGHT_RESERVE_MS = 60_000;
 export const MIN_DECK = 8;
-// A phone counts as "writing" this long after it last said it typed.
-export const WRITING_WINDOW_MS = 20_000;
+// A phone counts as "writing" this long after it last said it typed (shared
+// with the phones, which say so at most every TYPING_EVERY_MS).
+export { WRITING_WINDOW_MS } from '../public/shared/writing.js';
 // The harshness check runs once there's been this long with no new card or thought.
 export const HARSHNESS_QUIET_MS = 5_000;
 // ...but never later than this after the first item waiting for it arrived,
@@ -47,6 +48,10 @@ export const AFTERTHOUGHT_PAGE_MS = 10_000;
 export const MIN_CARD_MS = 15_000;
 export const MIN_WALK_MS = 180_000;
 export const WALK_END_BEFORE_MINUTES = 3.5;
+// The facilitator's Next on the last slide goes to the finale, except this
+// soon after the last slide appeared: that tap is the second half of a
+// double-tapped Next, and would skip the last slide.
+export const DOUBLE_TAP_MS = 1_000;
 
 export function nextPhase(phase) {
   const i = PHASES.indexOf(phase);

@@ -1,7 +1,7 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
 import { randomBytes, randomInt } from 'node:crypto';
-import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS, WRITING_WINDOW_MS, HARSHNESS_QUIET_MS, HARSHNESS_MAX_WAIT_MS, HARSHNESS_BATCH } from './phases.js';
+import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS, WRITING_WINDOW_MS, DOUBLE_TAP_MS, HARSHNESS_QUIET_MS, HARSHNESS_MAX_WAIT_MS, HARSHNESS_BATCH } from './phases.js';
 import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP, lastSlideMs, deckTimeSize } from './flow.js';
 import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
@@ -1159,11 +1159,19 @@ export class Session {
   // when they tapped; if the walk-through has moved on, the tap is ignored (a
   // double-tapped Next). Next marks the next item's cards (or, before the last
   // slide, its thoughts) reviewed: the facilitator chose to show them. During
-  // a hold, Next goes where the timer was going.
+  // a hold, Next goes where the timer was going. Next on the last slide is
+  // the finale, in one tap (done or not).
   moveCard(delta, { from } = {}) {
     if (this.s.phase !== 'walk') fail('Cards move in the walk-through');
     const w = this.s.walk;
     if (from !== undefined && from !== null && from !== w.index) fail('Already moved on');
+    if (delta > 0 && w.index === w.stream.length - 1) {
+      // Within a moment of the last slide appearing, this is the second half
+      // of a double-tapped Next, landing on the redrawn button: ignored, so
+      // the room still sees the last slide.
+      if (this.now() - w.cardStartedAt < DOUBLE_TAP_MS) fail('Already moved on');
+      return this.advance({ from: 'walk' });
+    }
     if (delta > 0 && w.held) {
       const to = this.upcoming(w.holdTo);
       this.markReviewed(to);
@@ -1180,7 +1188,8 @@ export class Session {
     this.changed();
   }
 
-  // One step back or forward in the stream (forward from the last slide finishes).
+  // One step back or forward in the stream (forward from the last slide, the
+  // timer's step, finishes: the facilitator is then asked to move on).
   stepWalk(delta) {
     const w = this.s.walk;
     const last = w.stream.length - 1;
