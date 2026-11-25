@@ -129,12 +129,12 @@ What each step shows:
     - Then: "I've run this with coworkers and with my family, and the best part each time was the conversations afterward."
     - Then: "If a card stuck with you, find someone after the next talk and talk about it." When speaking, name the next speaker.
     - Not "at the break": the break between talks is too short for a real conversation. The time for it is after the following talk.
-- [ ] **Step 1b:** In "Intent and context", the line "The break afterward carries the conversation in person" becomes "The time after the evening's last talk carries the conversation in person (the break between talks is too short)."
   - **Don't ask "who's done a retro?"** It makes people expect the retro their own team runs.
   - **Say up front that it may go quiet** while people write and read, and that this is expected.
   - **Don't read or explain the slides.** When the room laughs or gasps, acknowledge it in a word and move on. Speak mainly to keep things moving, or to wrap up a conversation that's running long.
   - **Don't warn people off inappropriate emojis.** It invites them. If one appears, skip past it.
   - **Remove the cue about asking to stay or go back** (phones lose those buttons in Task 4, no stay/go back).
+- [ ] **Step 1b:** In "Intent and context", the line "The break afterward carries the conversation in person" becomes "The time after the evening's last talk carries the conversation in person (the break between talks is too short)."
 - [ ] **Step 2:** Timing table: change the Intro row to "Spoken over the teaser and demo".
 - [ ] **Step 3: Commit** "Spec: say less from the front".
 
