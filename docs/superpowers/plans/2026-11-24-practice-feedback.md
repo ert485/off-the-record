@@ -65,7 +65,7 @@ Also:
 **Files:** `public/shared/emoji.js`, `server/session.js` (`LIMITS`), `public/phone.js` (`MAX_EMOJIS`), `public/phone.css` if the grid needs it, `test/session.test.js`, `test/demo.test.js`, spec (Design rules, view table, Build notes).
 
 **Interfaces (produces):**
-- `PRESETS` has 16 entries: the current 8 in their current order, then 8 more. Proposed (the facilitator confirms the list and labels before this ships): 🔥 this is fine, 🤯 mind blown, 🫠 melting, 😮‍💨 relief, 💪 proud of you, ❤️ love this, 🙏 grateful, 👀 noticed that. 🔥 covers the "everything's on fire, and that's fine" feeling of the year.
+- `PRESETS` has 16 entries: the current 8 in their current order, then 8 more. Confirmed by the facilitator on Nov 24: 🔥 this is fine, 🤯 mind blown, 🫠 melting, 😮‍💨 relief, 💪 proud of you, ❤️ love this, 🙏 grateful, 👀 noticed that. 🔥 covers the "everything's on fire, and that's fine" feeling of the year.
 - `LIMITS.emojisPerCard = 22`: 16 presets plus 6 of your own. The error reads `Up to 22 emojis on a card: remove ${n - 22}`. Phones use `MAX_EMOJIS = 22`.
 - The phone grid stays 4 columns (now 4 rows). Once the comment box is gone (Task 6), the card, grid, own-emoji row and buttons fit a 375×667 screen without scrolling. Until then, scrolling is fine.
 
@@ -109,7 +109,7 @@ What each step shows:
 - [ ] **Step 4: Run.** `npm test` passes.
 - [ ] **Step 5: Check headlessly** at 1280×720: the teaser with a struck word, and one full loop, with screenshots at the start and end of each step. Expected: step 1 starts empty, step 3's tab and haiku come after the card, and step 2 never says "share 2 more".
 - [ ] **Step 6: Spec, commit** "Teaser can strike a word; the demo shows writing first, the grouping happen, and no comments".
-- [ ] **Step 7: The facilitator's `demo/local.json`, in the main checkout, never committed.** In the teaser, strike "shred it all" and follow it with "release it into the wind" (the facilitator's phrase; the line must stay within 160 characters, markup included, so "nothing is kept" is left to the Join screen). Mark up to three notes to share. Use 🔥 among the tapped presets and in the reveal mix. Remove the old comment fields, so the reveal no longer carries a comment that reads as a dig at the card's writer. Restart the local server and check that it doesn't print `demo: local file invalid`.
+- [ ] **Step 7: The facilitator's `demo/local.json`, in the main checkout, never committed.** In the teaser, strike "shred it all" and follow it with "release it into the wind" (confirmed by the facilitator; the line must stay within 160 characters, markup included, so "nothing is kept" is left to the Join screen). Mark up to three notes to share. Use 🔥 among the tapped presets and in the reveal mix. Remove the old comment fields, so the reveal no longer carries a comment that reads as a dig at the card's writer. Restart the local server and check that it doesn't print `demo: local file invalid`.
 
 ---
 
@@ -278,7 +278,7 @@ What each step shows:
 
 ### Task 9: Writing opens at Join
 
-The facilitator's note asks that people can start writing as soon as everyone sits down, without waiting for the QR code to go. Writing still doesn't open before the talk starts (during the demo loop), so it's clearly something each person does in the room. **Assumption, to confirm:** sharing opens at Join too, and the 5-minute submissions timer still starts when the facilitator moves to Submit, so early joiners just get extra time.
+The facilitator's note asks that people can start writing as soon as everyone sits down, without waiting for the QR code to go. Writing still doesn't open before the talk starts (during the demo loop), so it's clearly something each person does in the room. **Decided (Nov 24):** sharing opens at Join too, and the 5-minute submissions timer still starts when the facilitator moves to Submit, so early joiners just get extra time.
 
 **Files:** `public/phone.js`, `server/session.js` (`submitCards` phases, the phone view), `test/session.test.js`, spec (Session flow, steps 1 and 2; timing table).
 
@@ -424,7 +424,6 @@ The thanks and credits play while the feedback QR code shows. The photos are tak
 
 ## Before the talk (not code)
 
-- [ ] The facilitator confirms the 8 new presets and their labels (Task 1) and the teaser copy (Task 2, Step 7).
 - [ ] Rewatch the recording of the practice run with the new flow in mind.
 - [ ] A solo run on two phones with the new flow (writing at Join, taking back and swapping a card, emojis only, a thought at the end, the last slide, the hold) before redeploying.
 - [ ] Redeploy with `deploy/deploy.sh <ip>` once the live server is on the teaser (check the projector stream's `phase` first). Confirm the server log has no `demo: local file invalid`.
