@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Session } from '../server/session.js';
 import { PLAN, LAST_SLIDE_MS, AFTERTHOUGHTS_PER_PAGE, AFTERTHOUGHT_PAGE_MS, CARD_REACT_MS, AFTERTHOUGHT_RESERVE_MS, MIN_DECK } from '../server/phases.js';
 import { lastSlideMs, deckSize } from '../server/flow.js';
-import { deck } from '../public/shared/client.js';
+import { deck, deckEnd } from '../public/shared/client.js';
 import { finaleTimeline, arrivalMs } from '../public/shared/finale-timing.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
 
@@ -384,4 +384,15 @@ test("a phone's deck is its own first cards; hiding one moves the next card up, 
   assert.deepEqual(kept, order.filter((id) => kept.includes(id)));
   // Fewer cards than the deck size: every card, once.
   assert.deepEqual([...deck(ids.slice(0, 5), `${A}:react`, 30)].sort((a, b) => a - b), [1, 2, 3, 4, 5]);
+});
+
+test('the end of a deck: its first unseen card, and "every card" only when it is', () => {
+  // Every card, all seen.
+  assert.deepEqual(deckEnd([3, 1, 2], 3, new Set([1, 2, 3])), { unseen: null, everyCard: true });
+  // All seen, but the deck is only some of the cards.
+  assert.deepEqual(deckEnd([3, 1, 2], 4, new Set([1, 2, 3])), { unseen: null, everyCard: false });
+  // A card in the deck not yet seen (unhidden, or came in late): the first one, in deck order.
+  assert.deepEqual(deckEnd([3, 1, 2, 4], 4, new Set([3, 2])), { unseen: 1, everyCard: false });
+  // An empty deck has nothing left to see.
+  assert.deepEqual(deckEnd([], 0, new Set()), { unseen: null, everyCard: true });
 });

@@ -3,7 +3,7 @@
 // reaches the phone or the tab closes. A phone that was offline at the shred
 // wipes them as soon as it reconnects to a later session; the phone also says
 // that closing the tab is the sure way.
-import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle, deck } from './shared/client.js';
+import { subscribe, fill, post, h, formatClock, serverNow, seededShuffle, deck, deckEnd } from './shared/client.js';
 import { PRESETS, firstEmoji } from './shared/emoji.js';
 import { loadChecker, HINT } from './shared/identifier-check.js';
 import { struckParts } from './shared/struck.js';
@@ -417,6 +417,21 @@ function reactScreen() {
   let shownId = null;
   let finished = false;
   let sentDone = false;
+  // The cards this phone has shown, so a card that joins the deck behind
+  // where it is (unhidden, or come in late) is still reached. Kept on the
+  // phone, never sent, and wiped like the notes.
+  const seen = new Set(local.get('seenCards', []));
+  const markSeen = (id) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    local.set('seenCards', [...seen]);
+  };
+  // The "New cards came in" line at the end of the deck.
+  let freshLine = null;
+  // On a card reached by jumping to one not yet shown: Next goes on to the
+  // next such card (or the end), not back through cards already seen.
+  // "◀ Previous" goes back to stepping through the deck in order.
+  let catchingUp = false;
 
   // Two warnings, like the submission ones, early enough to leave time for
   // the thought at the end. None once the thought is sent or skipped.
@@ -437,8 +452,11 @@ function reactScreen() {
     const reacted = new Set(Object.keys(mine).map(Number));
     return deck(groups.map((g) => g.id), deckSeed(), deckSize, reacted);
   }
-  // Whether the deck is every card, so the end of it can say so.
-  const everyCard = () => order().length >= groups.length;
+  // The end of the deck: the first card in it not yet shown (a card reacted
+  // to counts as shown), and whether "That was every card" is true.
+  const deckState = () => deckEnd(order(), groups.length, new Set([...seen, ...Object.keys(mine).map(Number)]));
+  const askCopy = (every) => (every ? 'That was every card. Anything new after seeing them all?' : 'That was your deck. Anything new after seeing it?');
+  const waitCopy = (every) => `${every ? 'That was every card' : 'That was your deck'}. Thank you. Waiting for everyone else to finish.`;
 
   function textFor(group) {
     // Each phone sees one wording from a group of near-duplicates.
@@ -455,16 +473,43 @@ function reactScreen() {
     shownId = null;
     current = null;
     tickTimer();
+    freshLine = h('div', { class: 'stack', hidden: true });
     fill(
       body,
+      freshLine,
       thoughtBox(),
       h('p', { class: 'small dim' }, 'Made your own emoji? Go back and add it to a card.'),
       h('button', { class: 'quiet', onclick: () => ((finished = false), (index = order().length - 1), show()) }, '◀ Back to the last card'),
     );
+    refreshEnd();
     if (!sentDone) {
       sentDone = true;
       post('reactDone', { cid }).catch(() => (sentDone = false));
     }
+  }
+
+  // New cards in the deck while the phone is at its end: say so, with a way
+  // to them, but leave the phone where it is (someone may be typing a
+  // thought; the draft is kept either way). The words follow what's true.
+  function refreshEnd() {
+    if (!finished) return;
+    const { unseen, everyCard } = deckState();
+    const ask = body.querySelector('[data-end="ask"]');
+    if (ask) ask.textContent = askCopy(everyCard);
+    const wait = body.querySelector('[data-end="wait"]');
+    if (wait) wait.textContent = waitCopy(everyCard);
+    freshLine.hidden = unseen === null;
+    fill(freshLine, unseen === null ? '' : [h('p', {}, 'New cards came in.'), h('button', { class: 'primary', onclick: seeNew }, 'See them ▶')]);
+  }
+  function seeNew() {
+    const ids = order();
+    const { unseen } = deckState();
+    if (unseen === null) return refreshEnd();
+    finished = false;
+    shownId = null;
+    index = ids.indexOf(unseen);
+    catchingUp = true;
+    show();
   }
 
   // The end-of-deck thought. Kept on the phone and wiped like the notes:
@@ -511,13 +556,13 @@ function reactScreen() {
         }
       });
       refresh();
-      return [h('h2', {}, everyCard() ? 'That was every card. Anything new after seeing them all?' : 'That was your deck. Anything new after seeing it?'), input, counter, hint, h('div', { class: 'row' }, add, skip)];
+      return [h('h2', { 'data-end': 'ask' }, askCopy(deckState().everyCard)), input, counter, hint, h('div', { class: 'row' }, add, skip)];
     }
     function done() {
       const text = local.get('afterthought', null)?.text;
       const reopen = () => (local.set('afterthoughtDone', false), render(), tickTimer());
       return [
-        lookUp('Look up', text ? 'Thank you. Your thought is in, with no name. It’s for the last slide.' : `${everyCard() ? 'That was every card' : 'That was your deck'}. Thank you. Waiting for everyone else to finish.`).el,
+        lookUp('Look up', text ? 'Thank you. Your thought is in, with no name. It’s for the last slide.' : h('span', { 'data-end': 'wait' }, waitCopy(deckState().everyCard))).el,
         text ? h('div', { class: 'note sent' }, h('span', { class: 'tick' }, '✓'), h('div', { class: 'text' }, text)) : '',
         h('button', { class: 'quiet', onclick: reopen }, text ? 'Change your thought' : 'Add a thought after all'),
       ];
@@ -531,10 +576,17 @@ function reactScreen() {
     if (!ids.length) return finish();
     // Start at the first card this phone hasn't reacted to.
     if (index === null) index = ids.findIndex((id) => !mine[id]);
-    if (index < 0 || index >= ids.length) return finish();
+    // Past the end: a card in the deck not yet shown comes first.
+    if (index < 0 || index >= ids.length) {
+      const { unseen } = deckState();
+      if (unseen === null) return finish();
+      index = ids.indexOf(unseen);
+      catchingUp = true;
+    }
     const id = ids[index];
     if (shownId === id) return;
     shownId = id;
+    markSeen(id);
     current = null;
     const group = groups.find((g) => g.id === id);
     const before = mine[id];
@@ -669,7 +721,9 @@ function reactScreen() {
           }
         }
       }
-      index += step;
+      if (step < 0) catchingUp = false;
+      // Past the end, show() goes to the next card not yet shown, or finishes.
+      index = step > 0 && catchingUp ? Infinity : index + step;
       show();
     }
     // The phase left reactions: send what's unsent on this card, once. The
@@ -707,8 +761,14 @@ function reactScreen() {
       endsAt = v.react.endsAt;
       deckSize = v.react.deckSize;
       tickTimer();
-      if (finished) return;
-      if (v.react.done && index === null) return finish();
+      if (finished) return refreshEnd();
+      // Finished before (a reload): back to the end, unless the deck has a card not yet shown.
+      if (v.react.done && index === null) {
+        const { unseen } = deckState();
+        if (unseen === null) return finish();
+        index = order().indexOf(unseen);
+        catchingUp = true;
+      }
       // Keep the place by card, not by position: a hidden card leaves the
       // stack, even mid-way, and the cards after it move up.
       if (shownId !== null) {

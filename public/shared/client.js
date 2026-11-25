@@ -82,6 +82,14 @@ export function deck(ids, seedText, size, reacted = new Set()) {
   return ordered.filter((id) => reacted.has(id) || room-- > 0);
 }
 
+// Where a phone stands at the end of its deck: the first card in it not yet
+// seen (one unhidden, or one that came in later), and whether "That was every
+// card" is true: the deck is every card and every one of them was seen.
+export function deckEnd(deckIds, total, seen) {
+  const unseen = deckIds.find((id) => !seen.has(id)) ?? null;
+  return { unseen, everyCard: deckIds.length >= total && unseen === null };
+}
+
 // replaceChildren that accepts nested arrays and skips empty values.
 export function fill(el, ...children) {
   el.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false && c !== ''));

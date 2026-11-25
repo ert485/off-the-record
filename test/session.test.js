@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Session, normalizeClusters, cleanHaiku, SKIPPED } from '../server/session.js';
 import { paceMinutes, PHASES, PLAN } from '../server/phases.js';
 import { shredTimeline } from '../public/shared/shred-timing.js';
-import { deck } from '../public/shared/client.js';
+import { deck, deckEnd } from '../public/shared/client.js';
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbbbbbbbbbbbbbb';
@@ -884,4 +884,75 @@ test('a card unhidden mid-reaction joins every deck when there is time for it', 
     assert.equal(mine.length, 10);
     assert.equal(refused, 0);
   }
+});
+
+// A phone moving through its deck the way phone.js does: Next from the card
+// it last showed (the place is kept by card), and past the end, the first
+// card in its deck it hasn't seen, before finishing; Next from such a card
+// goes on to the next one not seen, or the end.
+function navigate(session, p, maxSteps = 50) {
+  for (let n = 0; n < maxSteps; n++) {
+    const v = session.view('phone', { cid: p.cid }).react;
+    const ids = deck(v.groups.map((g) => g.id), p.seed, v.deckSize, p.reacted);
+    let next = p.shown === null ? 0 : p.catchingUp ? ids.length : ids.indexOf(p.shown) + 1;
+    if (next >= ids.length) {
+      const end = deckEnd(ids, v.groups.length, p.seen);
+      if (end.unseen === null) return { finished: true, everyCard: end.everyCard };
+      next = ids.indexOf(end.unseen);
+      p.catchingUp = true;
+    }
+    p.shown = ids[next];
+    p.seen.add(p.shown);
+    if (!p.reacted.has(p.shown)) {
+      session.react(p.cid, p.shown, ['🙋']);
+      p.reacted.add(p.shown);
+    }
+  }
+  return { finished: false };
+}
+
+test('a card unhidden behind a phone is still reached before the end of its deck', async () => {
+  const { session } = make();
+  session.advance(); // submit
+  for (let i = 0; i < 10; i += 3) session.submitCards(phone(i + 1), Array.from({ length: Math.min(3, 10 - i) }, (_, j) => `card ${i + j}`));
+  session.advance(); // cluster
+  await flush();
+  const card = session.state.cards[0];
+  session.hideCard(card.id, true);
+  session.advance(); // react
+  const groupId = session.state.themes.flatMap((t) => t.groups).find((g) => g.cardIds.includes(card.id)).id;
+  const phones = Array.from({ length: 20 }, (_, i) => ({ cid: phone(3000 + i), seed: `seed-${i}`, reacted: new Set(), seen: new Set(), shown: null }));
+  for (const p of phones) navigate(session, p, 5);
+  session.hideCard(card.id, false);
+  // For some phones the card lands behind where they are.
+  const behind = phones.filter((p) => {
+    const ids = deck(session.view('phone', { cid: p.cid }).react.groups.map((g) => g.id), p.seed, 10, p.reacted);
+    return ids.indexOf(groupId) < ids.indexOf(p.shown);
+  });
+  assert.ok(behind.length > 0);
+  for (const p of phones) {
+    const end = navigate(session, p);
+    assert.deepEqual(end, { finished: true, everyCard: true });
+    assert.equal(p.seen.size, 10);
+    assert.ok(p.seen.has(groupId));
+  }
+});
+
+test('finishing is reset when reactions start again from grouping, kept when coming back from the walk-through', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.reactDone(A);
+  session.advance(); // walk
+  session.back(); // react
+  assert.equal(session.state.clients[A].reactDone, true);
+  assert.equal(session.view('phone', { cid: A }).react.done, true);
+  session.back(); // cluster
+  session.back(); // submit
+  session.submitCards(C, ['late']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  assert.equal(session.state.clients[A].reactDone, false);
+  assert.equal(session.view('phone', { cid: A }).react.done, false);
+  assert.equal(session.view('facilitator').react.done, 0);
 });

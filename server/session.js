@@ -363,6 +363,8 @@ export class Session {
       // The deck is sized to the window when reactions start; coming back
       // from the walk-through (or "+1 minute") keeps it.
       if (direction === 'forward') this.s.deckSize = deckTimeSize(REACT_MINUTES * 60_000);
+      // Starting again from grouping may bring new cards: nobody has finished yet.
+      if (direction === 'forward') for (const client of Object.values(this.s.clients)) client.reactDone = false;
     }
     if (to === 'submit') {
       this.s.submitEndsAt =
