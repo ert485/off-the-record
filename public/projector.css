@@ -276,3 +276,30 @@ body { background: #000; overflow: hidden; cursor: none; }
 @keyframes demo-tap { 50% { transform: scale(1.12); } }
 @keyframes demo-press { 40% { transform: scale(0.93); } }
 @keyframes demo-touch { from { opacity: 0.8; transform: scale(0.2); } to { opacity: 0; transform: scale(1.8); } }
+
+/* Credits roll: only when the demo file has credits. The QR and "What do you think?"
+   keep their place, a little smaller and to the left; the roll scrolls up on the right. */
+.closing.with-credits { padding-right: 36vw; }
+.closing.with-credits .closing-inner { gap: 3vw; }
+.closing.with-credits h1 { font-size: 4.2vw; }
+.closing.with-credits .url { font-size: 1.8vw; }
+.closing.with-credits .qr { width: min(20vw, 40vh); }
+.credits-roll { position: absolute; top: 5vh; bottom: 5vh; right: 3vw; width: 29vw; overflow: hidden; text-align: center; -webkit-mask-image: linear-gradient(transparent, #000 12%, #000 88%, transparent); mask-image: linear-gradient(transparent, #000 12%, #000 88%, transparent); }
+/* The track starts one roll-height down (the spacer) and moves up by its own height: transform only. */
+.credits-track { will-change: transform; animation: credits-roll 40s linear infinite; }
+.credits-spacer { height: 90vh; }
+.credits-title { font-size: 2.6vw; font-weight: 700; margin-bottom: 2vh; }
+.credits-line { font-size: 1.8vw; color: var(--text-dim); margin-top: 1.4vh; line-height: 1.3; overflow-wrap: anywhere; }
+.credits-photo { display: block; width: 100%; max-height: 28vh; object-fit: cover; border-radius: 0.8vw; margin-top: 3vh; }
+.credits-track > :last-child { margin-bottom: 4vh; }
+@keyframes credits-roll { to { transform: translateY(-100%); } }
+@media (prefers-reduced-motion: reduce) {
+  /* A static list: no motion, no spacer, photos as small thumbnails below the lines. */
+  .credits-track { animation: none; }
+  .credits-spacer { display: none; }
+  .credits-roll { -webkit-mask-image: none; mask-image: none; top: 8vh; bottom: auto; max-height: 84vh; }
+  .credits-photo { display: inline-block; vertical-align: top; width: 30%; max-height: 10vh; margin: 2vh 1% 0; }
+}
+
+.photo-picker { position: fixed; left: 1.2vw; bottom: 1vh; font-size: 0.9vw; color: var(--text-faint); cursor: auto; }
+.photo-picker input { font-size: inherit; color: inherit; max-width: 14vw; }
