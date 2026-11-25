@@ -1207,6 +1207,29 @@ export class Session {
     }
   }
 
+  // The walk-through's Undo for a Hide on the card on screen: shows the card
+  // again and, if the walk-through has moved past it since (a hidden card gets
+  // no time) or holds on it, goes back to it as Back would: a hold ends, and
+  // the card gets a fresh share. If the facilitator has gone back before it,
+  // nothing moves, and so it doesn't when another card of its group still
+  // showed (the hide never moved the walk-through). The finish doesn't move.
+  // A card that isn't hidden (a double-tapped Undo) changes nothing.
+  undoWalkHide(id) {
+    if (this.s.phase !== 'walk') fail('Not in the walk-through');
+    const card = this.card(id);
+    if (!card) fail('No such card');
+    if (!card.hidden) return;
+    const w = this.s.walk;
+    const at = w.stream.findIndex((it) => !it.overview && !it.last && this.findGroup(it.groupId)?.group.cardIds.includes(id));
+    // Only a hide that left its item with nothing to show moved the walk-through.
+    const emptied = at >= 0 && this.itemCards(at).length === 0;
+    this.hideCard(id, false);
+    if (!emptied || w.index < at || (w.index === at && !w.held)) return;
+    Object.assign(w, { done: false, ...(w.held ? { held: false, holdTo: null, paused: false } : {}) });
+    this.showAt(at);
+    this.changed();
+  }
+
   // Shows the item at `index` for a move the facilitator made.
   showAt(index) {
     const w = this.s.walk;

@@ -145,6 +145,7 @@ const FACILITATOR_ACTIONS = {
     session.reset();
   },
   hideCard: (b) => session.hideCard(b.id, b.hidden),
+  undoWalkHide: (b) => session.undoWalkHide(b.id),
   removeAfterthought: (b) => session.removeAfterthought(b.id),
   review: (b) => session.review(b.kind, b.id, b.on),
   reviewRest: () => session.reviewRest(),

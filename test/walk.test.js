@@ -731,3 +731,135 @@ test('Back while held on the first slide is refused and leaves the hold in place
   assert.equal(w.paused, true);
   assert.notEqual(w.holdTo, null);
 });
+
+// ---- undoing a Hide in the walk-through ------------------------------------
+
+const HAIKU = 'Short lines on a page / the room reads them all at once / then the quiet comes';
+
+test('Undo of a Hide on the card on screen shows it again on the projector, with its emojis and haiku', async () => {
+  const ctx = await toApprovedReact();
+  const { session, secretCard, secretGroup } = ctx;
+  for (const t of session.state.themes) session.approveTheme(t.id, 'Approved theme', HAIKU);
+  enterWalk(ctx);
+  const w = session.state.walk;
+  const at = w.stream.findIndex((it) => it.groupId === secretGroup.id);
+  session.moveTo(at);
+  const before = proj(session).walk.item;
+  assert.equal(before.text, SECRET);
+  session.hideCard(secretCard.id, true);
+  assert.deepEqual(proj(session).walk.item, { hidden: true }, 'gone at once');
+  session.undoWalkHide(secretCard.id);
+  assert.equal(w.index, at);
+  const after = proj(session).walk.item;
+  assert.equal(after.text, SECRET);
+  assert.equal(after.haiku, HAIKU);
+  assert.deepEqual(after.mix, before.mix);
+  assert.ok(JSON.stringify(after.mix).includes('🔥'));
+  assert.equal(session.card(secretCard.id).hidden, false);
+});
+
+test('Undo after the timer moved past the hidden card goes back to it; the finish does not move', async () => {
+  const ctx = await toApprovedReact();
+  const { session, secretCard, secretGroup } = ctx;
+  enterWalk(ctx);
+  const w = session.state.walk;
+  const endsAt = w.endsAt;
+  const at = w.stream.findIndex((it) => it.groupId === secretGroup.id);
+  session.moveTo(at);
+  session.hideCard(secretCard.id, true);
+  session.tick(); // a hidden card gets no time
+  assert.equal(w.index, at + 1);
+  session.undoWalkHide(secretCard.id);
+  assert.equal(w.index, at);
+  assert.equal(proj(session).walk.item.text, SECRET);
+  assert.equal(w.paused, false);
+  assert.ok(Number.isFinite(w.cardEndsAt), 'the card runs again');
+  assert.equal(w.endsAt, endsAt);
+  session.tick();
+  assert.equal(w.index, at, 'and stays: it is not hidden any more');
+  // A double-tapped Undo does nothing more.
+  session.undoWalkHide(secretCard.id);
+  assert.equal(w.index, at);
+  assert.equal(w.endsAt, endsAt);
+});
+
+test('Undo after a Hide that started a hold ends the hold: the card runs again, and the timer still holds before the unreviewed card', async () => {
+  const { session, clock } = await toWalk({ cards: 4, review: false });
+  const w = session.state.walk;
+  const endsAt = w.endsAt;
+  const cardsAt = (i) => session.findGroup(w.stream[i].groupId).group.cardIds;
+  session.moveCard(1, { from: 0 }); // card 1, marked reviewed; card 2 is not
+  const [id] = cardsAt(1);
+  session.hideCard(id, true);
+  session.tick();
+  assert.equal(w.held, true, 'held on the hidden card, before unreviewed card 2');
+  assert.equal(w.index, 1);
+  session.undoWalkHide(id);
+  assert.equal(w.index, 1);
+  assert.equal(w.held, false);
+  assert.equal(w.paused, false);
+  assert.equal(proj(session).walk.item.text, session.card(id).text);
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.held, true, 'card 2 still needs a review');
+  assert.equal(w.index, 1);
+  assert.equal(w.endsAt, endsAt);
+});
+
+test('Undo leaves the walk-through where it is when the facilitator went back before the hidden card', async () => {
+  const { session } = await toWalk({ cards: 4 });
+  const w = session.state.walk;
+  const cardsAt = (i) => session.findGroup(w.stream[i].groupId).group.cardIds;
+  session.moveCard(1, { from: 0 });
+  session.moveCard(1, { from: 1 }); // card 2
+  const [id] = cardsAt(2);
+  session.hideCard(id, true);
+  session.tick();
+  assert.equal(w.index, 3);
+  // Two quick Backs: past the hidden card, to card 1.
+  session.moveCard(-1, { from: 3 });
+  session.moveCard(-1, { from: 2 });
+  assert.equal(w.index, 1);
+  session.undoWalkHide(id);
+  assert.equal(w.index, 1);
+  assert.equal(session.card(id).hidden, false);
+});
+
+test('Undo in a group with another card still showing does not move the walk-through back', async () => {
+  let t = 1_000_000;
+  const session = new Session({
+    now: () => t,
+    // Cards 0 and 1 share a group; the rest have one each.
+    clusterCards: async (list) => ({ themes: [{ name: 'All', groups: [[list[0].id, list[1].id], ...list.slice(2).map((c) => [c.id])] }] }),
+    shredAnimationMs: 10,
+  });
+  session.advance(); // teaser to demo
+  session.startTalk();
+  session.advance(); // join
+  session.advance(); // submit
+  session.submitCards(A, ['card 0', 'card 1', 'card 2']);
+  session.submitCards(B, ['card 3']);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.reviewRest();
+  t += 15.5 * MIN;
+  session.advance(); // walk
+  const w = session.state.walk;
+  const endsAt = w.endsAt;
+  const at = w.stream.findIndex((it) => !it.overview && !it.last && session.findGroup(it.groupId).group.cardIds.length === 2);
+  assert.ok(at > 0);
+  session.moveTo(at);
+  const [first] = session.findGroup(w.stream[at].groupId).group.cardIds;
+  session.hideCard(first, true);
+  session.tick();
+  assert.equal(w.index, at, 'the other card still shows: no move');
+  t = w.cardEndsAt; // its share runs out as usual
+  session.tick();
+  assert.ok(w.index > at);
+  const index = w.index;
+  session.undoWalkHide(first);
+  assert.equal(session.card(first).hidden, false);
+  assert.equal(w.index, index, 'the hide never moved it, so the undo does not either');
+  assert.equal(w.endsAt, endsAt);
+});

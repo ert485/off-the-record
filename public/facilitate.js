@@ -33,7 +33,7 @@ const LABELS = {
 const FORWARD = {
   demo: 'Start the demo',
   join: 'Start',
-  submit: 'Open submissions',
+  submit: 'Start submissions timer',
   cluster: 'Group the cards',
   react: 'Start reactions',
   walk: 'Start the walk-through',
@@ -326,6 +326,49 @@ function cardRow(card) {
 
 function thoughtRow(t) {
   return itemRow(t, 'afterthought', modButton('Remove', () => act('removeAfterthought', { id: t.id })));
+}
+
+// The walk-through's Hide on the card on screen takes it off the projector at
+// once, and the walk-through moves on, so its Undo is offered where the card
+// was, for 20 seconds. Kept on this screen only: nothing reaches the
+// projector or the phones. Only the last Hide can be undone this way (the
+// card lists' Show still unhides any card).
+const UNDO_HIDE_MS = 20_000;
+let walkHidden = null; // { id, text, at, until, undone }
+
+function hideInWalk(card) {
+  // A second Hide within a second is the other half of a double tap, landing
+  // on the next card's Hide (same group, or the next item once the walk moves
+  // on): ignored, so it hides nothing more and the first keeps its Undo. A
+  // deliberate second Hide just waits a second.
+  if (walkHidden && !walkHidden.undone && Date.now() - walkHidden.at < 1000) return;
+  const at = Date.now();
+  walkHidden = { id: card.id, text: card.text, at, until: at + UNDO_HIDE_MS, undone: false };
+  setTimeout(render, UNDO_HIDE_MS + 50);
+  act('hideCard', { id: card.id, hidden: true });
+}
+
+// "Hidden: “…” Undo" while that card is hidden. Undo shows it again and, if
+// the walk-through has moved past it, goes back to it. The line then stays a
+// moment as plain text, so a double tap lands on nothing.
+function undoHideLine(v) {
+  const u = walkHidden;
+  if (!u || Date.now() > u.until) return '';
+  const card = v.cards?.find((c) => c.id === u.id);
+  if (!card || (!card.hidden && !u.undone)) return '';
+  const quote = `“${u.text.length > 60 ? `${u.text.slice(0, 59).trimEnd()}…` : u.text}”`;
+  if (u.undone) return h('div', { class: 'undo-hide row' }, h('span', { class: 'grow small dim' }, `Shown again: ${quote}`));
+  const undo = async () => {
+    const until = u.until;
+    Object.assign(u, { undone: true, until: Date.now() + 2000 });
+    setTimeout(render, 2050);
+    render();
+    if (!(await act('undoWalkHide', { id: u.id }))) {
+      Object.assign(u, { undone: false, until });
+      render();
+    }
+  };
+  return h('div', { class: 'undo-hide row' }, h('span', { class: 'grow small' }, `Hidden: ${quote}`), h('button', { class: 'small-btn', onclick: undo }, 'Undo'));
 }
 
 // "Mark the rest reviewed", at the top of the lists: one tap for every card
@@ -641,7 +684,8 @@ const PHASES = {
     const posInfo = info('walk-pos', 'Where you are: the themes overview first, then the cards in order of reactions, then a last slide: the room’s afterthoughts, or, with none, an invitation to speak.');
     const timeInfo = info('walk-time', 'How long this card has been on screen. The projector shows the time left in the whole walk-through instead.');
     const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (the last slide keeps 20 seconds, or 10 seconds for each page of 4 thoughts, up to a minute). It’s a rough average, not a limit: spend longer where the room wants to.');
-    const nextIsLast = !lastSlide && w.index === w.total - 2;
+    // What the room sees next is the last slide: no card before it, or only hidden ones (passed over).
+    const nextIsLast = !lastSlide && w.stream.slice(w.index + 1, -1).every((s) => s.text == null);
     const showLeft = !lastSlide && !w.done && w.cardsLeft !== null;
     // Held before an item nobody has reviewed: its cards (or the thoughts), to check here.
     const holdItem = w.held ? w.stream[w.holdTo] : null;
@@ -665,8 +709,9 @@ const PHASES = {
           h('button', { disabled: w.index === 0, onclick: () => act('prevCard', { from: w.index }) }, w.index === 1 ? '◀ Back to the themes overview' : '◀ Back one card'),
           // On the last slide, Next is the finale, in one tap (the server ignores
           // a tap that is the second half of a double-tapped Next), marked as the
-          // prompt once the room is asked to move on.
-          h('button', { class: `primary${lastSlide && v.move ? ' prompt' : ''}`, onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : w.index === 0 ? 'First card ▶' : lastSlide ? `${v.move ? v.move.label : FORWARD.finale} ▶` : 'Next card ▶')),
+          // prompt once the room is asked to move on. Before the last slide it
+          // says so: the thoughts slide isn't a card.
+          h('button', { class: `primary${lastSlide && v.move ? ' prompt' : ''}`, onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : lastSlide ? `${v.move ? v.move.label : FORWARD.finale} ▶` : nextIsLast ? 'Last slide ▶' : w.index === 0 ? 'First card ▶' : 'Next card ▶')),
       ],
       now: now(
         overview ? 'Themes' : lastSlide ? 'Last slide' : `Card ${w.index} of ${cards}`,
@@ -694,12 +739,14 @@ const PHASES = {
                 item?.haiku ? h('div', { class: 'dim small' }, item.haiku) : '',
                 h('div', { class: 'row', style: { alignItems: 'flex-start' } },
                   h('div', { class: 'current grow' }, item?.hidden ? '(hidden)' : (item?.text ?? 'No cards')),
-                  shown ? modButton('Hide', () => act('hideCard', { id: shown.id, hidden: true })) : ''),
+                  shown ? modButton('Hide', () => hideInWalk(shown)) : ''),
                 item?.similar || item?.moreInTheme
                   ? h('div', { class: 'dim small' }, [item.similar && `+${item.similar} similar`, item.moreInTheme && `+${item.moreInTheme} more like this`].filter(Boolean).join(' · '))
                   : '',
                 mixLine(item?.mix),
               ],
+        // Below the card, so the Hide button above it never moves under a finger.
+        undoHideLine(v),
         lastSlide ? '' : h('div', { class: 'prompts' }, h('span', { class: 'label' }, 'If it’s quiet'), prompts.map((p) => h('div', {}, p))),
         // In the projector's order (oldest first, as its pages turn), not the review order.
         lastSlide ? afterthoughtList('On the projector now, 4 to a page', [...w.afterthoughts].sort((a, b) => a.id - b.id)) : '',
