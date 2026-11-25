@@ -1,6 +1,8 @@
 // Shared by the phones and the server.
 
 // The 16 preset reactions. Any emoji from the phone keyboard is also allowed.
+// Only the first two rows carry a label: those read the same for everyone.
+// The rest (🔥 can mean many things) are left open on purpose.
 export const PRESETS = [
   { e: '🙋', label: 'me too' },
   { e: '🫂', label: 'sending care' },
@@ -10,14 +12,14 @@ export const PRESETS = [
   { e: '😤', label: 'frustrated' },
   { e: '😰', label: 'anxious' },
   { e: '🎉', label: 'glad for you' },
-  { e: '🔥', label: 'this is fine' },
-  { e: '🤯', label: 'mind blown' },
-  { e: '🫠', label: 'melting' },
-  { e: '😮‍💨', label: 'relief' },
-  { e: '💪', label: 'proud of you' },
-  { e: '❤️', label: 'love this' },
-  { e: '🙏', label: 'grateful' },
-  { e: '👀', label: 'noticed that' },
+  { e: '🔥' },
+  { e: '🤯' },
+  { e: '🫠' },
+  { e: '😮‍💨' },
+  { e: '💪' },
+  { e: '❤️' },
+  { e: '🙏' },
+  { e: '👀' },
 ];
 
 const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });

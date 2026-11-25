@@ -745,7 +745,7 @@ function reactScreen() {
       'div',
       { class: 'emoji-grid' },
       PRESETS.map(({ e, label }) => {
-        const b = h('button', { class: selected.has(e) ? 'on' : '', 'aria-pressed': String(selected.has(e)) }, h('span', { class: 'e' }, e), h('span', { class: 'l' }, label));
+        const b = h('button', { class: selected.has(e) ? 'on' : '', 'aria-pressed': String(selected.has(e)) }, h('span', { class: 'e' }, e), label ? h('span', { class: 'l' }, label) : null);
         b.addEventListener('click', () => {
           if (selected.has(e)) selected.delete(e);
           else if (selected.size < MAX_EMOJIS) selected.add(e);

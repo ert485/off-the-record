@@ -278,7 +278,7 @@ function demoScreen() {
   // comment box: a thought comes at the end, not on each card.
   function reactStep(d, animate) {
     const r = d.react;
-    const buttons = PRESETS.map(({ e, label }) => h('button', {}, h('span', { class: 'e' }, e), h('span', { class: 'l' }, label)));
+    const buttons = PRESETS.map(({ e, label }) => h('button', {}, h('span', { class: 'e' }, e), label ? h('span', { class: 'l' }, label) : null));
     const taps = r.presets.map((e) => buttons[PRESETS.findIndex((p) => p.e === e)]).filter(Boolean);
     const chips = h('div', { class: 'row wrap' });
     const own = h('button', { class: 'chip on' }, r.own);
