@@ -641,7 +641,8 @@ const PHASES = {
     const posInfo = info('walk-pos', 'Where you are: the themes overview first, then the cards in order of reactions, then a last slide: the room’s afterthoughts, or, with none, an invitation to speak.');
     const timeInfo = info('walk-time', 'How long this card has been on screen. The projector shows the time left in the whole walk-through instead.');
     const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (the last slide keeps 20 seconds, or 10 seconds for each page of 4 thoughts, up to a minute). It’s a rough average, not a limit: spend longer where the room wants to.');
-    const nextIsLast = !lastSlide && w.index === w.total - 2;
+    // What the room sees next is the last slide: no card before it, or only hidden ones (passed over).
+    const nextIsLast = !lastSlide && w.stream.slice(w.index + 1, -1).every((s) => s.text == null);
     const showLeft = !lastSlide && !w.done && w.cardsLeft !== null;
     // Held before an item nobody has reviewed: its cards (or the thoughts), to check here.
     const holdItem = w.held ? w.stream[w.holdTo] : null;
@@ -665,8 +666,9 @@ const PHASES = {
           h('button', { disabled: w.index === 0, onclick: () => act('prevCard', { from: w.index }) }, w.index === 1 ? '◀ Back to the themes overview' : '◀ Back one card'),
           // On the last slide, Next is the finale, in one tap (the server ignores
           // a tap that is the second half of a double-tapped Next), marked as the
-          // prompt once the room is asked to move on.
-          h('button', { class: `primary${lastSlide && v.move ? ' prompt' : ''}`, onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : w.index === 0 ? 'First card ▶' : lastSlide ? `${v.move ? v.move.label : FORWARD.finale} ▶` : 'Next card ▶')),
+          // prompt once the room is asked to move on. Before the last slide it
+          // says so: the thoughts slide isn't a card.
+          h('button', { class: `primary${lastSlide && v.move ? ' prompt' : ''}`, onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : lastSlide ? `${v.move ? v.move.label : FORWARD.finale} ▶` : nextIsLast ? 'Last slide ▶' : w.index === 0 ? 'First card ▶' : 'Next card ▶')),
       ],
       now: now(
         overview ? 'Themes' : lastSlide ? 'Last slide' : `Card ${w.index} of ${cards}`,
