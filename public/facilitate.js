@@ -33,7 +33,7 @@ const LABELS = {
 const FORWARD = {
   demo: 'Start the demo',
   join: 'Start',
-  submit: 'Open submissions',
+  submit: 'Start submissions timer',
   cluster: 'Group the cards',
   react: 'Start reactions',
   walk: 'Start the walk-through',
