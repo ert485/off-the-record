@@ -22,16 +22,15 @@ The feedback, in short:
 - **Custom emojis exist.** iPhones make their own (Genmoji); they arrive as images, not text.
 - **The demo example comment could read as cruel.** A cute put-down still makes one person feel bad, even anonymously.
 - **Let the room's reactions set the pace,** not buttons on phones.
-- **Post the demo as a trailer** on the afternoon of the talk, as a reminder and a nudge.
 - **No regrets on sending** (the facilitator's own note). Sharing a card you then wish you hadn't shouldn't be final while the window is still open.
 
 ## Priority and cut line
 
 The talk is the evening of Wednesday, November 25. Work in this order and stop wherever time runs out; every task leaves the app working.
 
-- **Before the trailer (about 1 pm Nov 25):** Task 1 (16 presets), Task 2 (teaser and demo), Task 3 (the spoken script, docs only), Task 4 (record the trailer).
-- **Before the talk:** Task 5 (no stay/go back), Task 6 (hidden stays hidden), Task 7 (emojis only, one thought at the end), Task 8 (deck sized to the time), Task 9 (count of people writing), Task 10 (writing opens at Join), Task 11 (take back or swap a shared card), Task 12 (harshness check and reviewed cards).
-- **Only if there's time:** Task 13 (credits roll), Task 14 (custom image emojis, spike first).
+- **First:** Task 1 (16 presets), Task 2 (teaser and demo), Task 3 (the spoken script, docs only).
+- **Before the talk:** Task 4 (no stay/go back), Task 5 (hidden stays hidden), Task 6 (emojis only, one thought at the end), Task 7 (deck sized to the time), Task 8 (count of people writing), Task 9 (writing opens at Join), Task 10 (take back or swap a shared card), Task 11 (harshness check and reviewed cards).
+- **Only if there's time:** Task 12 (credits roll), Task 13 (custom image emojis, spike first).
 
 ## Global Constraints
 
@@ -48,16 +47,16 @@ The Nov 22 plan's Global Constraints all still apply. In short:
 
 Also:
 
-- The server never stores which cards a phone saw, reacted to or wrote. It keeps counts against a phone's random id, as today. The writing count (Task 9) is in memory only and is never written to SQLite.
+- The server never stores which cards a phone saw, reacted to or wrote. It keeps counts against a phone's random id, as today. The writing count (Task 8) is in memory only and is never written to SQLite.
 - Anything a phone sends to the server is shredded with the rest. `test/shred.test.js` covers every new kind of data: afterthoughts, harshness levels and the writing count.
 
 ## Review Focus
 
-1. **Someone mid-sentence when the facilitator moves from Join to Submit.** Expected: the keyboard stays up, the text stays, and there's no flash or buzz. Pinned in Task 10.
-2. **An afterthought typed but not sent when the room moves on.** Expected: it isn't sent automatically. The facilitator saw "N still writing a thought" before moving on, and the draft is wiped with the notes. Pinned in Tasks 7 and 9.
-3. **A card hidden after its theme was approved, while it is the next card and the timer is about to move.** Expected: it is never projected and never reaches a phone. Pinned in Task 6.
-4. **No API key, or the harshness check fails.** Expected: the walk-through never stalls. Unchecked cards can be marked reviewed in one tap, and the hold only stops on cards nobody has reviewed. Pinned in Task 12.
-5. **Fewer cards than the deck size, or a card hidden mid-reaction.** Expected: everyone sees every card. The count never reads "Card 9 of 8", and nobody gets stuck. Pinned in Task 8.
+1. **Someone mid-sentence when the facilitator moves from Join to Submit.** Expected: the keyboard stays up, the text stays, and there's no flash or buzz. Pinned in Task 9.
+2. **An afterthought typed but not sent when the room moves on.** Expected: it isn't sent automatically. The facilitator saw "N still writing a thought" before moving on, and the draft is wiped with the notes. Pinned in Tasks 6 and 8.
+3. **A card hidden after its theme was approved, while it is the next card and the timer is about to move.** Expected: it is never projected and never reaches a phone. Pinned in Task 5.
+4. **No API key, or the harshness check fails.** Expected: the walk-through never stalls. Unchecked cards can be marked reviewed in one tap, and the hold only stops on cards nobody has reviewed. Pinned in Task 11.
+5. **Fewer cards than the deck size, or a card hidden mid-reaction.** Expected: everyone sees every card. The count never reads "Card 9 of 8", and nobody gets stuck. Pinned in Task 7.
 
 ---
 
@@ -68,7 +67,7 @@ Also:
 **Interfaces (produces):**
 - `PRESETS` has 16 entries: the current 8 in their current order, then 8 more. Proposed (the facilitator confirms the list and labels before this ships): 🔥 this is fine, 🤯 mind blown, 🫠 melting, 😮‍💨 relief, 💪 proud of you, ❤️ love this, 🙏 grateful, 👀 noticed that. 🔥 covers the "everything's on fire, and that's fine" feeling of the year.
 - `LIMITS.emojisPerCard = 22`: 16 presets plus 6 of your own. The error reads `Up to 22 emojis on a card: remove ${n - 22}`. Phones use `MAX_EMOJIS = 22`.
-- The phone grid stays 4 columns (now 4 rows). Once the comment box is gone (Task 7), the card, grid, own-emoji row and buttons fit a 375×667 screen without scrolling. Until then, scrolling is fine.
+- The phone grid stays 4 columns (now 4 rows). Once the comment box is gone (Task 6), the card, grid, own-emoji row and buttons fit a 375×667 screen without scrolling. Until then, scrolling is fine.
 
 - [ ] **Step 1: Failing tests:** `the emoji limit is 22: 16 presets plus 6 of your own`; `the demo may tap any of the 16 presets` (a demo file with 🔥 in `react.presets` validates).
 - [ ] **Step 2: Run, see them fail.** `npm test`
@@ -110,7 +109,7 @@ What each step shows:
 - [ ] **Step 4: Run.** `npm test` passes.
 - [ ] **Step 5: Check headlessly** at 1280×720: the teaser with a struck word, and one full loop, with screenshots at the start and end of each step. Expected: step 1 starts empty, step 3's tab and haiku come after the card, and step 2 never says "share 2 more".
 - [ ] **Step 6: Spec, commit** "Teaser can strike a word; the demo shows writing first, the grouping happen, and no comments".
-- [ ] **Step 7: The facilitator's `demo/local.json`, in the main checkout, never committed.** In the teaser, strike "shred it all" and follow it with "let it all go: nothing is kept" (the facilitator has the final say on this copy). Mark up to three notes to share. Use 🔥 among the tapped presets and in the reveal mix. Remove the old comment fields, so the reveal no longer carries a comment that reads as a dig at the card's writer. Restart the local server and check that it doesn't print `demo: local file invalid`.
+- [ ] **Step 7: The facilitator's `demo/local.json`, in the main checkout, never committed.** In the teaser, strike "shred it all" and follow it with "release it into the wind" (the facilitator's phrase; the line must stay within 160 characters, markup included, so "nothing is kept" is left to the Join screen). Mark up to three notes to share. Use 🔥 among the tapped presets and in the reveal mix. Remove the old comment fields, so the reveal no longer carries a comment that reads as a dig at the card's writer. Restart the local server and check that it doesn't print `demo: local file invalid`.
 
 ---
 
@@ -119,32 +118,24 @@ What each step shows:
 **Files:** spec ("Facilitator cues", the timing table's Intro row, "Trust disclosure").
 
 - [ ] **Step 1:** Rewrite "Facilitator cues":
-  - **Intro, spoken over the teaser and demo, no slides.** One or two sentences on why: 2026 was a weird year, and this is a way to harvest the weirdness and turn it into some community bonding. Then "I've run this with coworkers, friends and family; it works in any room", and "if you need help, stop me any time." Nothing more.
+  - **Intro, spoken over the teaser and demo, no slides, under a minute.**
+    - This isn't a typical dev talk: it's an experiment, and the app does most of the work. Stop me any time if how it works is unclear.
+    - Why: 2026 was a weird year. Harvest the weirdness (good, bad and strange) and turn it into some community bonding.
+    - Make it a safe place for genuine thoughts.
+    - Point at the struck "shred" on the teaser. It doesn't mean tearing anything apart; it means letting it go, released into the wind. Nothing feeds a backlog or an action item due in January.
+    - Don't steer the tone toward negative feelings. Good, weird and heavy are all welcome: framing before submissions biases what people write.
+  - **At the closing:** "I've run this with coworkers and with my family, and the best part each time was the conversations after." Then: "If a card hit you, find someone at the break and tell them 'that was me too.'"
   - **Don't ask "who's done a retro?"** It makes people expect the retro their own team runs.
   - **Say up front that it may go quiet** while people write and read, and that this is expected.
   - **Don't read or explain the slides.** When the room laughs or gasps, acknowledge it in a word and move on. Speak mainly to keep things moving, or to wrap up a conversation that's running long.
   - **Don't warn people off inappropriate emojis.** It invites them. If one appears, skip past it.
-  - **Remove the cue about asking to stay or go back** (phones lose those buttons in Task 5, no stay/go back).
+  - **Remove the cue about asking to stay or go back** (phones lose those buttons in Task 4, no stay/go back).
 - [ ] **Step 2:** Timing table: change the Intro row to "Spoken over the teaser and demo".
 - [ ] **Step 3: Commit** "Spec: say less from the front".
 
 ---
 
-### Task 4: Record the trailer
-
-Not committed. The output goes to the facilitator.
-
-- [ ] **Step 1:** In a scratch folder, write a `playwright-core` script that uses the installed Chrome:
-  - Start the server locally with the facilitator's `demo/local.json`, on the teaser.
-  - Open the projector at 1280×720 with `recordVideo`.
-  - Hold the teaser for 6 s, then post `advance { from: 'teaser' }` as the facilitator.
-  - Record one full loop (about 70 s), then stop.
-- [ ] **Step 2:** Convert the recording to MP4 with `ffmpeg` if it's installed (Slack plays MP4 inline). Otherwise keep the WebM.
-- [ ] **Step 3:** Hand the file's path to the facilitator, who posts it in the community Slack's dev channel on the afternoon of Nov 25, after 1 pm. Not earlier: a reminder close to the event works better than one people defer.
-
----
-
-### Task 5: No stay or go back on phones
+### Task 4: No stay or go back on phones
 
 **Files:** `public/phone.js` (`walkScreen`), `public/phone.css` (`.signals`), `server/session.js` (`signal`, `walk.signals`, the views), `server/index.js` (`signal` action), `public/facilitate.js` (the counts, and the "anyone can ask to stay or go back" line at `public/facilitate.js:604`), `public/projector.js` (the counts), `test/walk.test.js`, `test/session.test.js`, spec (Session flow, step 5, Design rules, view table, Trust disclosure's last line).
 
@@ -159,7 +150,7 @@ Not committed. The output goes to the facilitator.
 
 ---
 
-### Task 6: Hidden stays hidden (tests first; fix whatever fails)
+### Task 5: Hidden stays hidden (tests first; fix whatever fails)
 
 **Files:** `test/walk.test.js`, `test/session.test.js`, and `server/session.js` only if a test fails.
 
@@ -173,7 +164,7 @@ Not committed. The output goes to the facilitator.
 
 ---
 
-### Task 7: Emojis only on each card; one thought at the end of the deck
+### Task 6: Emojis only on each card; one thought at the end of the deck
 
 **Files:** `server/session.js`, `server/flow.js`, `server/phases.js`, `server/index.js`, `public/phone.js`, `public/projector.js`, `public/projector.css`, `public/facilitate.js`, `test/session.test.js`, `test/walk.test.js`, `test/flow.test.js`, `test/shred.test.js`, spec (Session flow, steps 4 and 5, Design rules, view table, Trust disclosure, Privacy).
 
@@ -220,7 +211,7 @@ Not committed. The output goes to the facilitator.
 
 ---
 
-### Task 8: A deck sized to the time, and earlier warnings
+### Task 7: A deck sized to the time, and earlier warnings
 
 **Files:** `server/flow.js`, `server/phases.js`, `server/session.js`, `public/phone.js`, `public/facilitate.js`, `test/flow.test.js`, `test/session.test.js`, spec (Session flow, step 4; Clustering and the stream).
 
@@ -246,7 +237,7 @@ Not committed. The output goes to the facilitator.
 
 ---
 
-### Task 9: A quiet count of people writing
+### Task 8: A quiet count of people writing
 
 **Files:** `server/session.js`, `server/index.js`, `public/phone.js`, `public/projector.js`, `public/projector.css`, `public/facilitate.js`, `test/session.test.js`, `test/shred.test.js`, spec (Session flow, steps 2 and 4; Privacy and the shred; view table).
 
@@ -276,7 +267,7 @@ Not committed. The output goes to the facilitator.
 
 ---
 
-### Task 10: Writing opens at Join
+### Task 9: Writing opens at Join
 
 The facilitator's note asks that people can start writing as soon as everyone sits down, without waiting for the QR code to go. Writing still doesn't open before the talk starts (during the demo loop), so it's clearly something each person does in the room. **Assumption, to confirm:** sharing opens at Join too, and the 5-minute submissions timer still starts when the facilitator moves to Submit, so early joiners just get extra time.
 
@@ -295,7 +286,7 @@ The facilitator's note asks that people can start writing as soon as everyone si
 
 ---
 
-### Task 11: Take back or swap a shared card while submissions are open
+### Task 10: Take back or swap a shared card while submissions are open
 
 Your shared cards are your picks, up to 3 at a time, until the room moves on to grouping. You can take one back, or swap it for another note. A taken-back card is deleted from the server, and its text returns to your private notes, so nothing you wrote is lost.
 
@@ -311,7 +302,7 @@ Swaps are explicit, never automatic: to share a fourth note, you uncheck one of 
   - `client.cards − withdraw.length + texts.length` must stay at most 3, or it fails with `Up to 3 cards at a time: take one back first`.
   - A receipt that isn't live fails with `Nothing to take back`, and nothing changes.
 - `s.cardReceipts: { [receipt]: cardId }`. Receipts are random and never tied to a phone. The server only learns that the phone sending a receipt holds it, at the moment it sends it, and never stores that. Receipts never appear in any view.
-- `removeCard(id)`: deletes the card (not just hiding it) and prunes its id from every group. A group left empty goes, and so does a theme left with no groups. Its harshness entry (Task 12, the harshness check) goes with it. `client.cards` goes down by the number taken back.
+- `removeCard(id)`: deletes the card (not just hiding it) and prunes its id from every group. A group left empty goes, and so does a theme left with no groups. Its harshness entry (Task 11, the harshness check) goes with it. `client.cards` goes down by the number taken back.
 - If the AI grouping or the late-card quick call is running when a card is taken back, `applyClusters` and `placeLate` drop any id whose card no longer exists, so a taken-back card never comes back in their result.
 - Phone:
   - The "Already shared" list becomes `sent: [{ text, receipt }]` in `sessionStorage`. Old string entries can't be taken back and show without the button.
@@ -343,7 +334,7 @@ Swaps are explicit, never automatic: to share a fourth note, you uncheck one of 
 
 ---
 
-### Task 12: A harshness check, reviewed cards, and a hold before unreviewed ones
+### Task 11: A harshness check, reviewed cards, and a hold before unreviewed ones
 
 **Files:** `server/moderation.js` (new), `server/session.js`, `server/index.js`, `public/facilitate.js`, `public/facilitate.css`, `public/projector.js` (the trust fine print), `test/moderation.test.js` (new), `test/session.test.js`, `test/walk.test.js`, `test/shred.test.js`, spec (Facilitation logic; Privacy, the bullet on Anthropic; Trust disclosure; view table).
 
@@ -381,7 +372,7 @@ Swaps are explicit, never automatic: to share a fourth note, you uncheck one of 
 
 ---
 
-### Task 13 (only if there's time): Credits roll on the closing screen
+### Task 12 (only if there's time): Credits roll on the closing screen
 
 The thanks and credits play while the feedback QR code shows. The photos are taken just before the event, so they must never reach the server or a public page.
 
@@ -398,7 +389,7 @@ The thanks and credits play while the feedback QR code shows. The photos are tak
 
 ---
 
-### Task 14 (only if there's time): Custom image emojis, spike first
+### Task 13 (only if there's time): Custom image emojis, spike first
 
 - [ ] **Step 1: Spike, at most 30 minutes, on real phones.**
   - On an iPhone (iOS 18.2 or later, Safari), insert a Genmoji into (a) the current `<input>` and (b) a `contenteditable` div. Record what arrives: an `<img>` or `<picture>` in the DOM, a `paste` event with an image `File`, or nothing.
@@ -419,7 +410,7 @@ The thanks and credits play while the feedback QR code shows. The photos are tak
 
 - **Grouping the end-of-deck thoughts with the AI** (suggested in the feedback). It's worth trying, but it adds another AI call while the room waits. Show them in pages for now; it's an idea for later.
 - **Suggesting one person's custom emoji to everyone.** The 16 presets and each phone's own recent emojis are enough for now.
-- **A shred preview in the demo.** The shred is the ending's surprise, and the teaser's "let it all go: nothing is kept" sets the tone without spoiling it.
+- **A shred preview in the demo.** The shred is the ending's surprise, and the teaser's struck "shred" and "release it into the wind" set the tone without spoiling it.
 - **A private page where chosen people add to the credits.** It would mean storing uploads on the server, which "nothing is kept" doesn't allow without its own design. It needs a separate plan.
 
 ## Before the talk (not code)
@@ -428,4 +419,3 @@ The thanks and credits play while the feedback QR code shows. The photos are tak
 - [ ] Rewatch the recording of the practice run with the new flow in mind.
 - [ ] A solo run on two phones with the new flow (writing at Join, taking back and swapping a card, emojis only, a thought at the end, the last slide, the hold) before redeploying.
 - [ ] Redeploy with `deploy/deploy.sh <ip>` once the live server is on the teaser (check the projector stream's `phase` first). Confirm the server log has no `demo: local file invalid`.
-- [ ] Post the trailer (Task 4) after 1 pm on Nov 25.
