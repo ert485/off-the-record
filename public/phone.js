@@ -589,7 +589,7 @@ function reactScreen() {
   // The end of the deck: the first card in it not yet shown (a card reacted
   // to counts as shown), and whether "That was every card" is true.
   const deckState = () => deckEnd(order(), groups.length, new Set([...seen, ...Object.keys(mine).map(Number)]));
-  const askCopy = (every) => (every ? 'That was every card. Anything new after seeing them all?' : 'That was your deck. Anything new after seeing it?');
+  const askCopy = (every) => (every ? 'That was every card. Any new thoughts after seeing them all?' : 'That was your deck. Any new thoughts after seeing it?');
   const waitCopy = (every) => `${every ? 'That was every card' : 'That was your deck'}. Thank you. Waiting for everyone else to finish.`;
 
   function textFor(group) {
