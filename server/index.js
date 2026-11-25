@@ -13,6 +13,7 @@ import { Session, ActionError } from './session.js';
 import { openStore } from './db.js';
 import { createClusterer, createPlacer } from './cluster.js';
 import { createNudgeTagger } from './nudges.js';
+import { createHarshnessCheck } from './moderation.js';
 import { loadDemo } from './demo.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -40,6 +41,8 @@ const session = new Session({
   placeLateCards: createPlacer(),
   talkMinutes: Number(process.env.TALK_MINUTES) || undefined,
   tagCards: createNudgeTagger(),
+  // Null without an API key: nothing is checked, and every card reads "not checked".
+  checkHarshness: createHarshnessCheck(),
   demo: loadDemo(join(ROOT, 'demo')),
   onChange: () => {
     store.save(session.state);
@@ -143,6 +146,8 @@ const FACILITATOR_ACTIONS = {
   },
   hideCard: (b) => session.hideCard(b.id, b.hidden),
   removeAfterthought: (b) => session.removeAfterthought(b.id),
+  review: (b) => session.review(b.kind, b.id, b.on),
+  reviewRest: () => session.reviewRest(),
 };
 
 async function readJson(req) {

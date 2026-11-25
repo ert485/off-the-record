@@ -1,7 +1,7 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
 import { randomBytes, randomInt } from 'node:crypto';
-import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS, WRITING_WINDOW_MS } from './phases.js';
+import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS, WRITING_WINDOW_MS, HARSHNESS_QUIET_MS } from './phases.js';
 import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP, lastSlideMs, deckTimeSize } from './flow.js';
 import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
@@ -76,10 +76,14 @@ export function freshState(now, talkMinutes = TALK_MINUTES) {
     // Receipt -> card id, so a phone can take back a card it shared while
     // sharing is open. Random, never tied to a phone, never in any view.
     cardReceipts: {},
-    walk: { stream: [], index: 0, cardStartedAt: null, cardEndsAt: null, endsAt: null, lastMs: LAST_SLIDE_MS, paused: false, done: false },
+    // held: the timer stopped before an item nobody has reviewed (a pause);
+    // holdTo: the stream index it was moving to.
+    walk: { stream: [], index: 0, cardStartedAt: null, cardEndsAt: null, endsAt: null, lastMs: LAST_SLIDE_MS, paused: false, done: false, held: false, holdTo: null },
     // The one thought each phone may add at the end of its deck, shown on the
     // last slide. { id, text, r }: no phone id. r is its receipt, so sending
-    // again with it replaces the text.
+    // again with it replaces the text. Cards and thoughts also carry, for the
+    // facilitator only, harsh ({ level, reason } from the harshness check) and
+    // reviewed (the facilitator has looked at it).
     afterthoughts: [],
     // Receipts whose thought the facilitator removed.
     removedAfterthoughts: {},
@@ -160,6 +164,12 @@ function fallbackClusters(ids, error) {
   return { themes: normalizeClusters([], ids).map((t) => ({ ...t, name: '' })), status: 'failed', error, local: true };
 }
 
+// How harsh an item reads, for sorting: harsh, edgy, not checked, fine.
+const harshRank = (item) => (item.harsh ? [0, 2, 3][item.harsh.level] : 1);
+// Unreviewed first, then harshest first, then in id order.
+const byReview = (a, b) => (a.reviewed ? 1 : 0) - (b.reviewed ? 1 : 0) || harshRank(b) - harshRank(a) || a.id - b.id;
+const reviewFields = (item) => ({ harsh: item.harsh ?? null, reviewed: !!item.reviewed });
+
 // The receipt map in receipt order, so the saved state never shows the order
 // cards arrived in, nor which ones a phone sent together (the same reason
 // cards are kept in id order). A receipt is 16 hex characters: never an
@@ -175,6 +185,10 @@ export class Session {
     clusterCards,
     placeLateCards = localPlacer,
     tagCards = null,
+    // createHarshnessCheck() in moderation.js, or null (no API key): nothing is checked.
+    checkHarshness = null,
+    // Fixed labels only, never card or thought text.
+    log = (line) => console.error(line),
     demo = null,
     nudgeQuietMs = 10_000,
     talkMinutes = TALK_MINUTES,
@@ -185,6 +199,13 @@ export class Session {
   }) {
     this.now = now;
     this.tagCards = tagCards;
+    this.checkHarshness = checkHarshness;
+    this.log = log;
+    // The harshness check: when it is due (once things are quiet), whether a
+    // call is in flight, and a run number so a result after the shred is ignored.
+    this.checkDueAt = null;
+    this.checking = false;
+    this.checkRun = 0;
     // The prepared demo content (never stored in the state, never sent to phones).
     this.demo = demo;
     this.nudgeQuietMs = nudgeQuietMs;
@@ -222,7 +243,11 @@ export class Session {
       this.state.removedAfterthoughts ??= {};
       // Saved before shared cards could be taken back: those have no receipt.
       this.state.cardReceipts = byReceipt(this.state.cardReceipts ?? {});
-      if (this.state.walk) this.state.walk.lastMs ??= LAST_SLIDE_MS;
+      if (this.state.walk) {
+        this.state.walk.lastMs ??= LAST_SLIDE_MS;
+        this.state.walk.held ??= false;
+        this.state.walk.holdTo ??= null;
+      }
       for (const client of Object.values(this.state.clients ?? {})) client.afterthoughts ??= 0;
       // Saved before decks had a size: reactions have started, so size it now.
       if (this.state.deckSize === undefined) {
@@ -259,6 +284,8 @@ export class Session {
         if (this.state.phase === 'cluster') this.continueGrouping();
       }
     }
+    // A restart with cards or thoughts still unchecked: check them soon.
+    if (!this.shredded && this.uncheckedItems().length) this.scheduleCheck();
   }
 
   get s() {
@@ -409,7 +436,7 @@ export class Session {
     if (to === 'walk' && direction === 'forward') this.buildWalk();
     // Coming back to the walk-through holds the card until the facilitator resumes.
     if (to === 'walk' && direction === 'back') {
-      Object.assign(this.s.walk, { paused: true, done: false, cardStartedAt: now, cardEndsAt: null });
+      Object.assign(this.s.walk, { paused: true, done: false, held: false, holdTo: null, cardStartedAt: now, cardEndsAt: null });
     }
   }
 
@@ -546,6 +573,7 @@ export class Session {
     while (this.card(id));
     this.s.cards.push({ id, text, hidden: false });
     this.s.cards.sort((a, b) => a.id - b.id);
+    this.scheduleCheck();
     return id;
   }
 
@@ -559,6 +587,8 @@ export class Session {
     if (!card.hidden && !SHARING_PHASES.includes(this.s.phase) && this.s.themes.length && !this.grouped().has(id)) {
       this.otherTheme().groups.push({ id: this.newId(), cardIds: [id] });
     }
+    // Shown again: check it, if it never was.
+    if (!card.hidden && !card.harsh) this.scheduleCheck();
     this.changed();
     if (this.s.phase === 'submit') this.scheduleNudge();
   }
@@ -916,7 +946,11 @@ export class Session {
       receipt = randomBytes(8).toString('hex');
       this.s.receipts[receipt] = AFTERTHOUGHT;
     }
-    if (clean && !this.s.removedAfterthoughts[receipt]) this.s.afterthoughts.push({ id: keepId ?? this.newId(), text: clean, r: receipt });
+    // A new or changed thought starts unchecked and unreviewed.
+    if (clean && !this.s.removedAfterthoughts[receipt]) {
+      this.s.afterthoughts.push({ id: keepId ?? this.newId(), text: clean, r: receipt });
+      this.scheduleCheck();
+    }
     this.refreshLastMs();
     this.changed();
     return { receipt };
@@ -937,9 +971,93 @@ export class Session {
     return this.s.afterthoughts.map(({ id, text }) => ({ id, text })).sort((a, b) => a.id - b.id);
   }
 
+  // The facilitator's list: with each thought's check and reviewed mark,
+  // unreviewed first, then harshest first.
+  afterthoughtReviewList() {
+    return this.s.afterthoughts.map((t) => ({ id: t.id, text: t.text, ...reviewFields(t) })).sort(byReview);
+  }
+
   reactDone(cid) {
     if (this.s.phase !== 'react') fail('Reactions are closed');
     this.client(cid).reactDone = true;
+    this.changed();
+  }
+
+  // ---- the harshness check and reviewed marks ------------------------------
+  //
+  // After each new card or thought, once there's been HARSHNESS_QUIET_MS with
+  // nothing new, every unchecked visible card and thought goes to the check in
+  // one call. A failed check leaves them unchecked and blocks nothing. The
+  // facilitator marks items reviewed; the walk-through holds before an item
+  // nobody has reviewed (see tickWalk). Hidden cards are never sent and never
+  // need review.
+
+  scheduleCheck() {
+    if (!this.checkHarshness || this.shredded) return;
+    this.checkDueAt = this.now() + HARSHNESS_QUIET_MS;
+  }
+
+  // Visible cards (in id order) then thoughts (oldest first) with no answer
+  // yet, each with a key for this call: cards and thoughts are numbered apart,
+  // so their ids could clash.
+  uncheckedItems() {
+    const cards = this.s.cards.filter((c) => !c.hidden && !c.harsh).map((c) => ({ kind: 'card', id: c.id, text: c.text }));
+    const thoughts = (this.s.afterthoughts ?? []).filter((t) => !t.harsh).sort((a, b) => a.id - b.id).map((t) => ({ kind: 'afterthought', id: t.id, text: t.text }));
+    return [...cards, ...thoughts].map((item, i) => ({ ...item, key: i + 1 }));
+  }
+
+  tickCheck() {
+    if (this.checkDueAt === null || this.checking || this.now() < this.checkDueAt) return;
+    this.checkDueAt = null;
+    const items = this.uncheckedItems();
+    if (!items.length) return;
+    const run = ++this.checkRun;
+    this.checking = true;
+    Promise.resolve()
+      .then(() => this.checkHarshness(items.map(({ key, text }) => ({ id: key, text }))))
+      .then((answers) => {
+        if (!(answers instanceof Map)) throw new Error('No answers');
+        this.applyCheck(run, items, answers);
+      })
+      .catch(() => this.log('moderation: check failed'))
+      .finally(() => {
+        if (run === this.checkRun) this.checking = false;
+      });
+  }
+
+  // Stores each answer on its item, if the item is still there with the same
+  // text (a thought changed while the call ran is checked again later).
+  applyCheck(run, items, answers) {
+    if (run !== this.checkRun || this.shredded) return;
+    let any = false;
+    for (const item of items) {
+      const a = answers.get(item.key);
+      if (!a || ![0, 1, 2].includes(a.level)) continue;
+      const target = item.kind === 'card' ? this.card(item.id) : this.s.afterthoughts.find((t) => t.id === item.id);
+      if (!target || target.text !== item.text) continue;
+      target.harsh = { level: a.level, reason: typeof a.reason === 'string' ? a.reason : '' };
+      any = true;
+    }
+    if (any) this.changed();
+  }
+
+  // The facilitator's "Reviewed" toggle on one card or thought.
+  review(kind, id, on) {
+    let item;
+    if (kind === 'afterthought') item = this.s.afterthoughts.find((t) => t.id === id) ?? fail('No such thought');
+    else if (kind === 'card') item = this.card(id) ?? fail('No such card');
+    else fail('No such card');
+    item.reviewed = on === true;
+    this.changed();
+  }
+
+  // "Mark the rest reviewed": every visible card and thought not yet
+  // reviewed that the check found fine, or never checked. Edgy and harsh ones
+  // are reviewed one by one.
+  reviewRest() {
+    for (const item of [...this.s.cards.filter((c) => !c.hidden), ...this.s.afterthoughts]) {
+      if (!item.reviewed && (!item.harsh || item.harsh.level === 0)) item.reviewed = true;
+    }
     this.changed();
   }
 
@@ -964,6 +1082,8 @@ export class Session {
       lastMs: lastSlideMs(this.s.afterthoughts.length),
       paused: false,
       done: false,
+      held: false,
+      holdTo: null,
     };
     this.s.walk.cardEndsAt = now + cardMs(this.s.walk, now);
   }
@@ -995,12 +1115,32 @@ export class Session {
     w.cardEndsAt = w.paused ? null : now + this.itemMs(w, now);
   }
 
-  // `from` is the card the facilitator's screen showed when they tapped; if
-  // the walk-through has moved on, the tap is ignored (a double-tapped Next).
+  // The facilitator's Back and Next. `from` is the card their screen showed
+  // when they tapped; if the walk-through has moved on, the tap is ignored (a
+  // double-tapped Next). Next marks the next item's cards (or, before the last
+  // slide, its thoughts) reviewed: the facilitator chose to show them. During
+  // a hold, Next goes where the timer was going.
   moveCard(delta, { from } = {}) {
     if (this.s.phase !== 'walk') fail('Cards move in the walk-through');
     const w = this.s.walk;
     if (from !== undefined && from !== null && from !== w.index) fail('Already moved on');
+    if (delta > 0 && w.held) {
+      const to = this.upcoming(w.holdTo);
+      this.markReviewed(to);
+      Object.assign(w, { held: false, holdTo: null, paused: false });
+      this.showAt(to);
+      return this.changed();
+    }
+    w.held = false;
+    w.holdTo = null;
+    if (delta > 0 && w.index < w.stream.length - 1) this.markReviewed(this.upcoming(w.index + 1));
+    this.stepWalk(delta);
+    this.changed();
+  }
+
+  // One step back or forward in the stream (forward from the last slide finishes).
+  stepWalk(delta) {
+    const w = this.s.walk;
     const last = w.stream.length - 1;
     if (delta > 0 && w.index === last) {
       if (w.done) fail('That was the last card');
@@ -1012,28 +1152,63 @@ export class Session {
     } else {
       const index = w.index + delta;
       if (index < 0) fail('This is the first card');
-      this.showCard(index);
-      // After the walk-through's time is up, a Back or Next onto a real card
-      // holds it until the facilitator resumes; otherwise the next tick would
-      // snap straight back to the last slide. The last slide runs normally.
-      if (!w.stream[index].last && this.now() >= w.endsAt - w.lastMs) {
-        w.paused = true;
-        w.cardEndsAt = null;
-      } else if (w.stream[index].last && w.paused) {
-        w.paused = false;
-        this.showCard(index);
-      }
+      this.showAt(index);
     }
-    this.changed();
+  }
+
+  // Shows the item at `index` for a move the facilitator made.
+  showAt(index) {
+    const w = this.s.walk;
+    this.showCard(index);
+    // After the walk-through's time is up, a Back or Next onto a real card
+    // holds it until the facilitator resumes; otherwise the next tick would
+    // snap straight back to the last slide. The last slide runs normally.
+    if (!w.stream[index].last && this.now() >= w.endsAt - w.lastMs) {
+      w.paused = true;
+      w.cardEndsAt = null;
+    } else if (w.stream[index].last && w.paused) {
+      w.paused = false;
+      this.showCard(index);
+    }
+  }
+
+  // The first item from `index` on that the room would see: hidden cards are
+  // passed over (the overview and the last slide never are).
+  upcoming(index) {
+    const { stream } = this.s.walk;
+    let i = index;
+    while (i < stream.length - 1 && !stream[i].overview && !stream[i].last && this.itemCards(i).length === 0) i += 1;
+    return i;
+  }
+
+  // What the room sees at `index`: a card's visible cards, the last slide's
+  // thoughts, or nothing to review (the overview).
+  itemCards(index) {
+    const item = this.s.walk.stream[index];
+    if (!item || item.overview) return [];
+    if (item.last) return this.s.afterthoughts;
+    const found = this.findGroup(item.groupId);
+    return found ? this.visibleCardIds(found.group).map((id) => this.card(id)) : [];
+  }
+
+  needsReview(index) {
+    return this.itemCards(index).some((item) => !item.reviewed);
+  }
+
+  markReviewed(index) {
+    for (const item of this.itemCards(index)) item.reviewed = true;
   }
 
   // Pausing holds the card; resuming gives it a fresh share. The finish time never moves.
+  // Resuming during a hold gives the current card another share, then the
+  // timer checks the next one again.
   pauseWalk(paused) {
     if (this.s.phase !== 'walk') fail('Not in the walk-through');
     const w = this.s.walk;
     if (typeof paused !== 'boolean') fail('Pause or resume');
     if (paused === w.paused) return;
     w.paused = paused;
+    if (!paused) Object.assign(w, { held: false, holdTo: null });
     if (paused) w.cardEndsAt = null;
     else if (!w.done) {
       const now = this.now();
@@ -1047,6 +1222,7 @@ export class Session {
   // anything that isn't running does nothing.
   tick() {
     if (this.shredded) return;
+    this.tickCheck();
     if (this.s.phase === 'demo') this.tickDemo();
     if (this.s.phase === 'submit') this.tickSubmit();
     if (this.s.phase === 'walk') this.tickWalk();
@@ -1079,18 +1255,41 @@ export class Session {
   // When the walk-through's time is up, a card that was already running skips
   // to the last slide. A card shown or resumed after that (it was held) runs
   // its own fresh share, then goes to the last slide. A hidden card gets no time.
+  // Before moving onto an item with a card or thought nobody has reviewed, it
+  // holds on the current one instead (a pause: the finish doesn't move).
   tickWalk() {
     const w = this.s.walk;
+    if (w.held) return this.tickHeld();
     if (w.paused || w.done) return;
     const now = this.now();
     const last = w.stream.length - 1;
     const timeUp = w.endsAt - w.lastMs;
     const shownLate = w.cardStartedAt !== null && w.cardStartedAt >= timeUp;
-    if (w.index < last && !shownLate && now >= timeUp) return this.moveTo(last);
+    if (w.index < last && !shownLate && now >= timeUp) return this.timerMove(last);
     const over = this.itemView(this.currentItem())?.hidden || (w.cardEndsAt !== null && now >= w.cardEndsAt);
     if (!over) return;
-    if (w.index < last && shownLate) this.moveTo(last);
-    else this.moveCard(1);
+    if (w.index < last && shownLate) this.timerMove(last);
+    else if (w.index < last) this.timerMove(w.index + 1);
+    else {
+      this.stepWalk(1); // the last slide is over: done
+      this.changed();
+    }
+  }
+
+  // The timer's move: on, or a hold if the item the room would see next needs review.
+  timerMove(index) {
+    const to = this.upcoming(index);
+    if (!this.needsReview(to)) return this.moveTo(index);
+    Object.assign(this.s.walk, { held: true, holdTo: to, paused: true, cardEndsAt: null });
+    this.changed();
+  }
+
+  // Held: once the item is reviewed (or hidden), the timer moves on as it would have.
+  tickHeld() {
+    const w = this.s.walk;
+    if (this.needsReview(this.upcoming(w.holdTo))) return;
+    Object.assign(w, { held: false, holdTo: null, paused: false, cardEndsAt: this.now() });
+    this.tickWalk();
   }
 
   moveTo(index) {
@@ -1166,6 +1365,13 @@ export class Session {
 
   // ---- shred ------------------------------------------------------------
 
+  // Nothing due, and a call still in flight is ignored when it lands.
+  stopChecks() {
+    this.checkRun += 1;
+    this.checkDueAt = null;
+    this.checking = false;
+  }
+
   shred() {
     if (this.shredded) fail('Already shredded');
     const cards = this.s.cards.filter((c) => !c.hidden).map((c) => c.text);
@@ -1174,6 +1380,7 @@ export class Session {
     this.clusterRun += 1;
     clearTimeout(this.nudgeTimer);
     this.activity.clear();
+    this.stopChecks();
     this.shredded = true;
     this.state = {
       sessionId: this.s.sessionId,
@@ -1209,6 +1416,7 @@ export class Session {
     this.shredPayload = null;
     this.shredded = false;
     this.activity.clear();
+    this.stopChecks();
     this.state = freshState(this.now(), this.talkMinutes);
     this.onReset();
     this.changed();
@@ -1381,7 +1589,16 @@ export class Session {
       tagging: !!this.tagCards,
       people: Object.values(s.clients).filter((c) => c.cards > 0).length,
     };
-    v.cards = [...s.cards].sort((a, b) => a.id - b.id).map(({ id, text, hidden }) => ({ id, text, hidden }));
+    // Unreviewed first, then harshest first; hidden cards (no review needed) last.
+    v.cards = s.cards
+      .map((c) => ({ id: c.id, text: c.text, hidden: c.hidden, ...reviewFields(c) }))
+      .sort((a, b) => a.hidden - b.hidden || byReview(a, b));
+    // Whether there is a check at all (no API key: every item reads "not
+    // checked"), and how many visible items nobody has reviewed yet.
+    v.review = {
+      checking: !!this.checkHarshness,
+      left: [...s.cards.filter((c) => !c.hidden), ...s.afterthoughts].filter((x) => !x.reviewed).length,
+    };
     // The late cards' flags with their text, for the keep-or-regroup choice
     // (not the suggested placements: those are applied on keep).
     const { late, ...clustering } = s.clustering;
@@ -1404,10 +1621,10 @@ export class Session {
       groups: t.groups.map((g) => ({
         id: g.id,
         reactions: counts.get(g.id) ?? 0,
-        cards: g.cardIds.map((id) => this.card(id)).filter(Boolean).map(({ id, text, hidden }) => ({ id, text, hidden })),
+        cards: g.cardIds.map((id) => this.card(id)).filter(Boolean).map((c) => ({ id: c.id, text: c.text, hidden: c.hidden, ...reviewFields(c) })),
       })),
     }));
-    const afterthoughts = this.afterthoughtList();
+    const afterthoughts = this.afterthoughtReviewList();
     v.react = {
       done: Object.values(s.clients).filter((c) => c.reactDone).length,
       reactions: s.reactions.length,
@@ -1430,6 +1647,9 @@ export class Session {
       endsAt: s.walk.endsAt,
       paused: s.walk.paused,
       done: s.walk.done,
+      // Holding before an unreviewed item, and which (an index into the stream).
+      held: inWalk && !!s.walk.held,
+      holdTo: inWalk && s.walk.held ? s.walk.holdTo : null,
       stream: s.walk.stream.map((it) =>
         it.overview
           ? { groupId: it.groupId, text: 'Overview: what came up', reactions: s.reactions.length }

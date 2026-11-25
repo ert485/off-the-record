@@ -29,6 +29,8 @@ export const AFTERTHOUGHT_RESERVE_MS = 60_000;
 export const MIN_DECK = 8;
 // A phone counts as "writing" this long after it last said it typed.
 export const WRITING_WINDOW_MS = 20_000;
+// The harshness check runs once there's been this long with no new card or thought.
+export const HARSHNESS_QUIET_MS = 5_000;
 
 // The walk-through runs itself. The last slide gets 20 seconds ("Anything
 // else? Out loud."), or a page of afterthoughts every 10 seconds when there

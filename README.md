@@ -16,7 +16,7 @@ The flow runs on a 25-minute talk clock: demo, join, submit, grouping (starts at
 
 - No logins, no names. Cards are stored with no author and no timestamp. Phones are known only by a random id, with counts against it.
 - Private notes stay in the phone's tab (sessionStorage) and are wiped on close or shred.
-- Only card text goes to Anthropic (Claude Haiku 5.5) for grouping: `server/cluster.js`.
+- Only card and thought text goes to Anthropic (Claude Haiku 5.5): cards for grouping (`server/cluster.js`), and cards and thoughts for a check for harsh wording that only the facilitator sees (`server/moderation.js`).
 - No request logs anywhere: the app prints nothing about requests (`server/index.js`), Caddy discards all logging (`deploy/Caddyfile`), the system journal is kept in memory only (`deploy/provision.sh`).
 - The shred deletes the database and every file in the data directory (`server/db.js`). `test/shred.test.js` runs a whole session, shreds, and checks no file, log line or screen still holds anything, and that the server printed no IP address.
 
@@ -30,12 +30,12 @@ npm run dev          # facilitator token is "dev"
 npm test
 ```
 
-Open `http://localhost:3000/` (phone), `/projector`, and `/facilitate?t=dev`. Without `ANTHROPIC_API_KEY` the cards are grouped locally, one card per group.
+Open `http://localhost:3000/` (phone), `/projector`, and `/facilitate?t=dev`. Without `ANTHROPIC_API_KEY` the cards are grouped locally, one card per group, and nothing is checked for harsh wording (every card reads "not checked"; "Mark the rest reviewed" clears them in one tap).
 
 | Env var | Meaning |
 | --- | --- |
 | `FACILITATOR_TOKEN` | Required. The secret in the facilitator URL. |
-| `ANTHROPIC_API_KEY` | For grouping with Claude Haiku. |
+| `ANTHROPIC_API_KEY` | For grouping, and the harshness check, with Claude Haiku. |
 | `PUBLIC_URL` | What the QR code points to. |
 | `DATA_DIR` | Where the one SQLite file lives (default `./data`). |
 | `REPO_URL` | Shown on the projector. |

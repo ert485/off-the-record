@@ -70,3 +70,12 @@ details summary { cursor: pointer; color: var(--text-dim); }
 .zone-now .nav { margin-top: 4px; }
 .loop-btn { min-height: 48px; font-size: 16px; width: 100%; margin-top: 4px; }
 .speed-btn { flex: 1; min-height: 48px; font-size: 16px; }
+/* The harshness check (facilitator only): a red or amber dot with its reason. */
+.harsh { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; }
+.harsh .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; transform: translateY(1px); }
+.harsh-2 { color: #ff8a8d; }
+.harsh-2 .dot { background: var(--danger); }
+.harsh-1 { color: var(--warn); }
+.harsh-1 .dot { background: var(--warn); }
+.cardrow .review { flex: none; }
+.alert.hold { flex-direction: column; align-items: stretch; border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }

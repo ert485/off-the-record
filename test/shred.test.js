@@ -220,3 +220,55 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   assert.equal((await view('role=projector')).phase, 'teaser');
   assert.deepEqual(filesContaining(scanned(), MARKER), [], 'still nothing after starting a new session');
 });
+
+// The harshness check's answers (a level and a one-line reason, which can
+// paraphrase a card) are stored on the cards and thoughts, for the
+// facilitator only. They go with everything else at the shred.
+test('no harshness reason survives the shred', async (t) => {
+  const { Session } = await import('../server/session.js');
+  const { openStore } = await import('../server/db.js');
+  const dir = mkdtempSync(join(tmpdir(), 'otr-harsh-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const REASON = 'REASON' + randomBytes(8).toString('hex');
+  let now = 1_000_000;
+  const store = openStore(dir);
+  const session = new Session({
+    now: () => now,
+    clusterCards: async (cards) => ({ themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }),
+    checkHarshness: async (items) => new Map(items.map((i) => [i.id, { level: 2, reason: `${REASON} ${i.id}` }])),
+    onChange: () => store.save(session.state),
+    onShred: () => store.shred(),
+    shredAnimationMs: 10,
+  });
+  const flush = () => new Promise((r) => setImmediate(r));
+  const quiet = async () => {
+    for (let i = 0; i < 6; i++) {
+      now += 1000;
+      session.tick();
+    }
+    await flush();
+  };
+  session.advance(); // demo
+  session.advance(); // join
+  session.advance(); // submit
+  session.submitCards(PHONES[0], ['a card', 'another card']);
+  await quiet();
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.afterthought(PHONES[1], 'a thought');
+  await quiet();
+  session.reviewRest();
+
+  const views = () => JSON.stringify([session.view('facilitator'), session.view('projector'), session.view('phone', { cid: PHONES[0] })]);
+  assert.ok(views().includes(REASON), 'control: the facilitator sees the reasons');
+  assert.ok(filesContaining(filesUnder(dir), REASON).length > 0, 'control: the reasons are in the database');
+  assert.ok(session.state.afterthoughts[0].harsh, 'control: the thought was checked');
+
+  session.shred();
+  assert.deepEqual(readdirSync(dir), [], 'data directory is empty');
+  assert.deepEqual(filesContaining(filesUnder(dir), REASON), []);
+  assert.equal(views().includes(REASON), false, 'no screen still holds a reason');
+  assert.equal(JSON.stringify(session.state).includes('harsh'), false, 'nor does the state');
+  assert.equal(JSON.stringify(session.state).includes('reviewed'), false);
+});

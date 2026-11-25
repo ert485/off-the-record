@@ -416,10 +416,11 @@ test("the projector gets the thoughts' text only, on the last slide", async () =
   session.moveTo(last);
   const p = session.view('projector');
   assert.deepEqual(p.walk.afterthoughts, [{ text: 'first thought' }, { text: 'second thought' }]);
-  // The facilitator sees them with their ids, to remove one.
+  // The facilitator sees them with their ids, to remove one, and their
+  // harshness check and reviewed mark (never their receipts).
   const f = session.view('facilitator').walk.afterthoughts;
   assert.deepEqual(f.map((t) => t.text), ['first thought', 'second thought']);
-  for (const t of f) assert.deepEqual(Object.keys(t).sort(), ['id', 'text']);
+  for (const t of f) assert.deepEqual(Object.keys(t).sort(), ['harsh', 'id', 'reviewed', 'text']);
   session.removeAfterthought(f[0].id);
   assert.deepEqual(session.view('projector').walk.afterthoughts, [{ text: 'second thought' }]);
 });
@@ -1269,4 +1270,176 @@ test('receipts never reach the phone, projector or facilitator views', async () 
   assert.ok(all.includes('three'), 'control: the views carry cards');
   for (const r of receipts) assert.equal(all.includes(r), false);
   assert.equal(all.includes('cardReceipts'), false);
+});
+
+// ---- the harshness check and reviewed marks --------------------------------
+
+// A session at Submit with a stand-in harshness check: `levels` maps a card
+// or thought's text to its answer; text not in it is left out of the answer.
+function makeChecked(levels = {}, { fail = false } = {}) {
+  let t = 1_000_000;
+  const clock = { now: () => t, tick: (ms) => (t += ms) };
+  const calls = [];
+  const logged = [];
+  const session = new Session({
+    now: clock.now,
+    clusterCards: async (cards) => ({ themes: [{ name: 'All', groups: cards.map((c) => [c.id]) }] }),
+    checkHarshness: async (items) => {
+      calls.push(items);
+      if (fail) throw new Error('timed out');
+      return new Map(items.filter((i) => levels[i.text]).map((i) => [i.id, levels[i.text]]));
+    },
+    log: (line) => logged.push(line),
+    shredAnimationMs: 10,
+  });
+  session.advance(); // demo
+  session.advance(); // join
+  session.advance(); // submit
+  return { session, clock, calls, logged };
+}
+
+const tickFor = (session, clock, ms) => {
+  for (let i = 0; i < ms / 1000; i++) {
+    clock.tick(1000);
+    session.tick();
+  }
+};
+
+test('cards are checked once things are quiet for 5 seconds; levels reach the facilitator only', async () => {
+  const levels = {
+    fine: { level: 0, reason: '' },
+    edgy: { level: 1, reason: 'A sharp jab REASON-EDGY' },
+    cruel: { level: 2, reason: 'Puts down a team REASON-CRUEL' },
+    'a thought': { level: 1, reason: 'Edgy thought REASON-THOUGHT' },
+  };
+  const { session, clock, calls } = makeChecked(levels);
+  session.submitCards(A, ['fine', 'edgy']);
+  tickFor(session, clock, 4000);
+  session.submitCards(B, ['cruel', 'hidden one']);
+  session.hideCard(session.state.cards.find((c) => c.text === 'hidden one').id, true);
+  tickFor(session, clock, 4000);
+  await flush();
+  assert.equal(calls.length, 0, 'not while cards keep coming');
+  tickFor(session, clock, 1000);
+  await flush();
+  assert.equal(calls.length, 1, 'once there have been 5 seconds with nothing new');
+  assert.deepEqual(calls[0].map((i) => i.text).sort(), ['cruel', 'edgy', 'fine'], 'every unchecked visible card, in one call; never a hidden one');
+  await flush();
+
+  const f = session.view('facilitator');
+  const by = (text) => f.cards.find((c) => c.text === text);
+  assert.deepEqual(by('fine').harsh, { level: 0, reason: '' });
+  assert.deepEqual(by('edgy').harsh, { level: 1, reason: 'A sharp jab REASON-EDGY' });
+  assert.deepEqual(by('cruel').harsh, { level: 2, reason: 'Puts down a team REASON-CRUEL' });
+  assert.equal(by('hidden one').harsh, null);
+  assert.equal(by('fine').reviewed, false);
+
+  // Nothing new: nothing is sent again.
+  tickFor(session, clock, 10_000);
+  await flush();
+  assert.equal(calls.length, 1);
+
+  // A thought is checked the same way, on its own (the cards are already checked).
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.afterthought(C, 'a thought');
+  tickFor(session, clock, 5000);
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].map((i) => i.text), ['a thought']);
+  await flush();
+  assert.deepEqual(session.view('facilitator').react.afterthoughts[0].harsh, { level: 1, reason: 'Edgy thought REASON-THOUGHT' });
+
+  // Phones and the projector never see a level, a reason or a reviewed mark.
+  for (const v of [session.view('phone', { cid: A }), session.view('projector')]) {
+    const json = JSON.stringify(v);
+    for (const word of ['harsh', 'REASON-', 'reviewed', 'held']) assert.equal(json.includes(word), false, `${v.role} gets no ${word}`);
+  }
+  session.advance(); // walk
+  while (!session.state.walk.stream[session.state.walk.index].last) session.moveCard(1);
+  for (const v of [session.view('phone', { cid: A }), session.view('projector')]) {
+    const json = JSON.stringify(v);
+    for (const word of ['harsh', 'REASON-', 'reviewed']) assert.equal(json.includes(word), false, `${v.role} gets no ${word} on the last slide`);
+  }
+});
+
+test('a failed harshness check leaves the cards unchecked, logs a fixed line, and blocks nothing', async () => {
+  const { session, clock, calls, logged } = makeChecked({}, { fail: true });
+  session.submitCards(A, ['SECRET-TEXT card']);
+  tickFor(session, clock, 5000);
+  await flush();
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(logged, ['moderation: check failed']);
+  assert.equal(session.view('facilitator').cards[0].harsh, null);
+  session.advance(); // cluster: nothing waits on the check
+  assert.equal(session.state.phase, 'cluster');
+});
+
+test('"Mark the rest reviewed" skips edgy and harsh items and includes unchecked ones', async () => {
+  const levels = {
+    fine: { level: 0, reason: '' },
+    edgy: { level: 1, reason: 'jab' },
+    cruel: { level: 2, reason: 'put-down' },
+    'fine thought': { level: 0, reason: '' },
+    'cruel thought': { level: 2, reason: 'put-down' },
+  };
+  const { session, clock } = makeChecked(levels);
+  session.submitCards(A, ['fine', 'edgy', 'cruel']);
+  session.submitCards(B, ['never answered', 'hidden']);
+  session.hideCard(session.state.cards.find((c) => c.text === 'hidden').id, true);
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.afterthought(A, 'fine thought');
+  session.afterthought(B, 'cruel thought');
+  session.afterthought(C, 'unanswered thought');
+  tickFor(session, clock, 5000);
+  await flush();
+
+  // Sorted for the facilitator: unreviewed first, then harshest first (unchecked above fine), hidden last.
+  const order = () => session.view('facilitator').cards.map((c) => c.text);
+  assert.deepEqual(order(), ['cruel', 'edgy', 'never answered', 'fine', 'hidden']);
+  session.review('card', session.state.cards.find((c) => c.text === 'cruel').id, true);
+  assert.deepEqual(order(), ['edgy', 'never answered', 'fine', 'cruel', 'hidden']);
+  session.review('card', session.state.cards.find((c) => c.text === 'cruel').id, false);
+
+  session.reviewRest();
+  const f = session.view('facilitator');
+  const reviewed = Object.fromEntries(f.cards.map((c) => [c.text, c.reviewed]));
+  assert.deepEqual(reviewed, { fine: true, 'never answered': true, edgy: false, cruel: false, hidden: false });
+  const thoughts = Object.fromEntries(f.react.afterthoughts.map((t) => [t.text, t.reviewed]));
+  assert.deepEqual(thoughts, { 'fine thought': true, 'unanswered thought': true, 'cruel thought': false });
+  assert.deepEqual(f.react.afterthoughts.map((t) => t.text)[0], 'cruel thought', 'the unreviewed thought comes first');
+
+  // Each can be marked by itself; a changed thought needs checking and reviewing again.
+  const cruelThought = session.state.afterthoughts.find((t) => t.text === 'cruel thought');
+  session.review('afterthought', cruelThought.id, true);
+  assert.equal(session.view('facilitator').react.afterthoughts.find((t) => t.text === 'cruel thought').reviewed, true);
+  session.afterthought(B, 'cruel thought, edited', cruelThought.r);
+  const edited = session.view('facilitator').react.afterthoughts.find((t) => t.text === 'cruel thought, edited');
+  assert.equal(edited.reviewed, false);
+  assert.equal(edited.harsh, null);
+  assert.throws(() => session.review('card', 12345, true), /No such card/);
+  assert.throws(() => session.review('afterthought', 12345, true), /No such thought/);
+});
+
+test('a card taken back while it is being checked is gone, answer and all; the rest get theirs', async () => {
+  let answer;
+  const { session, clock, calls } = makeChecked();
+  session.checkHarshness = (items) => {
+    calls.push(items);
+    return new Promise((resolve) => (answer = () => resolve(new Map(items.map((i) => [i.id, { level: 1, reason: 'look' }])))));
+  };
+  const receipts = session.submitCards(A, ['kept', 'taken back']).receipts;
+  tickFor(session, clock, 5000);
+  await flush();
+  assert.equal(calls.length, 1);
+  session.submitCards(A, [], [receipts[1]]);
+  answer();
+  await flush();
+  const f = session.view('facilitator');
+  assert.deepEqual(f.cards.map((c) => [c.text, c.harsh?.level]), [['kept', 1]]);
+  assert.equal(JSON.stringify(session.state).includes('taken back'), false);
 });

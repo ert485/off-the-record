@@ -25,7 +25,9 @@ const thinker = (i) => ('c' + i.toString(16).padStart(2, '0')).repeat(8);
 
 // Starts the talk clock at t0, then walks to the walk-through at `minute` on
 // that clock. `thoughts` phones each add one thought at the end of the deck.
-async function toWalk({ cards = 4, minute = 15.5, thoughts = 0 } = {}) {
+// With `review`, every card and thought is marked reviewed first, so the
+// walk-through never holds.
+async function toWalk({ cards = 4, minute = 15.5, thoughts = 0, review = true } = {}) {
   const ctx = make();
   const { session, clock } = ctx;
   const t0 = clock.now();
@@ -40,6 +42,7 @@ async function toWalk({ cards = 4, minute = 15.5, thoughts = 0 } = {}) {
   const groups = session.view('phone', { cid: A }).react.groups;
   groups.forEach((g) => session.react(A, g.id, ['🦆']));
   for (let i = 0; i < thoughts; i++) session.afterthought(thinker(i), `thought ${i}`);
+  if (review) session.reviewRest();
   clock.set(t0 + minute * MIN);
   session.advance(); // walk
   return { ...ctx, t0 };
@@ -397,6 +400,7 @@ async function toApprovedReact() {
     session.react(A, g.id, [secret ? '🔥' : '🦆']);
   }
   const secretCard = session.state.cards.find((c) => c.text === SECRET);
+  session.reviewRest();
   return { ...ctx, t0, secretCard, secretGroup };
 }
 
@@ -488,4 +492,112 @@ test("a hidden card's reactions still count in the finale, as emojis only", asyn
   assert.ok(p.finale.sequence.includes('🔥'));
   assert.equal(JSON.stringify(p).includes(SECRET), false);
   assert.equal(JSON.stringify(session.view('phone', { cid: A })).includes(SECRET), false);
+});
+
+// ---- reviewed cards, and the hold before an unreviewed one -----------------
+
+test('the walk-through holds before an unreviewed card, and Next marks it reviewed', async () => {
+  const { session, clock } = await toWalk({ cards: 4, review: false });
+  const w = session.state.walk;
+  const endsAt = w.endsAt;
+  const cardsAt = (i) => session.findGroup(w.stream[i].groupId).group.cardIds.map((id) => session.card(id));
+
+  // The overview's time runs out: the next card is unreviewed, so it holds on the overview.
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.index, 0);
+  assert.equal(w.held, true);
+  assert.equal(w.paused, true, 'a hold is a pause');
+  assert.equal(w.cardEndsAt, null);
+  assert.equal(fac(session).walk.held, true);
+  assert.equal(JSON.stringify(proj(session)).includes('held'), false, 'the projector only sees a pause');
+  clock.tick(MIN);
+  session.tick();
+  assert.equal(w.index, 0, 'it waits for the facilitator');
+  assert.equal(w.endsAt, endsAt, 'the finish does not move');
+
+  // The facilitator's Next marks the next card reviewed and moves on, running.
+  session.moveCard(1, { from: 0 });
+  assert.equal(w.index, 1);
+  assert.equal(w.held, false);
+  assert.equal(w.paused, false);
+  assert.ok(Number.isFinite(w.cardEndsAt));
+  assert.ok(cardsAt(1).every((c) => c.reviewed));
+
+  // Reviewing the card it holds before lets the timer move on by itself.
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.index, 1);
+  assert.equal(w.held, true);
+  for (const c of cardsAt(2)) session.review('card', c.id, true);
+  session.tick();
+  assert.equal(w.index, 2);
+  assert.equal(w.held, false);
+  assert.equal(w.endsAt, endsAt);
+});
+
+test('the last slide holds for unreviewed thoughts, even when time runs out; Next shows it', async () => {
+  const { session, clock } = await toWalk({ cards: 4, thoughts: 2, review: false });
+  const w = session.state.walk;
+  for (const c of session.state.cards) session.review('card', c.id, true);
+  session.moveCard(1);
+  const at = w.index;
+  clock.set(w.endsAt - w.lastMs);
+  session.tick();
+  assert.equal(w.index, at, 'it holds on the current card rather than skip to the thoughts');
+  assert.equal(w.held, true);
+  assert.equal(fac(session).walk.holdTo, w.stream.length - 1);
+  session.moveCard(1, { from: at });
+  assert.equal(proj(session).walk.item.last, true, 'Next goes where the timer was going: the last slide');
+  assert.ok(session.state.afterthoughts.every((t) => t.reviewed));
+  assert.ok(Number.isFinite(w.cardEndsAt));
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.done, true, 'with no next item, nothing holds');
+});
+
+test('a hidden card needs no review: the hold looks past it, and never stops on it', async () => {
+  const { session, clock } = await toWalk({ cards: 4, review: false });
+  const w = session.state.walk;
+  const cardsAt = (i) => session.findGroup(w.stream[i].groupId).group.cardIds;
+  // Card 1 reviewed, card 2 hidden (never reviewed), card 3 reviewed.
+  for (const id of [...cardsAt(1), ...cardsAt(3)]) session.review('card', id, true);
+  for (const id of cardsAt(2)) session.hideCard(id, true);
+  for (let i = 0; i < 3; i++) {
+    clock.set(w.cardEndsAt ?? clock.now());
+    session.tick();
+    assert.equal(w.held, false, `no hold at step ${i}`);
+  }
+  assert.equal(w.index, 3);
+  // A hidden card that is reviewed later still isn't needed, and card 4 is: it holds on card 3.
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.index, 3);
+  assert.equal(w.held, true);
+  // Hiding the card it waits for lets it move on without a review.
+  for (const id of cardsAt(4)) session.hideCard(id, true);
+  session.tick();
+  assert.equal(w.held, false);
+  assert.ok(w.index > 3);
+});
+
+test('with no API key nothing is checked and the walk-through still runs once the rest are marked reviewed', async () => {
+  const { session, clock } = await toWalk({ cards: 4, thoughts: 1, review: false });
+  const f = fac(session);
+  assert.ok(f.cards.every((c) => c.harsh === null && c.reviewed === false), 'every card shows "not checked"');
+  assert.equal(f.walk.afterthoughts[0].harsh, null);
+  const w = session.state.walk;
+  clock.set(w.cardEndsAt);
+  session.tick();
+  assert.equal(w.held, true);
+  session.reviewRest(); // one tap
+  session.tick();
+  assert.equal(w.held, false);
+  assert.equal(w.index, 1);
+  for (let i = 0; i < 10 && !w.done; i++) {
+    clock.set(w.cardEndsAt);
+    session.tick();
+    assert.equal(w.held, false);
+  }
+  assert.equal(w.done, true);
 });

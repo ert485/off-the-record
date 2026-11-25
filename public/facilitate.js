@@ -286,13 +286,62 @@ function modButton(label, onclick) {
   return h('button', { class: 'small-btn mod', onclick }, label);
 }
 
-function cardRow(card) {
+// The harshness check's answer, for the facilitator only: a red (harsh) or
+// amber (edgy) dot with its reason, nothing when it was fine, or "not checked".
+function harshLine(item) {
+  if (!item.harsh) return h('div', { class: 'harsh small dim' }, 'not checked');
+  const { level, reason } = item.harsh;
+  if (!level) return '';
+  return h('div', { class: `harsh harsh-${level} small` }, h('span', { class: 'dot', 'aria-label': level === 2 ? 'Harsh' : 'Edgy' }), reason || (level === 2 ? 'Harsh' : 'Worth a look'));
+}
+
+// The "Reviewed" toggle. The walk-through holds before a card or thought
+// nobody has reviewed.
+function reviewToggle(item, kind) {
+  return h('button', {
+    class: `small-btn review${item.reviewed ? ' on' : ''}`,
+    'aria-pressed': item.reviewed ? 'true' : 'false',
+    onclick: () => act('review', { kind, id: item.id, on: !item.reviewed }),
+  }, item.reviewed ? 'Reviewed ✓' : 'Reviewed');
+}
+
+// A card or thought: its text and check, then Reviewed, then Hide or Remove
+// (always rightmost). A hidden card needs no review.
+function itemRow(item, kind, mod) {
+  const shown = !item.hidden;
   return h(
     'div',
-    { class: `cardrow${card.hidden ? ' hidden' : ''}` },
-    h('div', { class: 'text' }, card.text),
-    modButton(card.hidden ? 'Show' : 'Hide', () => act('hideCard', { id: card.id, hidden: !card.hidden })),
+    { class: `cardrow${item.hidden ? ' hidden' : ''}${shown && !item.reviewed ? ' unreviewed' : ''}` },
+    h('div', { class: 'text' }, item.text, shown ? harshLine(item) : ''),
+    shown && item.reviewed !== undefined ? reviewToggle(item, kind) : '',
+    mod,
   );
+}
+
+function cardRow(card) {
+  return itemRow(card, 'card', modButton(card.hidden ? 'Show' : 'Hide', () => act('hideCard', { id: card.id, hidden: !card.hidden })));
+}
+
+function thoughtRow(t) {
+  return itemRow(t, 'afterthought', modButton('Remove', () => act('removeAfterthought', { id: t.id })));
+}
+
+// "Mark the rest reviewed", at the top of the lists: one tap for every card
+// and thought the check found fine or never checked.
+function reviewBar(v) {
+  if (!v.review) return '';
+  const i = info(
+    'review',
+    v.review.checking
+      ? 'Claude Haiku checks each card and thought for harsh wording: red is harsh, amber is worth a look. “Mark the rest reviewed” marks every one that isn’t red or amber, including any not checked; look at red and amber ones yourself. The walk-through waits before showing a card or thought nobody has reviewed.'
+      : 'With no API key on the server, nothing is checked for harsh wording. “Mark the rest reviewed” marks every card and thought; the walk-through waits before showing one nobody has reviewed.',
+  );
+  const left = v.review.left;
+  return h('div', { class: 'stack' },
+    h('div', { class: 'row wrap review-bar' },
+      h('span', { class: 'grow small dim' }, left ? `${left} not reviewed ` : 'Everything is reviewed ', i.button),
+      left ? h('button', { class: 'small-btn', onclick: () => act('reviewRest') }, 'Mark the rest reviewed') : ''),
+    i.text);
 }
 
 // A folded list that stays open or closed the way the facilitator left it.
@@ -305,22 +354,18 @@ function foldable(key, summary, defaultOpen, ...children) {
 function allCards(v, defaultOpen = false) {
   if (!v.cards?.length) return '';
   const visible = v.cards.filter((c) => !c.hidden).length;
-  return foldable('cards', `All cards (${visible} shown, ${v.cards.length - visible} hidden)`, defaultOpen, v.cards.map(cardRow));
+  return foldable('cards', `All cards (${visible} shown, ${v.cards.length - visible} hidden)`, defaultOpen, reviewBar(v), h('div', {}, v.cards.map(cardRow)));
 }
 
 function mixLine(mix) {
   return h('div', { class: 'mixline' }, (mix ?? []).map(([e, n]) => `${e}${n > 1 ? `×${n}` : ''}`).join('  ') || ' ');
 }
 
-// The thoughts phones added at the end of their decks, each with Remove.
+// The thoughts phones added at the end of their decks, each with its check,
+// Reviewed and Remove; unreviewed first, then harshest first.
 function afterthoughtList(label, afterthoughts) {
   if (!afterthoughts?.length) return '';
-  return h(
-    'div',
-    { class: 'stack' },
-    h('div', { class: 'label' }, label),
-    afterthoughts.map((t) => h('div', { class: 'cardrow' }, h('div', { class: 'text' }, t.text), modButton('Remove', () => act('removeAfterthought', { id: t.id })))),
-  );
+  return h('div', { class: 'stack' }, h('div', { class: 'label' }, label), h('div', {}, afterthoughts.map(thoughtRow)));
 }
 
 function nudgeStatus(submit) {
@@ -345,7 +390,7 @@ const OVERVIEW_PROMPTS = ['First reactions: anything surprise you?', 'Which of t
 
 // Matches the projector's fine print word for word.
 const DISCLOSURE =
-  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards go to Anthropic (Claude Haiku) for grouping; they don’t train on them and delete them within 30 days. I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
+  'Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards and thoughts go to Anthropic (Claude Haiku) for grouping and a check for harsh wording; they don’t train on them and delete them within 30 days. I see cards and thoughts before they’re shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight.';
 
 // ---- grouping --------------------------------------------------------------
 
@@ -537,6 +582,7 @@ const PHASES = {
         // Not once there are reactions: new groups would cut them off their cards.
         c.status !== 'running' && c.status !== 'idle' && !c.empty && !v.react.reactions ? h('button', { class: 'quiet', onclick: () => act('recluster') }, 'Re-run grouping') : '',
       ],
+      lists: allCards(v),
     };
   },
 
@@ -572,6 +618,7 @@ const PHASES = {
         h('div', {}, h('span', { class: 'dim small' }, `${v.react.reactions} reactions so far `), countInfo.button, countInfo.text),
         // Nothing to say about decks with no cards to react to.
         v.react.total ? h('div', {}, h('span', { class: 'dim small' }, partDeck ? `${perPhone} of ${v.react.total} cards on each phone ` : `All ${v.react.total} cards on each phone `), deckInfo.button, deckInfo.text) : '',
+        v.react.afterthoughts.length ? reviewBar(v) : '',
         afterthoughtList('Thoughts from the end of the deck, shown on the last slide', v.react.afterthoughts),
       ],
       lists: allCards(v),
@@ -592,12 +639,26 @@ const PHASES = {
     const leftInfo = info('walk-left', 'The walk-through ends at a fixed time on the talk clock, so the cards share what’s left (the last slide keeps 20 seconds, or 10 seconds for each page of 4 thoughts, up to a minute). It’s a rough average, not a limit: spend longer where the room wants to.');
     const nextIsLast = !lastSlide && w.index === w.total - 2;
     const showLeft = !lastSlide && !w.done && w.cardsLeft !== null;
+    // Held before an item nobody has reviewed: its cards (or the thoughts), to check here.
+    const holdItem = w.held ? w.stream[w.holdTo] : null;
+    const holdLast = holdItem?.groupId === 'last';
+    const holdGroup = holdItem && !holdLast ? v.themes.flatMap((t) => t.groups).find((g) => g.id === holdItem.groupId) : null;
+    const holdInfo = info('walk-hold', 'The walk-through waits before showing a card or thought nobody has reviewed. Next marks it reviewed and shows it; Hide skips it; Resume gives the current card another share. The finish doesn’t move.');
+    const held = w.held
+      ? h('div', { class: 'alert hold' },
+          h('div', { class: 'row' },
+            h('strong', { class: 'grow' }, holdLast ? 'The thoughts for the last slide haven’t been reviewed: check them below, then Next.' : 'The next card hasn’t been reviewed: check it below, then Next.'),
+            holdInfo.button),
+          holdInfo.text,
+          holdLast ? h('div', {}, w.afterthoughts.map(thoughtRow)) : h('div', {}, (holdGroup?.cards ?? []).filter((c) => !c.hidden).map(cardRow)),
+          reviewBar(v))
+      : '';
     return {
       move: [
         nav(v),
         h('div', { class: 'walk-nav' },
           h('button', { disabled: w.index === 0, onclick: () => act('prevCard', { from: w.index }) }, w.index === 1 ? '◀ Back to the themes overview' : '◀ Back one card'),
-          h('button', { class: 'primary', disabled: w.done, onclick: () => act('nextCard', { from: w.index }) }, w.index === 0 ? 'First card ▶' : lastSlide ? 'Finish the walk-through ▶' : 'Next card ▶')),
+          h('button', { class: 'primary', disabled: w.done, onclick: () => act('nextCard', { from: w.index }) }, holdLast ? 'Show the last slide ▶' : w.index === 0 ? 'First card ▶' : lastSlide ? 'Finish the walk-through ▶' : 'Next card ▶')),
       ],
       now: now(
         overview ? 'Themes' : lastSlide ? 'Last slide' : `Card ${w.index} of ${cards}`,
@@ -611,10 +672,11 @@ const PHASES = {
       ),
       room: [
         h('div', { class: `room-row${w.paused ? ' active' : ''}` },
-          h('strong', { class: 'grow' }, w.paused ? 'Paused: the card stays until you resume' : 'Running'),
+          h('strong', { class: 'grow' }, w.held ? 'Waiting for a review: the card stays until you move on' : w.paused ? 'Paused: the card stays until you resume' : 'Running'),
           h('button', { class: 'small-btn room-btn', onclick: () => act('pauseWalk', { paused: !w.paused }) }, w.paused ? 'Resume' : 'Pause')),
       ],
       content: [
+        held,
         overview
           ? h('div', { class: 'current' }, 'The themes are on the projector.')
           : lastSlide
@@ -639,6 +701,7 @@ const PHASES = {
         !lastSlide && !nextIsLast && w.afterthoughts.length
           ? foldable('afterthoughts', `Thoughts for the last slide (${w.afterthoughts.length})`, false, afterthoughtList('Not shown yet', w.afterthoughts))
           : '',
+        allCards(v),
         foldable(
           'stream',
           'Stream',
