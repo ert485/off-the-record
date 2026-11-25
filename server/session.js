@@ -160,6 +160,14 @@ function fallbackClusters(ids, error) {
   return { themes: normalizeClusters([], ids).map((t) => ({ ...t, name: '' })), status: 'failed', error, local: true };
 }
 
+// The receipt map in receipt order, so the saved state never shows the order
+// cards arrived in, nor which ones a phone sent together (the same reason
+// cards are kept in id order). A receipt is 16 hex characters: never an
+// integer-like key, which objects would order first whatever the insertion.
+function byReceipt(map) {
+  return Object.fromEntries(Object.entries(map).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
 export class Session {
   constructor({
     state,
@@ -213,7 +221,7 @@ export class Session {
       this.state.afterthoughts ??= [];
       this.state.removedAfterthoughts ??= {};
       // Saved before shared cards could be taken back: those have no receipt.
-      this.state.cardReceipts ??= {};
+      this.state.cardReceipts = byReceipt(this.state.cardReceipts ?? {});
       if (this.state.walk) this.state.walk.lastMs ??= LAST_SLIDE_MS;
       for (const client of Object.values(this.state.clients ?? {})) client.afterthoughts ??= 0;
       // Saved before decks had a size: reactions have started, so size it now.
@@ -468,7 +476,8 @@ export class Session {
   // the order sent; the receipt maps to the card only, never to the phone.
   submitCards(cid, texts, withdraw = []) {
     if (!SHARING_PHASES.includes(this.s.phase)) {
-      fail(PHASES.indexOf(this.s.phase) > PHASES.indexOf('submit') ? "Grouping has started: shared cards can't be taken back now" : 'Submissions are closed');
+      const takingBack = Array.isArray(withdraw) && withdraw.length > 0;
+      fail(takingBack && PHASES.indexOf(this.s.phase) > PHASES.indexOf('submit') ? "Grouping has started: shared cards can't be taken back now" : 'Submissions are closed');
     }
     const client = this.client(cid);
     if (!Array.isArray(texts) || !Array.isArray(withdraw)) fail('Nothing to submit');
@@ -484,6 +493,7 @@ export class Session {
       this.s.cardReceipts[receipt] = this.addCard(text);
       return receipt;
     });
+    this.s.cardReceipts = byReceipt(this.s.cardReceipts);
     client.cards += clean.length - withdraw.length;
     this.changed();
     // Nudges are for Submit: a card shared at Join waits for the next one.

@@ -1184,6 +1184,8 @@ test('a card can be taken back after the time is up, until grouping starts, but 
   const started = { message: "Grouping has started: shared cards can't be taken back now" };
   assert.throws(() => session.submitCards(B, [], [late[1]]), started);
   assert.throws(() => session.submitCards(A, ['new'], [early[0]]), started);
+  // A share alone isn't taking anything back: it is told sharing is closed.
+  assert.throws(() => session.submitCards(A, ['new']), { message: 'Submissions are closed' });
   assert.equal(JSON.stringify(session.state), before);
   session.advance(); // react
   assert.throws(() => session.submitCards(B, [], [late[1]]), started);
@@ -1208,6 +1210,29 @@ test('a receipt takes back only its own card, once', () => {
   assert.deepEqual(texts(session), ['mine two', 'theirs']);
   assert.equal(session.state.clients[A].cards, 1);
   assert.equal(session.state.clients[B].cards, 1);
+});
+
+test("the saved receipts don't show the order cards arrived in, or which a phone sent together", () => {
+  const { session } = make();
+  session.advance(); // submit
+  // Interleaved: A, B, A, C, B, then a swap by A.
+  const a1 = session.submitCards(A, ['a1', 'a2']).receipts;
+  session.submitCards(B, ['b1']);
+  session.submitCards(A, ['a3'], [a1[0]]);
+  session.submitCards(C, ['c1', 'c2', 'c3']);
+  session.submitCards(B, ['b2']);
+  // As saved: the receipts sorted, whatever order they came in.
+  const saved = JSON.parse(JSON.stringify(session.state)).cardReceipts;
+  const keys = Object.keys(saved);
+  assert.equal(keys.length, 7);
+  assert.deepEqual(keys, [...keys].sort());
+  // So the card ids follow the receipts' order, not the cards'.
+  const receiptOf = new Map(Object.entries(saved).map(([r, id]) => [id, r]));
+  const byReceipt = session.state.cards.map((c) => c.id).sort((x, y) => (receiptOf.get(x) < receiptOf.get(y) ? -1 : 1));
+  assert.deepEqual(Object.values(saved), byReceipt);
+  // A reload keeps them in that order.
+  const reloaded = new Session({ state: JSON.parse(JSON.stringify(session.state)), now: () => 1, clusterCards: async () => ({ themes: [] }) });
+  assert.deepEqual(Object.keys(reloaded.state.cardReceipts), keys);
 });
 
 test("the demo's cards have no receipt, so no phone can take them back", () => {

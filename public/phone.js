@@ -425,7 +425,7 @@ function submitScreen() {
       h(
         'p',
         {},
-        sent.length
+        takeable().length
           ? `Up to ${max} in all. Uncheck a shared card to take it back; notes you don't pick stay here and are discarded.`
           : `Pick up to ${remaining()} to share as cards. The rest stay here and are discarded.`,
       ),
