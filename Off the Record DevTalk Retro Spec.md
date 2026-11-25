@@ -18,10 +18,10 @@ A facilitated, phone-based, anonymous retro on 2026 for the Saskatoon tech commu
 
 The goal is emotional, not productive: a safe place to express how the year felt and see that others in the community felt the same.
 
-- **About humans, not roles.** The retro is about people in this community, not about work output or tech stacks.
+- **About humans, not roles.** The retro is about people in this community, not about work output or tech stacks, and not against AI: the right tool in the right place still works.
 - **Facilitator, not lecturer.** The facilitator facilitates. No content, questions or framing before submissions open, to avoid biasing input. During submissions, only light nudges from a preset list.
 - **Release, not production.** No action items or tickets. The ending is the shred.
-- **Depth through recognition, not long sharing.** In 30 minutes with 40 people, most won't share deeply, and that's fine. The depth comes from reading a card and thinking "that's exactly how I felt." Don't try to cover everything. The break afterward carries the conversation in person.
+- **Depth through recognition, not long sharing.** In 30 minutes with 40 people, most won't share deeply, and that's fine. The depth comes from reading a card and thinking "that's exactly how I felt." Don't try to cover everything. The time after the evening's last talk carries the conversation in person (the break between talks is too short).
 - **No presumption of a yearly event.** It could recur, but that isn't promised. The public repo lets anyone run it again without depending on one person or one host company.
 
 ## Session flow
@@ -42,7 +42,7 @@ The facilitator advances phases; every phone follows. The facilitator always has
 
 | Phase | Minutes | Talk clock | Moving on |
 | --- | --- | --- | --- |
-| Intro (facilitator's own slides) | 1.5 | 0–1.5 | Facilitator switches to the projector |
+| Intro (spoken over the teaser and demo) | 1.5 | 0–1.5 | Facilitator switches to the projector |
 | Demo | 2 | 1.5–3.5 | Facilitator |
 | Join + trust disclosure | 1.5 | 3.5–5 | Facilitator; LTE stragglers are the risk |
 | Submissions (notes, then pick) | 5 | 5–10 | Prompt at time; "+1 minute" |
@@ -206,18 +206,28 @@ Draft (one slide, read aloud during Join, about 20 seconds):
 
 > Anonymous: no logins, no names, no IP logs. Your notes stay on your phone unless you pick them to submit. Submitted cards go to Anthropic (Claude Haiku) for grouping; they don't train on them and delete them within 30 days. I see cards and comments before they're shown and can remove any of them to prevent abuse. Everything on our server is shredded tonight. Code: \[short repo URL\]
 
-Controls are explained just in time, not here: at the start of the walk-through, one line that phones can ask the facilitator to stay or go back.
-
 **Facilitator cues (said aloud, not on screen)**
 
-From the practice run, things the facilitator says rather than the app showing:
+From the practice run, things the facilitator says rather than the app showing. Say less from the front: the app does most of the work.
 
-- At the start: feedback on how to improve this is for the end (there's a QR code then, and the facilitator stays after the next talk), but if you're confused about how it works, stop me and ask.
-- Don't read the slides aloud; let people read and ask.
-- On the themes slide, before the first card: I set the pace, the timers are hints I can override, and you can ask me to go back at any point (except after the shred). The room's reactions set the pace, along with the timers only I can see.
-- Short, honest reactions are enough. Knowing you're not alone is the point; not every card needs a discussion.
-- At Join: "Anything from funny to heavy belongs here; both are welcome."
-- At the end of the walk-through or the closing: "If a card hit you, find someone after the event and tell them 'that was me too.'"
+- **Intro: spoken over the teaser and demo, no slides, under a minute.**
+  - This isn't a typical dev talk: it's an experiment, and the app does most of the work. Stop me any time if how it works is unclear.
+  - Why: 2026 was a weird year. Harvest the weirdness (good, bad and strange) and turn it into some community bonding.
+  - Make it a safe place for genuine thoughts.
+  - Point at the struck "shred" on the teaser. It doesn't mean tearing anything apart; it means letting it go, released into the wind. Nothing feeds a backlog or an action item due in January.
+  - Don't steer the tone toward negative feelings. Good, weird and heavy are all welcome: framing before submissions biases what people write.
+  - Feedback on how to improve this is for the end (there's a QR code then, and the facilitator stays after the next talk).
+- **Say up front that it may go quiet** while people write and read, and that this is expected.
+- **Don't ask "who's done a retro?"** It makes people expect the retro their own team runs.
+- **Don't read or explain the slides.** When the room laughs or gasps, acknowledge it in a word and move on. Speak mainly to keep things moving, or to wrap up a conversation that's running long.
+- **Don't warn people off inappropriate emojis.** It invites them. If one appears, skip past it.
+- **About people, not against AI.** 2026's weirdness for this crowd is partly AI, and some cards will say so. Don't pile on, and don't frame the talk as against AI: the app itself uses AI where it fits (the grouping and the haiku). If it comes up, one line is enough: "The right tool in the right place still works; tonight was about the people."
+- **At the closing** (replacing the old "that was me too" cue):
+  - Start with a deep, unhurried thank you, for trusting the room with what people wrote.
+  - Then the facilitator's own closing thought, in a few sentences. This run's: make good friends along the way. The facilitator has worked with and learned from many good people who stayed in the city and built amazing things, and a city this size makes it impossible not to keep running into them. Everyone in the room has people like that around them too; they just have to find them and connect.
+  - Then: "If a card stuck with you, find someone after the next talk and talk about it." When speaking, name the next speaker.
+  - Not "at the break": the break between talks is too short for a real conversation. The time for it is after the following talk.
+  - The earlier line about running this with coworkers and family is dropped. The friends thought says the same thing better.
 
 ## Excluded, later ideas, and open questions
 
