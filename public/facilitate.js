@@ -476,6 +476,7 @@ const PHASES = {
     const countInfo = info('submit-count', 'Cards submitted so far, and how many phones have sent at least one (the percentage is of connected phones).');
     const timeInfo = info('submit-time', 'Time left for submissions. The room sees the same countdown. “+1 minute” adds a minute; nothing closes by itself, you move on.');
     const c = v.clustering;
+    const writingInfo = info('submit-writing', 'Phones that typed in the last 20 seconds; no text is sent. If almost nobody is writing, you can move on early; if many still are when time’s up, add a minute.');
     return {
       now: now(
         v.cards.length,
@@ -488,6 +489,7 @@ const PHASES = {
           h('button', { class: 'small-btn', onclick: () => act('extend', { from: v.submit.endsAt }) }, '+1 minute'),
           h('button', { class: `small-btn${v.submit.nudgesOn ? ' on' : ''}`, onclick: () => act('nudges', { on: !v.submit.nudgesOn }) }, `Nudges ${v.submit.nudgesOn ? 'on' : 'off'}`),
           h('span', { class: 'small dim grow' }, nudgeStatus(v.submit))),
+        h('div', {}, h('span', { class: 'dim small' }, `${v.writing} writing now `), writingInfo.button, writingInfo.text),
         c.status === 'running' ? h('div', { class: 'small dim' }, 'Grouping started (about 40 seconds)…') : '',
       ),
       content: [h('p', { class: 'dim small' }, 'Cards arrive below. Hide any card that shouldn’t be shown.'), v.themes.length ? themeDrafts(v) : ''],
@@ -553,7 +555,10 @@ const PHASES = {
         ? `Each phone gets ${perPhone} of the ${v.react.total} cards, picked at random, so everyone can finish with time for a thought at the end. Cards seen by more phones can gather more reactions.`
         : 'Each phone gets every card, in its own random order. With more cards than fit the time, each phone would get some of them, picked at random.',
     );
+    const unsentInfo = info('react-unsent', 'Thoughts aren’t sent automatically. Wait for them, or say there’s no time and move on.');
     return {
+      // Beside the move prompt, so it is seen before moving on.
+      move: [nav(v), h('div', {}, h('span', { class: 'dim small' }, `${v.unsent} still writing a thought `), unsentInfo.button, unsentInfo.text)],
       now: now(
         `${pct}%`,
         [` of phones finished (${v.react.done} of ${total}) `, pctInfo.button],

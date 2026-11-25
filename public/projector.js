@@ -19,6 +19,13 @@ document.body.append(waiting);
 // hidden once it runs out, while the app waits on the facilitator, and on the teaser.
 function tickSection() {
   const left = latest?.section && !latest.waiting && latest.phase !== 'teaser' ? latest.section.endsAt - serverNow() : 0;
+  // Writing and reacting show the same time large in the middle of the screen instead.
+  const big = document.getElementById('big-clock');
+  if (big) {
+    section.hidden = true;
+    big.textContent = left > 0 ? formatClock(left) : '';
+    return;
+  }
   section.hidden = left <= 0;
   if (left > 0) section.textContent = `${formatClock(left)} left for this part`;
 }
@@ -57,9 +64,9 @@ const SCREENS = {
   teaser: teaserScreen,
   demo: demoScreen,
   join: joinScreen,
-  submit: () => message('On your phone'),
+  submit: timerScreen,
   cluster: () => message('Grouping the cards…'),
-  react: () => message('On your phone'),
+  react: timerScreen,
   walk: walkScreen,
   finale: finaleScreen,
   shred: shredScreen,
@@ -76,6 +83,25 @@ const SCREENS = {
     ),
   }),
 };
+
+// ---- submit and react: the time left, and quietly how many are writing ------
+// The clock is the section timer (tickSection fills it, and leaves it empty
+// once time is up or while waiting on the facilitator). Below it, only a
+// count of phones that typed lately, and nothing when there are none.
+
+function writingText(n) {
+  return n > 0 ? `${n} ${n === 1 ? 'person' : 'people'} writing` : '';
+}
+
+function timerScreen() {
+  const count = h('div', { class: 'writing-count' });
+  return {
+    el: h('div', { class: 'center' }, h('div', {}, h('div', { class: 'huge clock', id: 'big-clock' }), count)),
+    update(v) {
+      count.textContent = writingText(v.writing ?? 0);
+    },
+  };
+}
 
 // ---- teaser: before anything else, while the room fills ----------------------
 // The title large, its lines below, centred. Nothing from the demo. ~~words~~

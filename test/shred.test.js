@@ -101,6 +101,7 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
     });
     const json = await res.json();
     assert.equal(res.status, 200, `${action}: ${JSON.stringify(json)}`);
+    return json;
   };
   const run = (action, body) => post(action, body, true);
   const view = async (query) => {
@@ -139,8 +140,14 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   for (const cid of PHONES) {
     for (const g of groups) await post('react', { cid, groupId: g.id, emojis: ['🙋', '🦆'] });
     await post('reactDone', { cid });
+    await post('typing', { cid, text: `typed ${MARKER}` }); // extra fields are ignored
+    await post('unsent', { cid, on: true, text: `unsent ${MARKER}` });
     await post('afterthought', { cid, text: `thought ${MARKER}` });
   }
+  const counted = await facilitatorView();
+  assert.equal(counted.writing, PHONES.length, 'control: the writing count arrived');
+  assert.equal(counted.unsent, PHONES.length, 'control: the unsent count arrived');
+  assert.equal(JSON.stringify(await view(`role=phone&cid=${PHONES[0]}`)).includes('writing'), false, 'phones get no count');
   assert.ok(JSON.stringify(await facilitatorView()).includes(`thought ${MARKER}`), 'control: the thoughts arrived');
   await run('advance'); // walk
   const gone = await fetch(`${base}/api/signal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cid: PHONES[0], kind: 'stay', on: true }) });
@@ -158,6 +165,8 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
   ];
   assert.ok(filesContaining(filesUnder(dataDir), MARKER).length > 0, 'control: marker should be in the database');
 
+  assert.deepEqual(filesContaining(filesUnder(dataDir), 'typedAt'), [], 'even before the shred, the database holds no typing times');
+
   // The shred.
   const res = await fetch(`${base}/api/advance`, {
     method: 'POST',
@@ -170,6 +179,10 @@ test('the shred leaves nothing behind', { timeout: 30_000 }, async (t) => {
 
   assert.deepEqual(readdirSync(dataDir), [], 'data directory is empty');
   assert.deepEqual(filesContaining(scanned(), MARKER), [], 'no file contains a card, thought or theme');
+  // The writing count was only ever in memory: no file holds when anyone typed, and it is gone.
+  assert.deepEqual(filesContaining([...filesUnder(dataDir), ...filesUnder(tmp), ...filesUnder(home)], 'typedAt'), [], 'no data file holds when a phone typed');
+  assert.equal((await post('typing', { cid: PHONES[0] })).ok, true, 'typing after the shred is ignored, not an error');
+  assert.equal(JSON.stringify(await facilitatorView()).includes('writing'), false, 'no count survives the shred');
   assert.equal(output.includes(MARKER), false, 'server output contains no content');
   assert.equal(/\b\d{1,3}(\.\d{1,3}){3}\b|::1|::ffff:/.test(output), false, 'server output contains no IP address');
   for (const q of [`role=facilitator&t=${encodeURIComponent(TOKEN)}`, 'role=projector', `role=phone&cid=${PHONES[0]}`]) {

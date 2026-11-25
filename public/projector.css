@@ -15,6 +15,10 @@ body { background: #000; overflow: hidden; cursor: none; }
 .huge { font-size: 7vw; font-weight: 600; letter-spacing: -0.01em; }
 .sub { font-size: 2.2vw; color: var(--text-dim); margin-top: 2vh; }
 
+/* Submit and react: the clock large, a quiet count below. */
+.huge.clock { font-size: 14vw; font-variant-numeric: tabular-nums; min-height: 1.1em; line-height: 1.1; }
+.writing-count { font-size: 2.2vw; color: var(--text-dim); margin-top: 2vh; min-height: 1.3em; }
+
 /* Teaser: the title large, its lines below. */
 .teaser .huge { font-size: 7.5vw; line-height: 1.1; }
 .teaser-lines { margin-top: 3vh; }

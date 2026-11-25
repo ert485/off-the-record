@@ -956,3 +956,103 @@ test('finishing is reset when reactions start again from grouping, kept when com
   assert.equal(session.view('phone', { cid: A }).react.done, false);
   assert.equal(session.view('facilitator').react.done, 0);
 });
+
+// ---- the quiet count of people writing ------------------------------------
+
+test('writing counts phones that typed in the last 20 seconds', () => {
+  const { session, clock } = make();
+  session.advance(); // submit
+  session.typing(A);
+  clock.tick(15_000);
+  session.typing(B);
+  assert.equal(session.view('projector').writing, 2);
+  assert.equal(session.view('facilitator').writing, 2);
+  clock.tick(6_000); // A's last keystroke is now 21 seconds old
+  assert.equal(session.view('projector').writing, 1);
+  session.typing(B);
+  session.typing(B); // the same phone twice is still one person
+  assert.equal(session.view('projector').writing, 1);
+  // Not a phase that counts, a bad id, or text smuggled in: nothing recorded, no error.
+  assert.throws(() => session.typing('nope'), /Missing phone id/);
+  assert.throws(() => session.typing('__proto__'), /Missing phone id/);
+  session.typing(C, 'secret text');
+  assert.deepEqual(Object.keys(session.activity.get(C)).sort(), ['typedAt', 'unsent']);
+  assert.equal(JSON.stringify([...session.activity]).includes('secret'), false);
+  session.back(); // join: nothing counts there yet
+  session.typing(A);
+  assert.equal(session.view('projector').writing, undefined);
+});
+
+test('the count falls on its own, broadcast by tick', () => {
+  const { session, clock, changes } = make();
+  session.advance(); // submit
+  session.typing(A);
+  const before = changes();
+  session.tick();
+  assert.equal(changes(), before, 'nothing changed, nothing broadcast');
+  clock.tick(21_000);
+  session.tick();
+  assert.equal(changes(), before + 1, 'the count fell, so one broadcast');
+  assert.equal(session.view('projector').writing, 0);
+  session.tick();
+  assert.equal(changes(), before + 1);
+  assert.equal(session.activity.size, 0, 'old entries are dropped');
+});
+
+test('unsent thoughts are counted for the facilitator only', async () => {
+  const { session, clock, changes } = make();
+  await toReact(session);
+  session.unsent(A, true);
+  session.unsent(B, true);
+  session.unsent(B, true);
+  assert.equal(session.view('facilitator').unsent, 2);
+  assert.equal(session.view('projector').unsent, undefined);
+  assert.equal(session.view('phone', { cid: A }).unsent, undefined);
+  assert.equal(session.view('phone', { cid: A }).writing, undefined);
+  clock.tick(60_000);
+  session.tick();
+  assert.equal(session.view('facilitator').unsent, 2, 'an unsent thought outlasts the typing window');
+  const before = changes();
+  session.unsent(A, false);
+  assert.equal(session.view('facilitator').unsent, 1);
+  assert.equal(changes(), before + 1);
+  session.advance(); // walk: the room moved on
+  assert.equal(session.view('facilitator').unsent, undefined);
+  session.back();
+  assert.equal(session.view('facilitator').unsent, 0, 'leaving react forgets who was unsent');
+  session.unsent(C, true);
+  session.advance();
+  session.unsent(C, true); // not react: ignored
+  assert.equal(session.activity.get(C)?.unsent ?? false, false);
+});
+
+test('phones never receive the writing count', async () => {
+  const { session } = make();
+  session.advance();
+  session.typing(A);
+  assert.equal(JSON.stringify(session.view('phone', { cid: A })).includes('writing'), false);
+  await flush();
+  session.advance(); // cluster
+  await flush();
+  session.advance(); // react
+  session.typing(A);
+  session.unsent(A, true);
+  const v = session.view('phone', { cid: A });
+  assert.equal('writing' in v || 'unsent' in v || 'writing' in (v.react ?? {}) || 'unsent' in (v.react ?? {}), false);
+});
+
+test('the writing count is memory only: never in the saved state, gone at the shred and the reset', async () => {
+  const { session } = make();
+  await toReact(session);
+  session.typing(A);
+  session.unsent(B, true);
+  const saved = JSON.stringify(session.state);
+  assert.equal(/typedAt|activity|unsent/.test(saved), false, 'nothing about typing is in the persisted state');
+  session.advance();
+  session.advance();
+  session.advance({ confirm: true });
+  assert.equal(session.activity.size, 0);
+  session.reset();
+  assert.equal(session.activity.size, 0);
+  assert.equal(session.view('facilitator').writing, undefined);
+});

@@ -99,6 +99,27 @@ subscribe(
   (online) => status.classList.toggle('offline', !online),
 );
 
+// Tells the server this phone is typing, so the room can see people are
+// writing. At most once every 5 seconds, and never with any text. Fire and
+// forget: a dropped one only means a slightly lower count.
+const TYPING_EVERY_MS = 5_000;
+let lastTypingAt = 0;
+function sayTyping() {
+  const t = Date.now();
+  if (t - lastTypingAt < TYPING_EVERY_MS) return;
+  lastTypingAt = t;
+  post('typing', { cid }).catch(() => {});
+}
+
+// Tells the server, only when it changes, whether this phone holds a thought it
+// has typed but not sent (so the facilitator can wait for it). No text.
+let unsentSaid = false;
+function sayUnsent(on) {
+  if (on === unsentSaid) return;
+  unsentSaid = on;
+  post('unsent', { cid, on }).catch(() => (unsentSaid = !on));
+}
+
 function showError(container, err) {
   const msg = h('p', { class: 'hint' }, err.message);
   container.append(msg);
@@ -213,6 +234,7 @@ function submitScreen() {
     pickButton.textContent = `Pick up to ${left} to share →`;
   }
   input.addEventListener('input', refreshInput);
+  input.addEventListener('input', () => input.value && sayTyping());
 
   // Keeps whatever is in the box as a note. Returns true if it saved one.
   function saveDraft() {
@@ -522,6 +544,7 @@ function reactScreen() {
     const close = () => {
       local.set('afterthoughtDraft', null);
       local.set('afterthoughtDone', true);
+      sayUnsent(false);
       render();
       tickTimer();
     };
@@ -541,8 +564,11 @@ function reactScreen() {
         const text = input.value.trim();
         add.textContent = !had ? 'Add this thought' : text ? 'Change this thought' : 'Take back this thought';
         add.disabled = had ? text === sent.text : !text;
+        // Typed and not sent: a restored draft counts too, once, on the first refresh.
+        sayUnsent(!!text && text !== sent?.text);
       };
       input.addEventListener('input', refresh);
+      input.addEventListener('input', () => input.value && sayTyping());
       add.addEventListener('click', async () => {
         const text = input.value.trim();
         add.disabled = true;

@@ -111,6 +111,9 @@ const PHONE_ACTIONS = {
   react: (b) => session.react(b.cid, b.groupId, b.emojis, b.receipt),
   reactDone: (b) => session.reactDone(b.cid),
   afterthought: (b) => session.afterthought(b.cid, b.text, b.receipt),
+  // Neither carries text: only the phone's id, and whether a thought is unsent.
+  typing: (b) => session.typing(b.cid),
+  unsent: (b) => session.unsent(b.cid, b.on),
 };
 
 const FACILITATOR_ACTIONS = {

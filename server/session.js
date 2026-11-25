@@ -1,7 +1,7 @@
 // All session state and every action on it. No HTTP and no disk here: the
 // server persists `session.state` after each change and wires up the shred.
 import { randomBytes, randomInt } from 'node:crypto';
-import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS } from './phases.js';
+import { PHASES, nextPhase, previousPhase, paceMinutes, PLAN, SUBMIT_MINUTES, REACT_MINUTES, REACT_GRACE_MS, TALK_MINUTES, LAST_SLIDE_MS, WRITING_WINDOW_MS } from './phases.js';
 import { pendingMove, walkEndsAt, cardMs, cardsLeft, earlyGroupingDue, spedUp, SPEED_UP, lastSlideMs, deckTimeSize } from './flow.js';
 import { localPlacer } from './cluster.js';
 import { buildStream } from './stream.js';
@@ -15,6 +15,9 @@ const OVERVIEW = 'overview';
 const LAST = 'last';
 // What an afterthought's receipt maps to (a card's receipt maps to its group id).
 const AFTERTHOUGHT = 'afterthought';
+
+// The parts where a phone's typing is counted.
+const TYPING_PHASES = ['submit', 'react'];
 
 export class ActionError extends Error {
   constructor(message) {
@@ -181,6 +184,12 @@ export class Session {
     this.closingAt = null; // when the closing screen is due, before any speed-up
     this.clusterRun = 0;
     this.shredPayload = null;
+    // Which phones typed lately, and which hold an unsent thought: cid ->
+    // { typedAt, unsent }. In memory only, never in this.state (which is
+    // saved), so it never reaches the database; dropped at the shred. Neither
+    // the text nor a length is ever sent, only that someone is typing.
+    this.activity = new Map();
+    this.activityKey = '';
     this.state = state ?? freshState(now(), talkMinutes);
     this.state.nudge ??= { mode: 'all', label: null };
     this.state.receipts ??= {};
@@ -242,6 +251,7 @@ export class Session {
     // Whatever this broadcast carries already includes the prompt, so tick()
     // need not announce it again.
     this.promptKey = this.timedPromptKey();
+    this.activityKey = this.activityCounts();
     this.onChange();
   }
 
@@ -298,10 +308,15 @@ export class Session {
     return id ? this.card(id).text : null;
   }
 
-  client(cid) {
-    // Hex only, as phones make them. This also keeps out names like
-    // "__proto__" or "constructor", which every plain object already has.
+  // Hex only, as phones make them. This also keeps out names like
+  // "__proto__" or "constructor", which every plain object already has.
+  checkCid(cid) {
     if (typeof cid !== 'string' || !/^[0-9a-f]{16,64}$/.test(cid)) fail('Missing phone id');
+    return cid;
+  }
+
+  client(cid) {
+    this.checkCid(cid);
     return (this.s.clients[cid] ??= { cards: 0, reacted: 0, reactDone: false, afterthoughts: 0 });
   }
 
@@ -343,6 +358,8 @@ export class Session {
   enter(to, direction) {
     const now = this.now();
     const from = this.s.phase;
+    // Thoughts left unsent when the room moves on are not carried to the next part.
+    if (from === 'react' && to !== 'react') for (const a of this.activity.values()) a.unsent = false;
     // The demo's shared notes join the session as ordinary cards, once each: no
     // author, and not counted against any phone. addCard's random ids put them
     // in a random order.
@@ -961,6 +978,9 @@ export class Session {
     if (this.s.phase === 'walk') this.tickWalk();
     // A deadline simply passing changes the prompt with no event to broadcast it.
     if (this.timedPromptKey() !== this.promptKey) this.changed();
+    // The count falls with no event to say so.
+    this.pruneActivity();
+    if (this.activityCounts() !== this.activityKey) this.changed();
   }
 
   // On the loop, the server moves the demo on, so every projector shows the
@@ -1016,6 +1036,60 @@ export class Session {
     this.changed();
   }
 
+  // ---- the quiet count of people writing -----------------------------------
+  // Phones only say "I'm typing" (and "I hold an unsent thought"), never what.
+  // Typing counts in these parts; later parts may be added here.
+
+  typing(cid) {
+    this.checkCid(cid);
+    if (this.shredded || !TYPING_PHASES.includes(this.s.phase)) return;
+    const a = this.activityOf(cid);
+    const before = this.activityCounts();
+    a.typedAt = this.now();
+    if (this.activityCounts() !== before) this.changed();
+  }
+
+  unsent(cid, on) {
+    this.checkCid(cid);
+    if (this.shredded || this.s.phase !== 'react') return;
+    const a = this.activityOf(cid);
+    const before = this.activityCounts();
+    a.unsent = on === true;
+    if (this.activityCounts() !== before) this.changed();
+  }
+
+  activityOf(cid) {
+    let a = this.activity.get(cid);
+    if (!a) this.activity.set(cid, (a = { typedAt: -Infinity, unsent: false }));
+    return a;
+  }
+
+  writingCount() {
+    const now = this.now();
+    let n = 0;
+    for (const a of this.activity.values()) if (now - a.typedAt < WRITING_WINDOW_MS) n += 1;
+    return n;
+  }
+
+  unsentCount() {
+    let n = 0;
+    for (const a of this.activity.values()) if (a.unsent) n += 1;
+    return n;
+  }
+
+  // What the screens show of this, as one comparable string; '' where nothing is shown.
+  activityCounts() {
+    const p = this.s.phase;
+    if (this.shredded || !TYPING_PHASES.includes(p)) return '';
+    return `${this.writingCount()}:${p === 'react' ? this.unsentCount() : 0}`;
+  }
+
+  // Forgets phones that stopped typing and hold nothing unsent.
+  pruneActivity() {
+    const now = this.now();
+    for (const [cid, a] of this.activity) if (!a.unsent && now - a.typedAt >= WRITING_WINDOW_MS) this.activity.delete(cid);
+  }
+
   // ---- shred ------------------------------------------------------------
 
   shred() {
@@ -1025,6 +1099,7 @@ export class Session {
     this.shredPayload = { emojis: this.emojiMix(), cards };
     this.clusterRun += 1;
     clearTimeout(this.nudgeTimer);
+    this.activity.clear();
     this.shredded = true;
     this.state = {
       sessionId: this.s.sessionId,
@@ -1059,6 +1134,7 @@ export class Session {
     clearTimeout(this.closingTimer);
     this.shredPayload = null;
     this.shredded = false;
+    this.activity.clear();
     this.state = freshState(this.now(), this.talkMinutes);
     this.onReset();
     this.changed();
@@ -1151,6 +1227,7 @@ export class Session {
       v.demo = { step: s.demo.step, auto: s.demo.auto, stepStartedAt: s.demo.stepStartedAt, ...content };
     }
     if (s.phase === 'join') v.phones = phoneCount;
+    if (TYPING_PHASES.includes(s.phase)) v.writing = this.writingCount();
     // How long this part of the session is planned to take, as a hint the
     // room can see. Only while there's time left: a visible "over" would
     // make people hold back.
@@ -1206,6 +1283,8 @@ export class Session {
     const { startedAt, minutes } = s.talk;
     if (s.phase === 'teaser') v.teaser = this.teaser();
     if (s.phase === 'demo' && this.demo) v.demo = { step: s.demo.step, steps: DEMO_STEPS.length, name: DEMO_STEPS[s.demo.step], auto: s.demo.auto };
+    if (TYPING_PHASES.includes(s.phase)) v.writing = this.writingCount();
+    if (s.phase === 'react') v.unsent = this.unsentCount();
     v.talk = { startedAt, minutes, leftMs: startedAt === null ? minutes * 60_000 : startedAt + minutes * 60_000 - now };
     v.pace =
       startedAt === null
