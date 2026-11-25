@@ -203,6 +203,9 @@ test('a session starts on the teaser, and the teaser shows no demo content', () 
   assert.equal(facilitator.next, 'demo');
   assert.equal(facilitator.canBack, false);
   assert.deepEqual(Object.keys(phone).sort(), ['now', 'phase', 'role', 'session', 'teaser']);
+  // No credits in the file: no photo-picker flag anywhere.
+  assert.equal('hasCredits' in projector, false);
+  assert.equal('hasCredits' in facilitator, false);
   assert.throws(() => s.back(), /Nothing to go back/);
   assert.throws(() => s.demoStep(1), /The demo is over/);
   assert.equal(s.state.cards.length, 0);
@@ -412,6 +415,11 @@ test('credits in the demo file are validated and reach the projector only at the
   const s = make({ demo: validateDemo(withCredits) });
   const credits = { title: 'Thank you', lines: ['To the room', 'To the facilitator'] };
   const seen = (role) => JSON.stringify(s.view(role, { cid: A }));
+  // The teaser tells only the projector (a flag, no text) that there are credits.
+  s.state.phase = 'teaser';
+  assert.equal(s.view('projector').hasCredits, true);
+  assert.equal('hasCredits' in s.view('phone', { cid: A }), false);
+  assert.equal('hasCredits' in s.view('facilitator'), false);
   // Every phase before the closing: no screen is sent the credits.
   for (const phase of ['teaser', 'demo', 'join', 'submit', 'cluster', 'react', 'walk', 'finale', 'shred']) {
     s.state.phase = phase;
@@ -430,4 +438,9 @@ test('credits in the demo file are validated and reach the projector only at the
   plain.state.phase = 'closing';
   plain.shredded = true;
   assert.equal('credits' in plain.view('projector'), false);
+});
+
+test('the Content-Security-Policy is pinned: images from this tab (blob:) are allowed, connections only to self', () => {
+  const src = readFileSync(resolve(fileURLToPath(new URL('../server/index.js', import.meta.url))), 'utf8');
+  assert.ok(src.includes(`"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'"`));
 });
