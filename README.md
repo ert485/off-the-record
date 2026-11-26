@@ -43,7 +43,7 @@ Open `http://localhost:3000/` (phone), `/projector`, and `/facilitate?t=dev`. Wi
 
 ## The demo
 
-The session starts on a teaser page (the demo file's optional `teaser`: a title and up to four lines; and an optional `credits`, a title and up to 12 lines that roll beside the feedback QR at the closing, with photos added on the projector's teaser screen that stay in that tab only), then the demo plays on a loop until the talk clock starts. The demo shows the content in `demo/example.json`. To use your own, copy it to `demo/local.json` and edit it: that file is gitignored, so it stays out of the repo, but `deploy/deploy.sh` still copies it to the server. If it is invalid, the server prints `demo: local file invalid, using the example` and uses the example.
+The session starts on a teaser page (the demo file's optional `teaser`: a title and up to four lines; and an optional `credits`, a title and up to 12 lines that roll beside the feedback QR at the closing, with photos added on the projector's teaser screen that stay in that tab only), then the demo plays on a loop until the talk clock starts. The demo shows the content in `demo/example.json`. To use your own, copy it to `demo/local.json` and edit it: that file is gitignored, so it stays out of the repo, but `deploy/deploy.sh` still copies it to the server. An optional `wifi` (`network`, and optionally `password` and `note`) shows the venue's guest Wi-Fi in the projector's bottom-right corner from the teaser through the join screen. If it is invalid, the server prints `demo: local file invalid, using the example` and uses the example.
 
 ## Deploy
 

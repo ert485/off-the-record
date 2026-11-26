@@ -444,3 +444,24 @@ test('the Content-Security-Policy is pinned: images from this tab (blob:) are al
   const src = readFileSync(resolve(fileURLToPath(new URL('../server/index.js', import.meta.url))), 'utf8');
   assert.ok(src.includes(`"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'"`));
 });
+
+test('the venue Wi-Fi shows on the projector only, from the teaser to the join screen', () => {
+  const wifi = { network: 'Venue Guest', password: 'a-long-password', note: 'Also on the whiteboard' };
+  const demo = validateDemo({ ...example(), wifi });
+  assert.deepEqual(demo.wifi, wifi);
+  const s = make({ teaser: true, demo });
+  for (const phase of ['teaser', 'demo', 'join']) {
+    assert.equal(s.state.phase, phase);
+    assert.deepEqual(s.view('projector').wifi, wifi);
+    assert.equal(s.view('projector').demo?.wifi, undefined);
+    for (const v of [s.view('phone', { cid: A }), s.view('facilitator')]) assert.ok(!JSON.stringify(v).includes('a-long-password'));
+    s.advance();
+  }
+  assert.equal(s.state.phase, 'submit');
+  assert.equal(s.view('projector').wifi, undefined);
+  // Optional, and each part checked.
+  assert.equal(validateDemo(example()).wifi, undefined);
+  assert.deepEqual(validateDemo({ ...example(), wifi: { network: 'Open' } }).wifi, { network: 'Open' });
+  assert.throws(() => validateDemo({ ...example(), wifi: { password: 'x' } }), /wifi network/);
+  assert.throws(() => validateDemo({ ...example(), wifi: { network: 'x', password: '' } }), /wifi password/);
+});

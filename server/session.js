@@ -1595,8 +1595,10 @@ export class Session {
     if (s.phase === 'teaser') v.teaser = this.teaser();
     // Only a flag, so the projector offers the credits photo picker when there is a roll to put them in.
     if (s.phase === 'teaser' && this.demo?.credits) v.hasCredits = true;
+    // The venue's Wi-Fi, for anyone without a cell signal, until everyone has joined.
+    if (['teaser', 'demo', 'join'].includes(s.phase) && this.demo?.wifi) v.wifi = this.demo.wifi;
     if (s.phase === 'demo' && this.demo) {
-      const { teaser, credits, ...content } = this.demo;
+      const { teaser, credits, wifi, ...content } = this.demo;
       v.demo = { step: s.demo.step, auto: s.demo.auto, stepStartedAt: s.demo.stepStartedAt, ...content };
     }
     if (s.phase === 'join') v.phones = phoneCount;

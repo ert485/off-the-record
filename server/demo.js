@@ -19,7 +19,7 @@ const isText = (s, max, min = 1) => typeof s === 'string' && s.trim().length >= 
 
 export function validateDemo(obj) {
   if (!obj || typeof obj !== 'object') fail('Demo must be an object');
-  const { notes, theme, react, reveal, teaser, credits } = obj;
+  const { notes, theme, react, reveal, teaser, credits, wifi } = obj;
   if (!Array.isArray(notes) || notes.length < 1 || notes.length > 5) fail('Demo needs 1 to 5 notes');
   if (!notes.every((n) => n && isText(n.text, 200))) fail('Demo notes are 1 to 200 characters');
   const shared = notes.filter((n) => n.share === true).length;
@@ -48,7 +48,15 @@ export function validateDemo(obj) {
       fail('Demo credits have up to 12 lines of 1 to 80 characters');
     }
   }
+  if (wifi !== undefined) {
+    if (!wifi || typeof wifi !== 'object') fail('Demo wifi must be an object');
+    if (!isText(wifi.network, 60)) fail('Demo wifi network is 1 to 60 characters');
+    if (wifi.password !== undefined && !isText(wifi.password, 80)) fail('Demo wifi password is 1 to 80 characters');
+    if (wifi.note !== undefined && !isText(wifi.note, 80)) fail('Demo wifi note is 1 to 80 characters');
+  }
   return {
+    // Optional: the venue's guest Wi-Fi, on the projector from the teaser to the join screen only.
+    ...(wifi ? { wifi: { network: wifi.network, ...(wifi.password !== undefined ? { password: wifi.password } : {}), ...(wifi.note !== undefined ? { note: wifi.note } : {}) } } : {}),
     // Optional, and public text shown on the projector at the closing only.
     ...(credits ? { credits: { title: credits.title, lines: [...credits.lines] } } : {}),
     teaser: teaser ? { title: teaser.title, lines: [...teaser.lines] } : { ...DEFAULT_TEASER, lines: [...DEFAULT_TEASER.lines] },

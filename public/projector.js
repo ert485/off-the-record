@@ -9,6 +9,7 @@ const app = document.getElementById('app');
 const cornerQr = document.getElementById('corner-qr');
 const status = document.getElementById('status');
 const section = document.getElementById('section');
+const wifi = document.getElementById('wifi');
 let latest = null;
 // Shown while the app waits on the facilitator; never during the teaser, the
 // demo, the finale, the shred or the closing.
@@ -52,9 +53,27 @@ subscribe(
     // The join QR stays small in a corner for latecomers, and is hidden for
     // the teaser, the demo, the finale, the shred and the closing.
     cornerQr.classList.toggle('hidden', ['teaser', 'demo', 'join', 'finale', 'shred', 'closing'].includes(view.phase));
+    showWifi(view.wifi);
   },
   (online) => status.classList.toggle('offline', !online),
 );
+
+// The venue's guest Wi-Fi (the demo file's optional `wifi`), from the teaser to
+// the join screen, for anyone without a cell signal.
+let wifiShown = '';
+function showWifi(w) {
+  const key = w ? JSON.stringify(w) : '';
+  if (key === wifiShown) return;
+  wifiShown = key;
+  wifi.hidden = !w;
+  if (!w) return fill(wifi);
+  fill(
+    wifi,
+    h('div', {}, h('span', { class: 'wifi-label' }, 'Wi‑Fi '), h('b', {}, w.network)),
+    w.password ? h('div', {}, h('span', { class: 'wifi-label' }, 'Password '), h('b', {}, w.password)) : '',
+    w.note ? h('div', { class: 'wifi-note' }, w.note) : '',
+  );
+}
 
 const host = () => config.publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
 

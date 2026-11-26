@@ -10,6 +10,12 @@ body { background: #000; overflow: hidden; cursor: none; }
 .closing { animation: fade-in 1.6s ease; }
 @keyframes fade-in { from { opacity: 0; } }
 #corner-qr.hidden { display: none; }
+/* The venue's Wi-Fi: one line in the bottom-right corner, from the teaser to the join screen,
+   clear of the drawn phone and the headings in the demo, and of the join QR. */
+#wifi { position: fixed; right: 1.5vw; bottom: 1.2vh; z-index: 5; display: flex; align-items: baseline; gap: 1.4vw; white-space: nowrap; font-size: 1.5vw; color: var(--text); background: color-mix(in srgb, var(--bg-raised) 85%, transparent); border: 1px solid var(--line); border-radius: 0.8vw; padding: 0.5vw 1.1vw; }
+#wifi[hidden] { display: none; }
+#wifi .wifi-label { color: var(--text-dim); }
+#wifi .wifi-note { font-size: 1.1vw; color: var(--text-dim); }
 
 .center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 6vh 8vw; }
 .huge { font-size: 7vw; font-weight: 600; letter-spacing: -0.01em; }
